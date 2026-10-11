@@ -4,6 +4,10 @@
 
 This is a code option, not a deployed runtime change. No production activation, commit or push is implied by local testing.
 
+Since 2026-10-12 a player's own normal / 联防 field is usually not streamed at all: its browser runs it as a local display
+replica checked by `b.sync` digests (docs/design/network.md, Local display replicas). This rate applies to what is still
+streamed — teammates being watched, spectator seats, boss / hidden fields and replicas that fell back to the stream.
+
 ## What changes
 
 - Simulation remains30 ticks/game second, normally2× game speed (about60 steps/real second).

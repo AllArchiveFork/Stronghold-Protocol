@@ -6,6 +6,7 @@ import { createBattleFromSpec, battleProgress, uniteLeft } from '../../sim/spec.
 import { combatData } from './data.js';
 import { damageFrame, emptyDamageRows } from '../../sim/damageBoard.js';
 import { MAX_PLAYER_CAPACITY } from '../../../shared/playerCapacity.js';
+import { isSyncTick, stateHash } from '../../sim/syncHash.js';
 
 export const DAMAGE_INTERVAL_MS = 1000;
 
@@ -15,6 +16,10 @@ const finite = (n, d = 0) => Number.isFinite(n) ? n : d;
 
 // Keep FieldRunner's actual step / onTick / second-finished-check semantics. Only the transport differs.
 class EngineRunner extends FieldRunner {
+  constructor(m, fields, hooks) {
+    super(m, fields, hooks);
+    this.afterStep = (field) => this.m.engine._afterStep(field);
+  }
   _emitStart(field) { this.m.engine._emitStart(field); }
   _emit(field) { this.m.engine._emit(field); }
   _forceField(field, reason) {
@@ -58,6 +63,9 @@ export class CombatEngine {
     this.frames = [];
     this.effects = [];
     this.watched = new Set();
+    // Fields shown to a browser's local display replica: their state digest after every sync tick (syncHash.js).
+    this.synced = new Set();
+    this.syncs = [];
     this.detachers = [];
     this.diagnostics = new Map(specs.map((s) => [s.fieldId, []]));
     this.boss = null;
@@ -158,6 +166,19 @@ export class CombatEngine {
     } catch (e) { this._error(`field ${f.fieldId} start stats`, e); }
   }
 
+  /** Digest a synced field right after its step, before any snapshot of that tick reads lazy stats. */
+  _afterStep(f) {
+    if (!this.synced.has(f.fieldId) || f.syncDone) return;
+    const b = f.battle;
+    if (!isSyncTick(b)) return;
+    try {
+      const done = !!b.finished;
+      if (done) f.syncDone = true;
+      this.syncs.push(done ? { fieldId: f.fieldId, tick: Number(b.tickCount) || 0, h: stateHash(b), done: true }
+        : { fieldId: f.fieldId, tick: Number(b.tickCount) || 0, h: stateHash(b) });
+    } catch (e) { this._error(`field ${f.fieldId} sync hash`, e); }
+  }
+
   _metaDue(f) {
     return !this.metaOnDemand || this.stateOutput || !f.live || this.metaFields.has(f.fieldId);
   }
@@ -211,12 +232,15 @@ export class CombatEngine {
       : structuredClone({ fieldId: f.fieldId, events, gt: msg.gt }));
   }
 
-  _begin(snapshotFields = [], coalescing = false, metaFields = []) {
+  _begin(snapshotFields = [], coalescing = false, metaFields = [], syncFields = []) {
     if (this.disposed) throw new Error('combat engine disposed');
     if (!Array.isArray(snapshotFields)) throw new TypeError('snapshotFields must be an array');
     if (!Array.isArray(metaFields)) throw new TypeError('metaFields must be an array');
+    if (!Array.isArray(syncFields)) throw new TypeError('syncFields must be an array');
     this.watched = new Set(snapshotFields);
     this.metaFields = new Set(metaFields);
+    this.synced = new Set(syncFields);
+    this.syncs = [];
     this.frames = [];
     this.coalescing = this.coalesceFrames && coalescing;
   }
@@ -276,6 +300,7 @@ export class CombatEngine {
     const output = {
       ticks: this.runner.ticks, time: this.runner.time, done: this.runner.done,
       fields, effects: this.effects,
+      ...(this.syncs.length ? { syncs: this.syncs } : {}),
       ...(this.damageBoard ? { damageFrames } : {}),
       boss: this.boss ? {
         maxHp: this.pool.maxHp, hp: this.pool.hp, byPlayer: [...this.pool.byPlayer],
@@ -300,12 +325,13 @@ export class CombatEngine {
     } else dto.frames = this.frames;
     this.effects = [];
     this.frames = [];
+    this.syncs = [];
     return dto;
   }
 
-  advance(ticks, { snapshotFields = [], metaFields = [] } = {}) {
+  advance(ticks, { snapshotFields = [], metaFields = [], syncFields = [] } = {}) {
     if (!Number.isInteger(ticks) || ticks < 0 || ticks > MAX_ADVANCE_TICKS) throw new RangeError(`ticks must be 0..${MAX_ADVANCE_TICKS}`);
-    this._begin(snapshotFields, ticks > MAX_TICKS_PER_INTERVAL, metaFields);
+    this._begin(snapshotFields, ticks > MAX_TICKS_PER_INTERVAL, metaFields, syncFields);
     for (let i = 0; i < ticks && !this.runner.done; i++) {
       this.runner._tick();
       if (this.runner.time >= HARD_CAP_SECONDS) this.runner._forceAll('timeout');
@@ -346,6 +372,8 @@ export class CombatEngine {
     this.diagnostics.clear();
     this.frames = [];
     this.effects = [];
+    this.syncs = [];
     this.watched.clear();
+    this.synced.clear();
   }
 }

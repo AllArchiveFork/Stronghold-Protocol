@@ -10,7 +10,7 @@ const OPTIONS = Object.freeze({
 
 // Only the large, low-rate state frames. The high-rate battle stream (b.snap/b.ev, ~15 frames per watcher per second,
 // mostly under 1 KiB) stays plain: per-message deflate of those cost more CPU than the few bytes it saved.
-const COMPRESSIBLE = new Set(['m.public', 'm.private', 'm.unitStats', 'm.field', 'm.damage', 'b.damage']);
+const COMPRESSIBLE = new Set(['m.public', 'm.private', 'm.unitStats', 'm.field', 'm.damage', 'b.damage', 'b.start']);
 
 export function resolveWsCompression(mode = 'off') {
   if (mode === 'off') return false;

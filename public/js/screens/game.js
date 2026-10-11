@@ -1274,7 +1274,8 @@ function MatchScreen() {
     const id = resolved?.unitId;
     const pieceUid = id == null && Number.isInteger(resolved?.piece?.uid) ? resolved.piece.uid : null;
     if ((id == null && pieceUid == null) || showPrep || !field || field.prep) return null;
-    if (!cc) return () => enteredFieldRef.current === field && lastFieldRef.current === field.fieldId
+    // a field this browser simulates (client-side combat, or a server-run field's local display replica) reads the runner
+    if (!cc && !field.local) return () => enteredFieldRef.current === field && lastFieldRef.current === field.fieldId
       ? snapshotUnitStats(snapStatsRef.current, field, { id, pieceUid, ownerId: myId, units: pieceUnitsRef.current }) : null;
     if (!battleRunner || !field.local) return null;
     const fid = field.fieldId;

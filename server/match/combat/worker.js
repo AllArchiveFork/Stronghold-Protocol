@@ -129,7 +129,7 @@ try {
         if (op !== 'advance') throw new Error(`unknown trial operation ${op}`);
         dto = session.engine.advance(p.ticks);
       } else switch (op) {
-        case 'advance': dto = session.engine.advance(p.ticks, { snapshotFields: p.snapshotFields, metaFields: p.metaFields }); break;
+        case 'advance': dto = session.engine.advance(p.ticks, { snapshotFields: p.snapshotFields, metaFields: p.metaFields, syncFields: p.syncFields ?? [] }); break;
         case 'state': dto = session.engine.state({ snapshotFields: p.snapshotFields }); break;
         case 'forceField': dto = session.engine.forceField(p.fieldId, p.reason); break;
         case 'forceAll': dto = session.engine.forceAll(p.reason); break;

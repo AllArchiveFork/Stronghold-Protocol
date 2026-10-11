@@ -139,6 +139,8 @@ export class FieldRunner {
     this.done = false;
     this.stopped = false;
     this.crashes = 0;
+    /** optional (field) => void, called right after each field's step (CombatEngine: local replica digests) */
+    this.afterStep = null;
   }
 
   /** Game seconds elapsed on the master clock (all fields step in lockstep). */
@@ -201,6 +203,8 @@ export class FieldRunner {
         this.m.reportError(`field ${f.fieldId} step`, e);
         this._forceField(f, 'timeout');
       }
+      // before this tick's snapshot reads anything lazily (local display replica digests, syncHash.js)
+      if (this.afterStep) this.afterStep(f);
       if (b.finished) { f.live = false; this.m.markPublic(); }
       if (this.ticks === 1) this._emitStart(f);
       if (this.ticks % SNAP_EVERY === 0 || !f.live) this._emit(f);

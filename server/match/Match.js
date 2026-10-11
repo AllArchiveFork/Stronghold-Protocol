@@ -125,6 +125,9 @@
 //   opts.afkRemoveRounds  integer ≥ 0 (default AFK_REMOVE_ROUNDS = 2; 0 = off): the AFK rule — see the leave policy below
 //   opts.experimental locked room revivalEnabled / disableSharedPool / optional disableDuckLord, false by default
 //   opts.snapshotHz   20 | 10 | 5, server snapshots only
+//   opts.localReplica default true (env SP_LOCAL_REPLICA=0 → false): server-run combat shows a Worker-run normal / 联防
+//                     field to its own players' browsers that declared g.sim { local: true } as a b.start display replica
+//                     checked by b.sync digests, instead of streaming it (localReplica.js; DESIGN §14)
 //   opts.clientCombat  default true (env SP_COMBAT=server → false: the legacy server-run + snapshot streaming mode)
 //   opts.verify        'off' | 'sample' | 'all' (env SP_VERIFY, default 'off'): re-simulate accepted client results
 //                      ('sample': ~1 in 8, in later slices, mismatches logged; 'all': before accepting — the
@@ -184,6 +187,7 @@
 //   combat.js        battle construction, COMBAT (both modes), the per-field results, then 联防 or SETTLE
 //   clientCombat.js  client-side combat bookkeeping: field records, the field clock, authority, b.start, result
 //                    deadlines and releases, server runs, field completion
+//   localReplica.js  server-run combat: local display replicas of the own field (g.sim, b.start, b.sync, stream fallback)
 //   reports.js       b.progress / b.result (validation, held boss results), SP_VERIFY
 //   unitePhase.js    联防 (UNITE) in both modes and the leakers' live counts
 //   bossRounds.js    FINAL_ASSAULT / HIDDEN_CORE: boss fields, the shared pool, plausibility budgets, the boss clock,
@@ -220,6 +224,7 @@ import { MatchSpDraft } from './match/spDraft.js';
 import { MatchPrep } from './match/prep.js';
 import { MatchCombat } from './match/combat.js';
 import { MatchClientCombat } from './match/clientCombat.js';
+import { MatchLocalReplica } from './match/localReplica.js';
 import { MatchReports } from './match/reports.js';
 import { MatchUnite } from './match/unitePhase.js';
 import { MatchBoss } from './match/bossRounds.js';
@@ -283,6 +288,8 @@ export class Match {
     this.timerScale = Number.isFinite(opts.timerScale) && opts.timerScale >= 0 ? opts.timerScale : 1;
     this.gameSpeed = Number.isFinite(opts.combatSpeed) && opts.combatSpeed > 0 ? Math.min(opts.combatSpeed, 200) : GAME_SPEED;
     this.snapshotHz = parseSnapshotHz(opts.snapshotHz ?? env('SP_SNAPSHOT_HZ'));
+    /** server-run combat: own fields as local display replicas for browsers that declared g.sim (localReplica.js) */
+    this.localReplica = opts.localReplica != null ? !!opts.localReplica : String(env('SP_LOCAL_REPLICA') ?? '').trim() !== '0';
     /** layouts a bot rehearses per prep with the real simulation (bot.js; 0 = heuristic placement only) */
     this.botRehearsal = Number.isInteger(opts.botRehearsal) && opts.botRehearsal >= 0 ? Math.min(opts.botRehearsal, 8) : BOT_REHEARSAL_DEFAULT;
     /** wall-clock budget of one rehearsal slice (scheduleBotPrep) */
@@ -457,6 +464,10 @@ export class Match {
     this.runner = null;
     /** playerId → fieldId */
     this.watchers = new Map();
+    /** playerId → { field }: the field record that player's browser runs as a local display replica (localReplica.js) */
+    this.localViews = new Map();
+    /** local replicas switched back to the stream, by reason (diagnostics) */
+    this.localStats = { diverged: 0, requested: 0, off: 0 };
     /**
      * Watch preference (community report of 2026-10-06, item 56; the idea of PR #189): viewer playerId → the player it
      * last chose to watch with a manual g.watch. Every phase reset starts an eliminated human or a spectator seat on that
@@ -484,7 +495,7 @@ export class Match {
 }
 
 // the method modules, in this order (a name defined twice is an error, never a silent override)
-for (const part of [MatchPlatform, MatchInfra, MatchMessaging, MatchViews, MatchWatch, MatchIntents, MatchPause, MatchPhases, MatchSetupVote, MatchSpDraft, MatchPrep, MatchCombat, MatchClientCombat, MatchReports, MatchUnite, MatchBoss, MatchSettle, MatchExtensions]) {
+for (const part of [MatchPlatform, MatchInfra, MatchMessaging, MatchViews, MatchWatch, MatchIntents, MatchPause, MatchPhases, MatchSetupVote, MatchSpDraft, MatchPrep, MatchCombat, MatchClientCombat, MatchLocalReplica, MatchReports, MatchUnite, MatchBoss, MatchSettle, MatchExtensions]) {
   for (const key of Reflect.ownKeys(part.prototype)) {
     if (key === 'constructor') continue;
     if (Object.prototype.hasOwnProperty.call(Match.prototype, key)) throw new Error(`Match.${String(key)} is defined twice`);

@@ -135,7 +135,9 @@ export class MatchPlatform {
       else {
         let fid = this.watchers.get(playerId);
         if (!fid && ps.spectator && this.fields.length) { fid = (this._watchTargetField(ps, this.fields) || this.fields[0]).fieldId; this.watchers.set(playerId, fid); }
-        if (fid) this._sendField(playerId, fid);
+        // the own field a browser runs locally: b.start again (kept, or rebuilt after a reload; localReplica.js)
+        const f = fid ? this.fields.find((x) => x.fieldId === fid) : null;
+        if (fid && !(f && this._offerLocal(ps, f, { resend: true }))) this._sendField(playerId, fid);
       }
     } else if (this.lastResultMsg) {
       this.sendTo(playerId, { ...this.lastResultMsg, playerId });
@@ -153,6 +155,7 @@ export class MatchPlatform {
       ps.connected = false;
       ps.autoplay = false;
       this.watchers.delete(playerId);
+      this.localViews.delete(playerId);
       if (this.ended) return;
       this._resume();
       if (this.clientCombat) this._authorityLost(ps, 'left');

@@ -13,6 +13,7 @@ environment:
   SP_COMBAT_WORKERS: "6"
 ```
 
+- 本地显示副本（2026-10-12）：Worker 演算的普通战场/联防默认以 `b.start { local: true }` 交给声明了 `g.sim { local: true }` 的本人浏览器本地演算显示，Worker 每 2 游戏秒发送状态摘要 `b.sync`，摘要或结束帧不一致、加载失败或设备过慢时该浏览器回到 `b.snap` 推流。结果、层数、LP、伤害榜与结算仍只取 Worker。`SP_LOCAL_REPLICA=0` 关闭（需重建游戏角色才生效）。观战、观众席与 Boss/隐藏核心战场保持推流。
 - `SP_COMBAT_WORKERS` 默认 `0`：保持原单线程实现。接受 `0..32` 的整数，格式错误在监听端口前报错。
 - 固定池由服务器启动时创建、Lobby 注入每个 Match；线程被全部房间共用，不是每个房间创建线程。
 - 一整个战斗阶段的所有 field 始终在同一个 Worker，包括共享 Boss HP、团队 LP、超时扣血和同 tick 的结束顺序。不同阶段可重新分配。

@@ -53,6 +53,13 @@ validated completion callback; only precomputed headless results wait for their 
 unverified midbattle client-layer authority is introduced. The tools-only official golden reference defers rewards to
 SETTLE; both upstream 0.2.1 and this fork use the original battlefield for 联防.
 
+Since 2026-10-12 a Worker-run normal / 联防 field is shown to its own players' browsers as a local display replica
+(`b.start { local: true }`) instead of the b.snap / b.ev stream when they declared `g.sim { local: true }`: the browser
+runs the Worker's BattleSpec, compares the Worker's state digest every 2 game seconds (`b.sync`, server/sim/syncHash.js)
+and goes back to the stream on any difference, a different end tick or a device too slow to keep up. The Worker battle
+remains the only authority over results, layers, LP, the damage board and settlement; watching teammates, spectator
+seats and boss / hidden fields keep the stream. `SP_LOCAL_REPLICA=0` turns it off (network.md, Local display replicas).
+
 Deployment uses server-authoritative whole-match cluster nodes and the existing Worker pools. Room-host experimental
 settings default to disabled revival and enabled shared pools; public matching inherits its allocated room's settings.
 Optional teammate rescue prevents elimination without resetting operators or economy, costs 10 LP with the helper at

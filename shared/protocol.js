@@ -482,6 +482,14 @@ export const C2S = {
   // solo pause (official PauseUp / ResumeUp, DESIGN §14): freezes the running battle (field clock, deadlines, the
   // browser's local runner) — solo matches only (co-op ⇒ WRONG_PHASE), only while a battle runs; m.public.paused
   'g.pause': { on: isBool },
+  // server-run combat, local display replicas (DESIGN §14): `local` — this browser runs its own normal / 联防 fields from
+  // the b.start spec instead of being streamed them (sent once it has the sim loaded, and after a reconnect);
+  // `battleId` + `stream: true` — its replica of that battle diverged from a b.sync digest (`tick`) or cannot keep up:
+  // the server streams that field to it from then on
+  'g.sim': {
+    local: isBool, battleId: isId, stream: (v) => v === true, tick: (v) => isInt(v, 0, 1e7),
+    $optional: ['local', 'battleId', 'stream', 'tick'],
+  },
   // the stats the own board's units start their next battle with (user playtest #4 item 7; prep phases): answered by
   // the push m.unitStats { seq, round, units: [unitStatsEntry] }; `seq` is echoed so the client keeps the newest answer
   'g.unitStats': { seq: (v) => isInt(v, 0, 2 ** 31), $optional: ['seq'] },
@@ -528,9 +536,12 @@ export const S2C = [
   // (players and spectator seats)
   'm.removed', 'm.notice',
   // client-side combat (DESIGN §14): b.start { battleId, fieldId, kind, spec, authoritative, startAt, serverNow, elapsed,
-  // speed, watch? } · b.pool { hp, max, teamLp, acked: { [fieldId]: cumulative boss damage counted } } ·
-  // b.end { battleId, fieldId, reason }
+  // speed, watch?, local? } · b.pool { hp, max, teamLp, acked: { [fieldId]: cumulative boss damage counted } } ·
+  // b.end { battleId, fieldId, reason } — reason 'stream': drop that local display replica, the field is streamed now
   'b.start', 'b.pool', 'b.end',
+  // server-run combat, local display replicas (g.sim): b.sync { battleId, tick, h, done? } — the Worker battle's state
+  // digest (server/sim/syncHash.js) right after step `tick`; `done`: the step that finished it
+  'b.sync',
   // Complete public round ledger (server combat): m.damage { matchId, round, phase: normal|unite|boss|hidden,
   // status: live|frozen, owners: [{ playerId, name?, seat?, total, otherDamage,
   // operators: [{ key, uid, defId, damage }] }] }. PREP retains frozen previous-round rows; battle start resets.

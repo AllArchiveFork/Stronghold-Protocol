@@ -60,6 +60,8 @@ export class MatchWatch {
       if ((f.kind === 'boss' || f.kind === 'hidden') && own && own !== f.fieldId) return fail(ERR.BAD_TARGET, 'other group hidden');
       this.watchers.set(ps.playerId, fieldId);
       this._watchPrefSet(ps, f, playerId);
+      // 返回战场 to a field this browser runs locally: it re-shows its own replica (localReplica.js)
+      if (this._offerLocal(ps, f, { resend: true })) { this._sendDamageTo(ps.playerId); return OK; }
       this._sendField(ps.playerId, fieldId);
       return OK;
     }
@@ -172,7 +174,8 @@ export class MatchWatch {
       const f = own || this._watchTargetField(ps, this.fields) || this.fields[0];
       if (!f) continue;
       this.watchers.set(ps.playerId, f.fieldId);
-      if (ps.connected) this._sendField(ps.playerId, f.fieldId);
+      // the own field of a browser that simulates locally: b.start instead of the stream (localReplica.js)
+      if (ps.connected && !(f === own && this._offerLocal(ps, f))) this._sendField(ps.playerId, f.fieldId);
     }
   }
 

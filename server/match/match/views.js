@@ -96,6 +96,8 @@ export class MatchViews {
       spRound: this.gd.spRounds().includes(this.round),
       // DESIGN §14: 'client' = battles are simulated by the browsers (b.start specs), 'server' = legacy streaming
       combatMode: this.clientCombat ? 'client' : 'server',
+      // server-run combat: a browser may run its own normal / 联防 fields as local display replicas (g.sim, localReplica.js)
+      localReplica: !this.clientCombat && !!this.localReplica,
       // solo pause (g.pause, DESIGN §14): the battle, its field clock and every deadline are frozen while true
       paused: !!this.paused,
       revival: {

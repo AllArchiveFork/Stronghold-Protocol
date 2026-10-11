@@ -156,6 +156,24 @@ and no-gain 联防 / boss / hidden flags remain. Precomputed headless results wa
 legacy client results retain the validated completion callback, with no new midbattle client-layer authority.
 See [DESIGN.md — Stardust fork overrides](../DESIGN.md#stardust-fork-overrides).
 
+**Local display replicas (server-run combat, Stardust; `Match` option `localReplica`, env `SP_LOCAL_REPLICA=0` turns it
+off).** `m.public.localReplica` says the match offers them. A seated player's browser that has the sim loaded sends
+C→S `g.sim { local: true }` (once per match and again after a reconnect; localStorage `sp.localSim = '0'` opts out). From
+then on its own Worker-run normal / 联防 field arrives as S→C `b.start { …, authoritative: false, watch: false, local:
+true }` with the very spec the Worker runs, instead of `m.field` + `b.snap` / `b.ev` (the Worker skips encoding a field
+nobody streams). The Worker digests that field right after every step that ends on a multiple of `SYNC_TICKS` (60 = 2
+game s) and after the finishing step (`server/sim/syncHash.js`: rng state, counters, every unit's id / flags / hp / x /
+y / skill sp by their IEEE bits — plain fields only, never a lazy stat getter), sent as S→C `b.sync { battleId, tick,
+h, done? }`. The browser runner takes the same digest after the same steps of its replica (`battle/runner.js`); a
+different digest, a different end tick, a construction / sim-load failure or replica steps averaging over
+`SLOW_TICK_MS` send `g.sim { battleId, stream: true, tick? }` (or `g.sim { local: false }` for a slow device) and drop
+the replica; the server answers `b.end { reason: 'stream' }`, streams that field from its current state and never
+offers it locally again. A reconnect or a 返回战场 re-sends the b.start (the runner keeps or rebuilds its Battle);
+watching a teammate, spectator seats, eliminated players and boss / hidden fields (one pool shared across fields)
+stay streamed. Nothing the browser computes is read by the server: results, layers, LP, `m.damage` and settlement
+come from the Worker battle as before. Determinism across engines rests on `server/sim/detmath.js`; Chrome 148,
+Firefox 157 and Node's browser loader reproduced every digest of 480 real specs (4 full matches + golden scenarios).
+
 **Why:** like the official client, each player's browser simulates its own battle locally and uploads the result. The server no longer paces battles in real time nor streams `b.snap`/`b.ev` for combat, so a low-power host (e.g. a Windows mini PC) is enough, and combat rendering has no network jitter. Measured (4 human seats, HARD, real sim, in-process): server CPU per combat round ≈ 170–360 ms → ≈ 1 ms; server→client traffic ≈ 2–3.3 MB → ≈ 0.25 MB per round. Browser cost ≈ 0.05–0.1 ms per tick (≈ 3–6 ms per real second at 2×) on the main thread (no worker needed).
 
 **Modes (upstream / legacy client path).** `Match` option `clientCombat` (constructor default **on**; env `SP_COMBAT=server` → server-run + streaming, the active Stardust configuration above). `m.public.combatMode` = `'client' | 'server'` tells the UI which one runs.

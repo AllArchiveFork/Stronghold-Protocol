@@ -175,7 +175,7 @@ export class WorkerFieldRunner {
     if (this.m.paused) return;
     for (const pending of [this.resync, this.damageResync]) for (const [pid, fid] of pending) {
       const ps = this.m.players.get(pid) || this.m.spectators.get(pid);
-      if (!ps?.connected || ps.left || this.m.watchers.get(pid) !== fid) pending.delete(pid);
+      if (!ps?.connected || ps.left || this.m.watchers.get(pid) !== fid || this.m._localShows?.(pid, fid)) pending.delete(pid);
     }
     if (this.resync.size || this.damageResync.size) {
       this._request('state', { snapshotFields: [...new Set(this.resync.values())] });
@@ -185,7 +185,8 @@ export class WorkerFieldRunner {
     this.acc = Math.max(0, this.acc - n * TICK);
     if (n > 0) {
       const snapshotFields = this.fields.filter((f) => this._watchers(f.fieldId).length).map((f) => f.fieldId);
-      this._request('advance', { ticks: n, snapshotFields, metaFields: this._metaFields(snapshotFields) });
+      const syncFields = this.fields.filter((f) => f.live && this._localViewers(f.fieldId).length).map((f) => f.fieldId);
+      this._request('advance', { ticks: n, snapshotFields, metaFields: this._metaFields(snapshotFields), syncFields });
     }
   }
 
@@ -236,6 +237,13 @@ export class WorkerFieldRunner {
       f.live = view.live;
       f.battle.update(view);
       this.m._syncNormalLayers?.(f, f.battle.layerGains);
+    }
+    // Local display replicas compare these digests with their own (DESIGN §14 "Local display replicas").
+    for (const sync of out.syncs || []) {
+      const f = this.fields.find((x) => x.fieldId === sync.fieldId);
+      if (!f?.battleId) continue;
+      const msg = { t: 'b.sync', battleId: f.battleId, tick: sync.tick, h: sync.h, ...(sync.done ? { done: true } : {}) };
+      for (const pid of this._localViewers(f.fieldId)) this.m.sendTo(pid, msg);
     }
     // Replay ordered deltas once, then reconcile the authoritative totals. The main-thread pool is a HUD/stat mirror;
     // no live Battle has access to it. Threshold tickers still observe each hit in the original order.
@@ -323,10 +331,19 @@ export class WorkerFieldRunner {
     }
   }
 
+  /** Connected viewers streamed this field: not those whose browser runs it as a local display replica. */
   _watchers(fieldId) {
     return this.m.watchersOf(fieldId).filter((pid) => {
       const ps = this.m.players.get(pid) || this.m.spectators.get(pid);
-      return ps && ps.connected && !ps.left;
+      return ps && ps.connected && !ps.left && !this.m._localShows?.(pid, fieldId);
+    });
+  }
+
+  /** Connected viewers running this field locally: they get its b.sync digests instead of frames. */
+  _localViewers(fieldId) {
+    return this.m.watchersOf(fieldId).filter((pid) => {
+      const ps = this.m.players.get(pid);
+      return ps && ps.connected && !ps.left && !!this.m._localShows?.(pid, fieldId);
     });
   }
 
