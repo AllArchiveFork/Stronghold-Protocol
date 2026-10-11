@@ -5,6 +5,10 @@ The coordinator, the bundle's fixed 16 or 32 games and N local ingress share the
 The node count and per-game worker pools come only from the verified core policy. Core keys and runtime
 files are reused untouched; ingress dial the bridge directly and nothing is published on the WG address.
 The root host manager does not cover this stack (no leases, priority or CAS), see LOCAL-STACK.md.
+
+Opt-in --ingress-link: one new 32-byte key per local ingress (only here, never copied), each ingress mounting only its
+own key and naming the coordinator's private bridge listener; the coordinator gets a DERIVED runtime (the verified core
+runtime plus `ingresses`) and the link-key directory. Without it the output is byte-identical.
 """
 import argparse
 import hashlib
@@ -12,6 +16,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import secrets
 import sys
 
 _DEPLOY_SPEC = importlib.util.spec_from_file_location('cluster_local_deploy', Path(__file__).resolve().with_name('cluster-deploy.py'))
@@ -47,7 +52,7 @@ ONLINE_LIMIT_MOUNT = '/run/limits'
 ONLINE_LIMIT_FILE = ONLINE_LIMIT_MOUNT + '/online-limit.json'
 
 
-def compose(core_bundle, out, *, profile='beta', ingress_instances=1, online_limit_dir=None):
+def compose(core_bundle, out, *, profile='beta', ingress_instances=1, ingress_link=False, online_limit_dir=None):
     p = profiles.get_profile(profile)
     if online_limit_dir is not None:
         online_limit_dir = protected(online_limit_dir, profile)
@@ -56,6 +61,7 @@ def compose(core_bundle, out, *, profile='beta', ingress_instances=1, online_lim
                 'online limit directory must exist, be a directory, owned and not group/world writable')
     # The exact per-inventory bound is checked once the verified core policy fixes the node count.
     require(type(ingress_instances) is int and ingress_instances >= 1, 'invalid fixed ingress instance count')
+    require(ingress_link in (True, False), 'invalid ingress link option')
     core_bundle, out = protected(core_bundle, profile), protected(out, profile, missing=True)
     require(not out.exists(), 'output already exists; never overwrite a release')
     parent = out.parent.stat()
@@ -86,6 +92,15 @@ def compose(core_bundle, out, *, profile='beta', ingress_instances=1, online_lim
             runtime = json.loads((core_bundle / 'runtime' / name / 'runtime.json').read_bytes())
             pair = (runtime.get('combatWorkers'), runtime.get('trialWorkers')) if isinstance(runtime, dict) else (None, None)
             require(deploy.valid_workers(*pair) and pair == workers, 'core bundle worker runtime changed')
+    coordinator_runtime = None
+    if ingress_link:
+        target = next((row for row in policy.get('targets', []) if row.get('service') == 'coordinator'), None)
+        runtime_file = core_bundle / 'runtime' / 'coordinator' / 'runtime.json'
+        raw_runtime = runtime_file.read_bytes()
+        require(target is not None and target.get('runtime_file') == str(runtime_file)
+                and hashlib.sha256(raw_runtime).hexdigest() == target.get('runtime_sha256'), 'unverified coordinator runtime refused')
+        coordinator_runtime = json.loads(raw_runtime)
+        require(coordinator_runtime.get('role') == 'coordinator' and 'ingresses' not in coordinator_runtime, 'unexpected coordinator runtime')
     project, services = local_project(profile), {}
     for name, value in core['services'].items():
         value = json.loads(json.dumps(value))
@@ -99,21 +114,36 @@ def compose(core_bundle, out, *, profile='beta', ingress_instances=1, online_lim
             value['volumes'] = [*value['volumes'], str(online_limit_dir) + ':' + ONLINE_LIMIT_MOUNT + ':ro']
             value['environment'] = {**value['environment'], 'SP_ONLINE_LIMIT_FILE': ONLINE_LIMIT_FILE}
         services[name] = value
+    original_config = str(core_bundle / 'runtime' / 'coordinator') + ':/run/config:ro'
+    require(not ingress_link or services['coordinator']['volumes'][0] == original_config, 'unexpected coordinator config mount')
     deploy.mkdir_new(out)
     deploy.mkdir_new(out / 'runtime')
+    names = [local_ingress_service(instance, profile, nodes) for instance in range(1, ingress_instances + 1)]
+    if ingress_link:
+        # New per-ingress link keys exist only in this stack; the coordinator reads the directory, each ingress its own file.
+        deploy.mkdir_new(out / 'link-keys')
+        for name in names:
+            deploy.write_new(out / 'link-keys' / (name + '.key'), secrets.token_bytes(32))
+        runtime = {**coordinator_runtime, 'ingresses': [{'ingressId': name, 'keyFile': '/run/link-secrets/' + name + '.key'} for name in names]}
+        deploy.mkdir_new(out / 'runtime' / 'coordinator')
+        deploy.write_new(out / 'runtime' / 'coordinator' / 'runtime.json', deploy.canonical(runtime))
+        volumes = services['coordinator']['volumes']
+        services['coordinator']['volumes'] = [str(out / 'runtime' / 'coordinator') + ':/run/config:ro', *volumes[1:],
+                                              str(out / 'link-keys') + ':/run/link-secrets:ro']
     config = {'role': 'ingress', 'host': '0.0.0.0', 'port': 3000, 'coordinatorUrl': f'http://{p.core_ip(2)}:3000',
               'nodes': [{'nodeId': 'game-%02d' % i, 'url': f'http://{p.game_ip(i)}:3000'} for i in range(1, nodes + 1)],
               'origins': [p.origin], 'wsCompression': 'on', 'trustProxy': 'auto'}
     ingress = []
-    for instance in range(1, ingress_instances + 1):
-        name = local_ingress_service(instance, profile, nodes)
+    for instance, name in enumerate(names, start=1):
         directory = out / 'runtime' / name
         deploy.mkdir_new(directory)
-        deploy.write_new(directory / 'runtime.json', deploy.canonical(config))
+        own = {**config, 'link': {'url': f'http://{p.core_ip(2)}:3001/', 'ingressId': name, 'keyFile': '/run/secrets/link.key'}} if ingress_link else config
+        deploy.write_new(directory / 'runtime.json', deploy.canonical(own))
         ip, port = p.local_ingress_ip(instance, nodes), p.local_ingress_host_port(instance, nodes)
         value = deploy.service('ingress', project + '-' + name, directory, image=policy['image_id'], build=policy['build'],
                                kind=policy['source_kind'], manifest=policy['manifest_sha256'], profile=profile, ip=ip,
-                               ports=[f'127.0.0.1:{port}:3000'])
+                               ports=[f'127.0.0.1:{port}:3000'],
+                               secrets_mounts=[str(out / 'link-keys' / (name + '.key')) + ':/run/secrets/link.key:ro'] if ingress_link else ())
         value['restart'] = 'unless-stopped'
         services[name] = value
         ingress.append({'service': name, 'container_ip': ip, 'host_port': port})
@@ -137,13 +167,15 @@ def main():
     parser.add_argument('--out', required=True)
     # 1..8 behind sixteen nodes (Beta 1..2); Formal 32-node stacks accept 1..16.
     parser.add_argument('--ingress-instances', type=int, default=1, choices=range(1, 17))
+    # Opt-in multiplexed ingress links: new per-ingress keys exist only in this stack (LOCAL-STACK.md).
+    parser.add_argument('--ingress-link', action='store_true')
     # optional: mount this host directory for the coordinator's online cap (online-limit.json inside, may be absent)
     parser.add_argument('--online-limit-dir')
     args = parser.parse_args()
     try:
         require(os.geteuid() == 0, 'host root required for protected stack generation')
         summary = compose(args.core_bundle, args.out, profile=args.profile, ingress_instances=args.ingress_instances,
-                          online_limit_dir=args.online_limit_dir)
+                          ingress_link=args.ingress_link, online_limit_dir=args.online_limit_dir)
         print(json.dumps({'event': 'cluster-local-stack-prepared', 'project': summary['project'],
                           'ingress': len(summary['ingress']), 'activated': False}))
         return 0

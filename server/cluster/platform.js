@@ -29,13 +29,14 @@ function pause(ms, signal) {
 }
 
 export class RemoteGamePlatform {
-  constructor({ nodes, build, protocol, sendControl, sendControlEncoded = null, onUnavailable = () => {}, onPublished = () => {},
+  constructor({ nodes, build, protocol, sendControl, sendControlEncoded = null, sendControlParts = null, onUnavailable = () => {}, onPublished = () => {},
     requireStreamMarkers = false, now = Date.now, directory, allocationMs = 5000, pollMs = 50, loadTtlMs = 5000, nodeLostMs = 15_000,
     metrics = NO_PHASES }) {
     if (!Array.isArray(nodes) || !nodes.length || !safeId(build) || !Number.isSafeInteger(protocol) || protocol < 1
       || typeof sendControl !== 'function' || typeof onUnavailable !== 'function' || typeof onPublished !== 'function'
       || typeof requireStreamMarkers !== 'boolean' || typeof now !== 'function'
-      || (sendControlEncoded !== null && typeof sendControlEncoded !== 'function')) throw new TypeError('invalid game platform');
+      || (sendControlEncoded !== null && typeof sendControlEncoded !== 'function')
+      || (sendControlParts !== null && typeof sendControlParts !== 'function')) throw new TypeError('invalid game platform');
     if (!Number.isSafeInteger(allocationMs) || allocationMs < 1 || allocationMs > 6000
       || !Number.isSafeInteger(pollMs) || pollMs < 1 || pollMs > 1000
       || !Number.isSafeInteger(loadTtlMs) || loadTtlMs < 1 || loadTtlMs > 30_000
@@ -45,6 +46,8 @@ export class RemoteGamePlatform {
     this.sendControl = sendControl;
     /** (sessionId, type, encodedFrame) → boolean: the same ordered control path for a frame already encoded */
     this.sendControlEncoded = sendControlEncoded;
+    /** ([{ sessionId, prefix, suffix }], shared, type): member i gets prefix_i + shared + suffix_i on its control path */
+    this.sendControlParts = sendControlParts;
     this.nodeLostMs = nodeLostMs;
     this.metrics = metrics;
     this.onUnavailable = onUnavailable;
@@ -470,7 +473,9 @@ export class RemoteGamePlatform {
    * Only validated, bounded terminal frames may use the low-rate control path. `lastPublic` (or null) and each
    * `results` value are the JSON texts the lobby validated: every member's cluster.terminal frame is spliced from
    * them, byte-identical to encoding { t, assignmentId, sessionId, lastPublic, result }, never re-serialized per
-   * member. With sendControlEncoded the shared final public frame is UTF-8 encoded once for all members.
+   * member. With sendControlEncoded the shared final public frame is UTF-8 encoded once for all members; with
+   * sendControlParts it is handed over once (one copy per ingress link). A member's own control frames sent here
+   * (a late observer's cluster.prepare) still precede its terminal frame.
    * @param {string} assignmentId
    * @param {{ lastPublic: string | null, results: Map<string, string> }} end
    * @param {Iterable<string>} memberIds
@@ -482,6 +487,7 @@ export class RemoteGamePlatform {
     const head = `{"t":"cluster.terminal","assignmentId":${JSON.stringify(assignmentId)},"sessionId":`;
     const tail = `,"lastPublic":${lastPublic ?? 'null'},"result":`;
     let tailBytes = null;
+    const parts = [];
     for (const sessionId of memberIds) {
       if (ctx.revokedMembers.has(sessionId) || !results.has(sessionId)) continue;
       if (!ctx.members.has(sessionId)) {
@@ -491,6 +497,10 @@ export class RemoteGamePlatform {
         ctx.members.set(sessionId, 'spectator');
         try { this.control(ctx, 'cluster.prepare', sessionId); } catch {}
       }
+      if (this.sendControlParts) {
+        parts.push({ sessionId, prefix: Buffer.from(`${head}${JSON.stringify(sessionId)},"lastPublic":`), suffix: Buffer.from(`,"result":${results.get(sessionId)}}`) });
+        continue;
+      }
       try {
         if (this.sendControlEncoded) {
           tailBytes ??= Buffer.from(tail);
@@ -498,6 +508,10 @@ export class RemoteGamePlatform {
             Buffer.from(`${results.get(sessionId)}}`)]));
         } else this.sendControl(sessionId, JSON.parse(`${head}${JSON.stringify(sessionId)}${tail}${results.get(sessionId)}}`));
       } catch { /* offline/slow members get their own lobby replay on reconnect */ }
+    }
+    if (parts.length) {
+      try { this.sendControlParts(parts, Buffer.from(lastPublic ?? 'null'), 'cluster.terminal'); }
+      catch { /* offline/slow members get their own lobby replay on reconnect */ }
     }
     return true;
   }

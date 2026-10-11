@@ -99,3 +99,28 @@ test('public game display slots are bounded, unique and available only on game o
   await assert.rejects(f.write({ role: 'ingress', host: '127.0.0.1', port: 34101, coordinatorUrl: 'http://10.253.77.2:34100/',
     nodes: [{ nodeId: 'game-1', publicSlot: 1, url: 'http://10.253.77.2:34111/' }], origins: ['https://ark-proto.stardust.matce.cn'] }));
 });
+
+test('opt-in ingress links: the coordinator loads one key per ingress id, an ingress only its own key and a private link URL', async t => {
+  const f = await fixture(t), other = path.join(f.dir, 'ingress-02-key');
+  await writeFile(other, randomBytes(32), { mode: 0o600 });
+  const coordinator = { role: 'coordinator', build, host: '127.0.0.1', port: 34100, privateHost: '127.0.0.1', privatePort: 34110,
+    nodes: [{ nodeId: 'game-1', url: 'http://10.253.77.2:34111/', keyFile: f.keyFile }] };
+  assert.equal(Object.hasOwn(await f.write(coordinator), 'ingresses'), false, 'absent = the direct path only');
+  const linked = await f.write({ ...coordinator, ingresses: [{ ingressId: 'ingress', keyFile: f.keyFile }, { ingressId: 'ingress-02', keyFile: other }] });
+  assert.deepEqual(linked.ingresses.map(entry => [entry.ingressId, entry.key.length, Object.hasOwn(entry, 'keyFile')]), [['ingress', 32, false], ['ingress-02', 32, false]]);
+  for (const ingresses of [[], [{ ingressId: 'ingress', keyFile: f.keyFile }, { ingressId: 'ingress', keyFile: other }],
+    [{ ingressId: 'bad id', keyFile: f.keyFile }], [{ ingressId: 'ingress', keyFile: 'relative.key' }], [{ ingressId: 'ingress', keyFile: f.keyFile, key: 'inline' }],
+    [{ ingressId: 'ingress', keyFile: path.join(f.dir, 'missing.key') }], 'ingress']) {
+    await assert.rejects(f.write({ ...coordinator, ingresses }));
+  }
+  const ingress = { role: 'ingress', host: '127.0.0.1', port: 34101, coordinatorUrl: 'http://10.253.77.2:34100/',
+    nodes: [{ nodeId: 'game-1', url: 'http://10.253.77.2:34111/' }], origins: ['https://ark-proto.stardust.matce.cn'] };
+  const value = await f.write({ ...ingress, link: { url: 'http://10.253.77.2:34110/', ingressId: 'ingress-02', keyFile: other, count: 2 } });
+  assert.deepEqual([value.link.url, value.link.ingressId, value.link.count, value.link.key.length, Object.hasOwn(value.link, 'keyFile')],
+    ['http://10.253.77.2:34110/', 'ingress-02', 2, 32, false]);
+  for (const link of [{ url: 'http://8.8.8.8/', ingressId: 'ingress', keyFile: other }, { url: 'http://10.253.77.2:34110/', ingressId: 'ingress', keyFile: other, count: 3 },
+    { url: 'http://10.253.77.2:34110/_cluster/link', ingressId: 'ingress', keyFile: other }, { url: 'http://10.253.77.2:34110/', keyFile: other },
+    { url: 'http://10.253.77.2:34110/', ingressId: 'ingress', keyFile: other, key: 'inline' }]) {
+    await assert.rejects(f.write({ ...ingress, link }));
+  }
+});

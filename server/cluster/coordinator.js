@@ -1,9 +1,13 @@
 // Opt-in assembly: one global Lobby and a separate authenticated terminal-event
 // listener. High-frequency game data goes directly from nodes to ingress sockets.
 // /healthz `performance.phases` carries this process's per-phase timings (server/phaseMetrics.js).
+// Opt-in `ingresses` (per-ingress link keys) also accepts authenticated ingress links on the private listener
+// (link-server.js): each carries all browser sessions of one ingress instead of one WebSocket per browser.
 import http from 'node:http';
 import { startServer } from '../index.js';
-import { sendSession, sendSessionEncoded } from '../net.js';
+import { sendEncodedParts, sendSession, sendSessionEncoded } from '../net.js';
+import { isCompressibleType } from '../wsCompression.js';
+import { createLinkServer } from './link-server.js';
 import { createPhaseMetrics } from '../phaseMetrics.js';
 import { PROTOCOL_VERSION } from '../../shared/constants.js';
 import { ClusterLobby } from './lobby.js';
@@ -23,10 +27,11 @@ export const RECEIPT_OFF_THREAD_BYTES = 128 * 1024;
 export const closeReasonFor = reason => (reason === 'NODE_RESTARTED' ? 'node-restarted' : 'node-unavailable');
 
 export async function startCoordinator({ nodes, build, protocol = PROTOCOL_VERSION, privateHost = '127.0.0.1', privatePort = 0,
-  heartbeatMs = 1500, nodeLostMs = 15_000, receiptWorker = false, ...options } = {}) {
+  heartbeatMs = 1500, nodeLostMs = 15_000, receiptWorker = false, ingresses = [], ...options } = {}) {
   if (!Number.isSafeInteger(privatePort) || privatePort < 0 || privatePort > 65535 || typeof privateHost !== 'string' || !privateHost
-    || !Number.isSafeInteger(heartbeatMs) || heartbeatMs < 100 || heartbeatMs > 30_000 || typeof receiptWorker !== 'boolean') throw new TypeError('invalid coordinator listener');
-  let app, sink, privateServer, timer, stopped = false, closing;
+    || !Number.isSafeInteger(heartbeatMs) || heartbeatMs < 100 || heartbeatMs > 30_000 || typeof receiptWorker !== 'boolean'
+    || !Array.isArray(ingresses)) throw new TypeError('invalid coordinator listener');
+  let app, sink, privateServer, timer, links = null, stopped = false, closing;
   const privateSockets = new Set(), handlers = new Map();
   const phases = createPhaseMetrics();
   let platform;
@@ -35,6 +40,15 @@ export async function startCoordinator({ nodes, build, protocol = PROTOCOL_VERSI
       loadTtlMs: Math.max(5000, Math.min(30_000, heartbeatMs * 3)),
       sendControl: (playerId, message) => app ? sendSession(app.registry.byId(playerId), message) : false,
       sendControlEncoded: (playerId, type, frame) => app ? sendSessionEncoded(app.registry.byId(playerId), type, frame) : false,
+      sendControlParts: (parts, shared, type) => {
+        if (!app) return 0;
+        const entries = [];
+        for (const { sessionId, prefix, suffix } of parts) {
+          const session = app.registry.byId(sessionId);
+          if (session?.connected) entries.push({ ws: session.ws, prefix, suffix });
+        }
+        return sendEncodedParts(entries, shared, { compress: isCompressibleType(type) });
+      },
       onPublished: assignmentId => sink?.flush(assignmentId),
       onUnavailable: info => {
         // Losing the node is not victory/defeat and cannot manufacture a result.
@@ -62,6 +76,9 @@ export async function startCoordinator({ nodes, build, protocol = PROTOCOL_VERSI
       void handler(req, res).catch(() => { if (!res.headersSent && !res.destroyed) { res.writeHead(500); res.end(); } else res.destroy(); });
     });
     privateServer.on('connection', socket => { privateSockets.add(socket); socket.once('close', () => privateSockets.delete(socket)); });
+    if (ingresses.length) links = createLinkServer({ network: app.network, ingresses });
+    // Only the authenticated link path upgrades here; anything else is closed as before (no upgrade listener).
+    privateServer.on('upgrade', (req, socket, head) => { if (stopped || !links?.handleUpgrade(req, socket, head)) socket.destroy(); });
     await new Promise((resolve, reject) => {
       privateServer.once('error', reject);
       privateServer.listen(privatePort, privateHost, () => { privateServer.removeListener('error', reject); resolve(); });
@@ -76,7 +93,7 @@ export async function startCoordinator({ nodes, build, protocol = PROTOCOL_VERSI
     }, heartbeatMs);
     timer.unref?.();
   } catch (e) {
-    clearInterval(timer); sink?.close();
+    clearInterval(timer); sink?.close(); links?.close();
     await app?.close(); await platform.close(); phases.dispose();
     if (privateServer) { for (const socket of privateSockets) socket.destroy(); await new Promise(resolve => privateServer.close(resolve)); }
     throw e;
@@ -102,7 +119,9 @@ export async function startCoordinator({ nodes, build, protocol = PROTOCOL_VERSI
     if (closing) return closing;
     stopped = true; clearInterval(timer); sink.close();
     closing = (async () => {
-      await app.close(); await platform.close();
+      await app.close();
+      await links?.close(); // after the sessions' own close frames are queued on their links
+      await platform.close();
       for (const socket of privateSockets) socket.destroy();
       await new Promise(resolve => privateServer.close(resolve));
       phases.dispose();
@@ -110,5 +129,5 @@ export async function startCoordinator({ nodes, build, protocol = PROTOCOL_VERSI
     return closing;
   };
   const address = privateServer.address(), hostname = address.address.includes(':') ? `[${address.address}]` : address.address;
-  return { ...app, platform, receiptSink: sink, privateServer, privateUrl: `http://${hostname}:${address.port}`, addNodes, close };
+  return { ...app, platform, receiptSink: sink, privateServer, privateUrl: `http://${hostname}:${address.port}`, linkServer: links, addNodes, close };
 }

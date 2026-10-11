@@ -60,6 +60,22 @@ function checkNodes(nodes, withKey) {
     if (withKey) externalPath(node.keyFile);
   }
 }
+// Opt-in ingress links (link.js): the coordinator lists every ingress id with its own 32-byte key file; an ingress
+// names the coordinator's PRIVATE listener, its id and its key file. Absent = the direct per-browser path.
+function checkIngresses(ingresses) {
+  if (!Array.isArray(ingresses) || ingresses.length < 1 || ingresses.length > 32
+    || new Set(ingresses.map(entry => entry?.ingressId)).size !== ingresses.length) fail('INVALID_INGRESS_LINKS');
+  for (const entry of ingresses) {
+    if (!exact(entry, ['ingressId', 'keyFile']) || !id(entry.ingressId)) fail('INVALID_INGRESS_LINKS');
+    externalPath(entry.keyFile);
+  }
+}
+function checkLink(link) {
+  if (!exact(link, ['url', 'ingressId', 'keyFile'], ['count']) || !upstream(link.url) || !id(link.ingressId)
+    || link.count !== undefined && ![1, 2].includes(link.count)) fail('INVALID_INGRESS_LINK');
+  externalPath(link.keyFile);
+}
+
 export async function loadClusterConfig(file) {
   const bytes = await protectedFile(file, 64 * 1024);
   let config;
@@ -78,16 +94,19 @@ export async function loadClusterConfig(file) {
     return { ...runtime, key };
   }
   if (config.role === 'coordinator') {
-    if (!exact(config, ['role', 'build', 'host', 'port', 'privateHost', 'privatePort', 'nodes'], ['heartbeatMs', 'snapshotHz', 'receiptWorker'])
+    if (!exact(config, ['role', 'build', 'host', 'port', 'privateHost', 'privatePort', 'nodes'], ['heartbeatMs', 'snapshotHz', 'receiptWorker', 'ingresses'])
       || !bindHost(config.privateHost) || !port(config.privatePort)
       || config.receiptWorker !== undefined && typeof config.receiptWorker !== 'boolean'
       || config.snapshotHz !== undefined && ![5, 10, 20].includes(config.snapshotHz)
       || config.heartbeatMs !== undefined && (!Number.isInteger(config.heartbeatMs) || config.heartbeatMs < 100 || config.heartbeatMs > 30000)) fail('INVALID_CONFIG');
     checkNodes(config.nodes, true);
+    if (config.ingresses !== undefined) checkIngresses(config.ingresses);
     const nodes = await Promise.all(config.nodes.map(async node => { const { keyFile, ...runtime } = node; return { ...runtime, key: await protectedFile(keyFile, 32, 32) }; }));
-    return { ...config, nodes };
+    if (config.ingresses === undefined) return { ...config, nodes };
+    const ingresses = await Promise.all(config.ingresses.map(async ({ ingressId, keyFile }) => ({ ingressId, key: await protectedFile(keyFile, 32, 32) })));
+    return { ...config, nodes, ingresses };
   }
-  if (!exact(config, ['role', 'host', 'port', 'coordinatorUrl', 'nodes', 'origins'], ['wsCompression', 'trustProxy'])
+  if (!exact(config, ['role', 'host', 'port', 'coordinatorUrl', 'nodes', 'origins'], ['wsCompression', 'trustProxy', 'link'])
     || !upstream(config.coordinatorUrl) || config.wsCompression !== undefined && !['on', 'off'].includes(config.wsCompression)
     || config.trustProxy !== undefined && !['auto', true, false].includes(config.trustProxy)
     || !Array.isArray(config.origins) || !config.origins.length) fail('INVALID_CONFIG');
@@ -96,5 +115,8 @@ export async function loadClusterConfig(file) {
     catch { fail('INVALID_CONFIG'); }
   }
   checkNodes(config.nodes, false);
-  return config;
+  if (config.link === undefined) return config;
+  checkLink(config.link);
+  const { keyFile, ...link } = config.link;
+  return { ...config, link: { ...link, key: await protectedFile(keyFile, 32, 32) } };
 }

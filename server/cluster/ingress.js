@@ -1,7 +1,11 @@
 // Private WS ingress behind the existing TLS/password/Origin gate. One browser
 // socket carries lobby control and its assigned node's direct game stream.
+// Opt-in `link` ({ url, ingressId, key, count }): lobby control rides one or two
+// authenticated multiplexed links to the coordinator (link-client.js) instead of
+// one coordinator WebSocket per browser; everything else below is unchanged.
 import http from 'node:http';
 import { WebSocket, WebSocketServer } from 'ws';
+import { createLinkClient } from './link-client.js';
 import { NET_DEFAULTS, TokenBucket, clientAddress, encode, sendRaw, errorMsg, CLOSE, HEAVY_TYPES } from '../net.js';
 import { C2S, validateC2S } from '../../shared/protocol.js';
 import { ERR } from '../../shared/constants.js';
@@ -23,7 +27,7 @@ function targetUrl(value, path) {
 
 export async function startIngress({ host = '127.0.0.1', port = 0, coordinatorUrl, nodes, origins,
   wsCompression = 'on', trustProxy = 'auto', now = Date.now, heartbeatMs = NET_DEFAULTS.heartbeatMs,
-  connectMs = 5000, replacementGraceMs = 2000, shutdownMs = 1000 } = {}) {
+  connectMs = 5000, replacementGraceMs = 2000, shutdownMs = 1000, link = null } = {}) {
   if (typeof host !== 'string' || !host || !Number.isInteger(port) || port < 0 || port > 65535 || typeof now !== 'function'
     || !Array.isArray(nodes) || !Array.isArray(origins) || !origins.length) throw new TypeError('invalid ingress');
   for (const n of [heartbeatMs, connectMs, replacementGraceMs, shutdownMs]) if (!Number.isSafeInteger(n) || n < 1 || n > 300_000) throw new RangeError('invalid ingress deadline');
@@ -39,6 +43,7 @@ export async function startIngress({ host = '127.0.0.1', port = 0, coordinatorUr
     if (!safeId(node.nodeId) || gameUrls.has(node.nodeId)) throw new TypeError('invalid ingress node');
     gameUrls.set(node.nodeId, targetUrl(node.url, '/_cluster/game'));
   }
+  const linkClient = link === null ? null : createLinkClient({ url: link.url, ingressId: link.ingressId, key: link.key, count: link.count ?? 1, connectMs, now });
   const wss = new WebSocketServer({ noServer: true, clientTracking: true, maxPayload: 64 * 1024, perMessageDeflate: resolveWsCompression(wsCompression) });
   const peers = new Set(), sockets = new Set();
   let stopped = false, heartbeatTimer, closePromise;
@@ -190,7 +195,9 @@ export async function startIngress({ host = '127.0.0.1', port = 0, coordinatorUr
     const address = clientAddress(req, trustProxy);
     const headers = { origin: req.headers.origin, 'x-real-ip': address.ip, 'x-forwarded-for': address.ip,
       'x-forwarded-proto': new URL(req.headers.origin).protocol.slice(0, -1) };
-    const control = new WebSocket(controlUrl, { headers, perMessageDeflate: false, handshakeTimeout: connectMs, maxPayload: NET_DEFAULTS.hardBufferBytes });
+    const control = linkClient
+      ? linkClient.open({ ip: address.ip, origin: headers.origin, proto: headers['x-forwarded-proto'] })
+      : new WebSocket(controlUrl, { headers, perMessageDeflate: false, handshakeTimeout: connectMs, maxPayload: NET_DEFAULTS.hardBufferBytes });
     peer.control = control;
     peer.controlTimer = setTimeout(() => { if (!peer.controlReady) closePeer(peer); }, connectMs); peer.controlTimer.unref?.();
     control.on('open', () => {
@@ -274,7 +281,7 @@ export async function startIngress({ host = '127.0.0.1', port = 0, coordinatorUr
   });
   wss.on('error', () => {});
   try { await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, host, () => { server.removeListener('error', reject); resolve(); }); }); }
-  catch (e) { wss.close(); server.close(); throw new Error('ingress listen failed'); }
+  catch (e) { linkClient?.close(); wss.close(); server.close(); throw new Error('ingress listen failed'); }
   server.on('error', () => {});
   heartbeatTimer = setInterval(() => {
     for (const peer of peers) {
@@ -306,9 +313,11 @@ export async function startIngress({ host = '127.0.0.1', port = 0, coordinatorUr
       const done = () => { if (--pending === 0) { clearTimeout(force); resolve(); } };
       const force = setTimeout(() => { for (const peer of peers) { peer.client.terminate(); peer.control?.terminate(); peer.game?.socket.terminate(); peer.previousGame?.socket.terminate(); } for (const socket of sockets) socket.destroy(); }, shutdownMs);
       force.unref?.(); wss.close(done); server.close(done);
+      // Peers' control channels were closed above (their CLOSE frames are queued); then the links go.
+      if (linkClient) setImmediate(() => linkClient.close());
     });
     return closePromise;
   };
   const address = server.address(), hostname = address.address.includes(':') ? `[${address.address}]` : address.address;
-  return { url: `http://${hostname}:${address.port}`, server, wss, addRoutes, close };
+  return { url: `http://${hostname}:${address.port}`, server, wss, addRoutes, link: linkClient, close };
 }

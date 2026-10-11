@@ -85,6 +85,15 @@ node tools/coordbench.mjs --out after.json                                      
 
 结束收据在coordinator只解码/解析一次，转成各成员`m.result`、最终`m.public`与summary的JSON文本；`cluster.terminal`由这些文本按字节拼接（公共部分只做一次UTF-8编码），不再逐成员重新序列化。coordinator配置可选`"receiptWorker": true`（默认关闭）：≥128KiB的收据改由一个`worker_threads`线程校验SHA-256并解析，Worker异常/超时回退到同一内联实现。它会让coordinator出现1个WorkerThread；受`cluster-host-manager.py`管理的core profile要求coordinator为0个WorkerThread，开启前须同版更新该线程合同与对应policy批准，未受管的同机栈可直接在runtime配置中开启。
 
+## 入口多路复用链路
+
+可选（默认关闭，按 profile 由生成器开启，见 [LOCAL-STACK.md](LOCAL-STACK.md)）：ingress 不再为每个浏览器会话向 coordinator 开一条 WS，而是向 coordinator **私有监听** `/_cluster/link` 保持 1（或 2）条长连接，复用承载该 ingress 的全部会话（`server/cluster/link*.js`）。
+
+- 认证：每 ingress 一个独立 32 字节 key（coordinator 配置 `ingresses: [{ingressId, keyFile}]`，ingress 配置 `link: {url, ingressId, keyFile, count?}`）；升级请求带与节点 RPC 同构的 HMAC（独立 domain、时间窗、单次 nonce），coordinator 在 101 响应中回证同一 key，ingress 不会把会话交给未证明 key 的对端。key/签名/帧内容不记日志。
+- 帧：二进制 `[op][connId u32][payload]`；OPEN（客户端 ip/origin/proto，与直连时的转发头相同，走同一 admission/限流）、DATA（原样的 JSON 文本帧）、CLOSE（code/reason，1006=异常）、FANOUT（一份共享 payload + 每会话前后缀，presence、room.state、`cluster.terminal` 的 lastPublic 每链路只发一次）。connId 由 ingress 单调分配、永不复用；任何畸形帧、未知 op、越界/未开 connId、超限大小、非 UTF-8 → 断开整条链路，其会话按正常路径断线重连。
+- coordinator 侧每个会话是一个 socket 替身（readyState/bufferedAmount/send/close/terminate/事件），lobby/net 逻辑不变；会话内顺序 = 链路顺序；会话/房间/actor 代次、ticket、隐私与观战围栏不变。浏览器心跳在 ingress（它持有真实 socket，1 MB snap 丢弃/16 MB 断开语义不变），coordinator 只 ping 链路（10 秒），不再 ping 每个会话（hello 超时仍检查）。链路发送队列 >64 MB 视为对端不读，断开链路。
+- 链路丢失 = 该链路全部会话断开（浏览器 4000，按原逻辑重连，ingress 后台退避重拨）；coordinator 关闭时先让会话的关闭帧入队再关链路。直连路径保留，未配置即原行为。
+
 ## 追加与范围
 
 应用CLI保留SIGHUP append-only路由/节点：先核验新game→先全部入口追加路由→最后coordinator允许新局选它，旧局不迁移。root inventory只接受固定的16节点，或Formal显式生成的32节点（新bundle、新key、整体替换），runtime SHA固定；**不能直接HUP修改文件而不同时准备相应守卫批准材料**，否则守卫按漂移撤权。不能声称已经支持运行中任意node增删。

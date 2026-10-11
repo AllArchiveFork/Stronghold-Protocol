@@ -10,11 +10,13 @@
 // Usage: node tools/coordbench.mjs [--server-root <checkout>] [--clients 1400] [--ingress 2] [--nodes 4] [--drivers 4]
 //          [--rooms20 3] [--queue-share 0.5] [--warmup 30] [--duration 120] [--window 10] [--match-sec 60-150] [--match20-sec 60]
 //          [--receipt4-kb 200] [--receipt20-kb 1500] [--churn 4] [--page-load 0.5] [--storm] [--offload-static]
-//          [--receipt-worker] [--out <file.json>] [--json]
+//          [--receipt-worker] [--link] [--out <file.json>] [--json]
 //   --server-root  the checkout whose server/ is measured (default: this one), e.g. a pristine baseline export for "before"
 //   --storm        halfway through, every session drops and resumes (an ingress restart / mass reload; page loads per --page-load)
 //   --offload-static  page loads skip /shared/ and /data/ (what Nginx serves with cluster-private-code.py --runtime-static)
 //   --receipt-worker  start the coordinator with its opt-in receipt Worker (trees without the option ignore it)
+//   --link         ingresses carry their sessions over authenticated multiplexed links (server/cluster/link.js); fresh
+//                  in-memory test keys per run, handed to the children over IPC only
 // Synthetic and local: no TLS/Nginx/password gate, no real battles, no WAN. Never point it at a shared or production host:
 // every listener it starts binds 127.0.0.1 and every URL it dials is one of those listeners.
 import { fork } from 'node:child_process';
@@ -33,7 +35,7 @@ const BUILD = 'c0ffee'.padEnd(40, '0');
 export function parseArgs(argv) {
   const opts = { serverRoot: ROOT, clients: 1400, ingress: 2, nodes: 4, drivers: 4, rooms20: 3, queueShare: 0.5, warmup: 30,
     duration: 120, window: 10, matchSec: [60, 150], match20Sec: 60, receipt4Kb: 200, receipt20Kb: 1500, churn: 4, pageLoad: 0.5,
-    storm: false, offloadStatic: false, receiptWorker: false, out: null, json: false, role: null };
+    storm: false, offloadStatic: false, receiptWorker: false, link: false, out: null, json: false, role: null };
   const num = (v, name) => { const n = Number(v); if (!Number.isFinite(n) || n < 0) throw new Error(`--${name} needs a number`); return n; };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i], v = argv[i + 1];
@@ -57,6 +59,7 @@ export function parseArgs(argv) {
     else if (a === '--storm') opts.storm = true;
     else if (a === '--offload-static') opts.offloadStatic = true;
     else if (a === '--receipt-worker') opts.receiptWorker = true;
+    else if (a === '--link') opts.link = true;
     else if (a === '--out') opts.out = path.resolve(take());
     else if (a === '--json') opts.json = true;
     else if (a === '--role') opts.role = take();
@@ -219,7 +222,8 @@ async function runCoordinator(config) {
   };
   const nodes = config.nodes.map((n) => ({ nodeId: n.nodeId, url: n.url, key: Buffer.from(n.key, 'hex') }));
   const coordinator = await startCoordinator({ nodes, build: BUILD, host: '127.0.0.1', port: 0, privateHost: '127.0.0.1', privatePort: 0,
-    heartbeatMs: 1000, quiet: true, ...(config.receiptWorker ? { receiptWorker: true } : {}) });
+    heartbeatMs: 1000, quiet: true, ...(config.receiptWorker ? { receiptWorker: true } : {}),
+    ...(config.links ? { ingresses: config.links.map(({ ingressId, key }) => ({ ingressId, key: Buffer.from(key, 'hex') })) } : {}) });
   const histogram = monitorEventLoopDelay({ resolution: 10 });
   histogram.enable();
   let elu = performance.eventLoopUtilization(), cpu = process.cpuUsage(), at = performance.now();
@@ -254,7 +258,9 @@ async function runCoordinator(config) {
 async function runIngress(config) {
   const { startIngress } = await load(config.serverRoot, 'server/cluster/ingress.js');
   const ingress = await startIngress({ host: '127.0.0.1', port: 0, coordinatorUrl: config.coordinatorUrl, nodes: config.nodes,
-    origins: [ORIGIN], wsCompression: 'off', shutdownMs: 200 });
+    origins: [ORIGIN], wsCompression: 'off', shutdownMs: 200,
+    ...(config.link ? { link: { url: config.link.url, ingressId: config.link.ingressId, key: Buffer.from(config.link.key, 'hex') } } : {}) });
+  if (ingress.link && !(await ingress.link.whenReady(10_000))) throw new Error('link not ready');
   onStop(() => ingress.close());
   process.send({ event: 'ready', url: ingress.url });
 }
@@ -514,16 +520,18 @@ async function orchestrate(opts) {
         matchSec: opts.matchSec, match20Sec: opts.match20Sec, receipt4Kb: opts.receipt4Kb, receipt20Kb: opts.receipt20Kb }, children);
       games.push({ child, nodeId, key, ...(await ready) });
     }
-    const coordinator = spawnRole('coordinator', { serverRoot, receiptWorker: opts.receiptWorker,
+    const links = opts.link ? Array.from({ length: opts.ingress }, (_, i) => ({ ingressId: `bench-ingress-${i + 1}`, key: randomBytes(32).toString('hex') })) : null;
+    const coordinator = spawnRole('coordinator', { serverRoot, receiptWorker: opts.receiptWorker, links,
       nodes: games.map(({ nodeId, url, key }) => ({ nodeId, url, key })) }, children);
     const coord = await coordinator.ready;
     for (const g of games) g.child.send({ op: 'coordinator', privateUrl: coord.privateUrl });
     const ingresses = [];
     for (let i = 0; i < opts.ingress; i++) {
-      const { ready } = spawnRole('ingress', { serverRoot, coordinatorUrl: coord.url, nodes: games.map(({ nodeId, url }) => ({ nodeId, url })) }, children);
+      const { ready } = spawnRole('ingress', { serverRoot, coordinatorUrl: coord.url, nodes: games.map(({ nodeId, url }) => ({ nodeId, url })),
+        ...(links ? { link: { url: coord.privateUrl, ...links[i] } } : {}) }, children);
       ingresses.push(await ready);
     }
-    log(`[coordbench] ${serverRoot}: coordinator ${coord.url} (${coord.wrapped} wrappers, phases ${coord.phases ? 'yes' : 'no'}), ${games.length} nodes, ${ingresses.length} ingresses`);
+    log(`[coordbench] ${serverRoot}: coordinator ${coord.url} (${coord.wrapped} wrappers, phases ${coord.phases ? 'yes' : 'no'}), ${games.length} nodes, ${ingresses.length} ingresses${links ? ' over links' : ''}`);
     // Roles: per driver, its first rooms20*20 sessions are 20-player rooms, then queue/idle shares.
     const perDriver = Math.ceil(opts.clients / opts.drivers), drivers = [];
     let index = 0, group = 0;

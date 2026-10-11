@@ -104,7 +104,7 @@ import { checkLoadout, checkLoadoutOps, cultivationCharIds, checkNotOwned, check
 import { isSkinChoices } from '../shared/skins.js';
 import { EXPERIMENTAL_DEFAULTS, experimentalOptions, isExperimental, sameExperimental } from '../shared/experimental.js';
 import { MAX_PLAYER_CAPACITY, PLAYER_CAPACITY_VERSION, roomCapacity } from '../shared/playerCapacity.js';
-import { encode, isDroppable, isErrCode, sendRaw, sendSession } from './net.js';
+import { encode, isDroppable, isErrCode, sendEncodedMany, sendRaw, sendSession } from './net.js';
 import { isCompressibleType } from './wsCompression.js';
 import { getData as defaultGetData, lookup } from './data.js';
 import { Match as DefaultMatch } from './match/Match.js';
@@ -427,15 +427,15 @@ export class Lobby {
     const batch = this.presenceBatch;
     if (!batch) return;
     batch.immediate = null;
-    const t0 = this.metrics.start(), end = Math.min(batch.sessions.length, batch.index + PRESENCE_SLICE);
-    let sent = 0;
+    const t0 = this.metrics.start(), end = Math.min(batch.sessions.length, batch.index + PRESENCE_SLICE), sockets = [];
     for (; batch.index < end; batch.index++) {
       const session = batch.sessions[batch.index];
       if (!this.isOnline(session) || !this.presenceDue(session, batch.at)) continue;
       session.presenceAt = batch.at;
-      sendRaw(session.ws, batch.frame);
-      sent++;
+      sockets.push(session.ws);
     }
+    // One frame per ingress link for its sessions of this slice (net.js sendEncodedMany).
+    const sent = sendEncodedMany(sockets, batch.frame);
     this.metrics.end('presence.publish', t0, sent);
     if (batch.index < batch.sessions.length) batch.immediate = setImmediate(() => this.presenceSlice());
     else if (this.presenceBatch === batch) this.presenceBatch = null;
@@ -1558,7 +1558,7 @@ export class Lobby {
   broadcastState(room) {
     if (room.disposed) return;
     const data = encode(room.toState());
-    for (const session of this.memberSessions(room)) sendRaw(session.ws, data);
+    sendEncodedMany([...this.memberSessions(room)].map((session) => session.ws), data);
   }
 
   sendState(room, session) {

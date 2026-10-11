@@ -37,6 +37,20 @@ docker compose -p ark-cluster-formal-local -f "$NEW_LOCAL_STACK/compose.json" co
 
 两个输出目录都必须是不存在的新目录，父目录 root-owned 且不可 group/world 写。`stack-summary.json` 不含秘密，不是激活回执；它记录 `gameNodes` 与每个 ingress 的 service/IP/端口，供下面的 Nginx 准备逐项校验。容器数 = 1 + game + ingress：16+8 为 25 个，32+8 为 41 个，32+16 为 49 个。
 
+### 可选：ingress↔coordinator 多路复用链路（`--ingress-link`，默认关闭）
+
+默认每个浏览器会话在 ingress 与 coordinator 之间各有一条 WS；开启后每个本地 ingress 只保持 1 条经认证的长连接（`/_cluster/link`，coordinator 私有监听 `core_ip(2):3001`），承载该 ingress 的全部会话（设计见 [README.md](README.md#入口多路复用链路)）。
+
+```sh
+python3 -I /opt/ark-cluster-formal/tools/cluster-local-stack.py --profile formal \
+  --core-bundle "$NEW_CORE_BUNDLE" --out "$NEW_LOCAL_STACK" --ingress-instances 8 --ingress-link
+```
+
+- 只在新组合栈目录生成 `link-keys/<ingress>.key`（每 ingress 一个新的 32 字节随机 key，root:1000 0440），不写入、不复制 core bundle；key 不进 argv/env/日志，丢失或泄露即整体重新生成组合栈。
+- 每个 ingress 只挂载自己的 key 到 `/run/secrets/link.key:ro`，runtime 增加 `link: {url: http://<core_ip(2)>:3001/, ingressId: <service>, keyFile}`；coordinator 改用组合栈内派生的 `runtime/coordinator/runtime.json`（= 已校验的 core runtime + `ingresses` 列表），并只读挂载 `link-keys/` 到 `/run/link-secrets`。core 的节点 key 与原 runtime 不变。
+- 不加该选项时输出与之前逐字节相同。切回直连 = 用不带 `--ingress-link` 的组合栈整体替换（同样结束内存局）；运行中不能逐个 ingress 切换。WG/受管拓扑尚不支持链路（需放行 ingress→coordinator:3001 的租约规则与 host-manager mount 合同）。
+- 验证：`docker compose ... config -q`；启动后 coordinator `/healthz` 的 `sockets` 应等于在线会话数，宿主 `ss -tn` 上 ingress→coordinator:3000 的连接数应接近 0、→:3001 每 ingress 1 条。
+
 ## Nginx 与私有码（生成器，不再手改）
 
 ```sh

@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import stat
 import sys
 import tempfile
 import unittest
@@ -125,6 +126,45 @@ class LocalStackTests(unittest.TestCase):
         summary, compose = self.stack('one', 1)
         self.assertEqual([row['service'] for row in summary['ingress']], ['ingress'])
         self.assertEqual(len(compose['services']), 18)
+
+
+class LocalStackLinkTests(unittest.TestCase):
+    """Opt-in ingress links; LocalStackTests above keeps covering the default byte-for-byte output."""
+    profile = 'formal'
+    setUp = LocalStackTests.setUp
+    stack = LocalStackTests.stack
+
+    def option_stack(self, name, **options):
+        summary = local.compose(self.core, self.root / name, profile=self.profile, ingress_instances=3, **options)
+        return summary, json.loads((self.root / name / 'compose.json').read_text())
+
+    def test_default_output_has_no_link_material(self):
+        _, compose = self.stack('plain', 3)
+        coordinator = compose['services']['coordinator']
+        self.assertEqual(coordinator['volumes'], [str(self.core / 'runtime/coordinator') + ':/run/config:ro', str(self.core / 'keys') + ':/run/secrets:ro'])
+        self.assertFalse((self.root / 'plain/link-keys').exists())
+        self.assertNotIn('link', json.loads((self.root / 'plain/runtime/ingress/runtime.json').read_text()))
+
+    def test_ingress_link_gives_each_ingress_only_its_own_new_key_and_the_coordinator_a_derived_runtime(self):
+        before = {path: path.read_bytes() for path in self.core.rglob('*') if path.is_file()}
+        summary, compose = self.option_stack('linked', ingress_link=True)
+        self.assertTrue(before == {path: path.read_bytes() for path in self.core.rglob('*') if path.is_file()}, 'core bundle untouched')
+        out, names = self.root / 'linked', [row['service'] for row in summary['ingress']]
+        self.assertEqual(sorted(path.name for path in (out / 'link-keys').iterdir()), sorted(name + '.key' for name in names))
+        for name in names:
+            key = out / 'link-keys' / (name + '.key')
+            self.assertEqual(len(key.read_bytes()), 32)
+            self.assertEqual(stat.S_IMODE(key.stat().st_mode), 0o440)
+            self.assertEqual(compose['services'][name]['volumes'][1:], [str(key) + ':/run/secrets/link.key:ro'])
+            config = json.loads((out / 'runtime' / name / 'runtime.json').read_text())
+            self.assertEqual(config['link'], {'url': 'http://172.30.245.2:3001/', 'ingressId': name, 'keyFile': '/run/secrets/link.key'})
+            self.assertEqual(config['coordinatorUrl'], 'http://172.30.245.2:3000')
+        core_runtime = json.loads((self.core / 'runtime/coordinator/runtime.json').read_text())
+        derived = json.loads((out / 'runtime/coordinator/runtime.json').read_text())
+        self.assertEqual(derived, {**core_runtime, 'ingresses': [{'ingressId': name, 'keyFile': '/run/link-secrets/' + name + '.key'} for name in names]})
+        self.assertEqual(compose['services']['coordinator']['volumes'], [str(out / 'runtime/coordinator') + ':/run/config:ro',
+                         str(self.core / 'keys') + ':/run/secrets:ro', str(out / 'link-keys') + ':/run/link-secrets:ro'])
+        self.assertEqual(len(set(key.read_bytes() for key in (out / 'link-keys').iterdir())), 3)
 
 
 class ThirtyTwoNodeLocalStackTests(unittest.TestCase):

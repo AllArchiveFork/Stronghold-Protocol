@@ -320,6 +320,52 @@ export function sendRaw(ws, data, { droppable = false, compress = false } = {}) 
   }
 }
 
+/**
+ * Send one already-encoded frame to many sockets with sendRaw's per-socket rules. Sockets that ride an ingress link
+ * (cluster/link-server.js LinkSocket) are grouped per link into ONE fanout frame; direct sockets get their own send.
+ * Each socket still receives the frame at this point of its own stream. Never throws.
+ * @param {Iterable<any>} sockets @param {string | Buffer} data @param {{ droppable?: boolean, compress?: boolean }} [opts]
+ * @returns {number} sockets the frame was queued for
+ */
+export function sendEncodedMany(sockets, data, opts = {}) {
+  return sendEncodedParts([...sockets].map((ws) => ({ ws })), data, opts);
+}
+
+/**
+ * Like sendEncodedMany, but socket i receives prefix_i + shared + suffix_i (a large shared middle, e.g. the final public
+ * frame inside every member's cluster.terminal, is copied once per link instead of once per member). Never throws.
+ * @param {{ ws: any, prefix?: Buffer, suffix?: Buffer }[]} entries @param {string | Buffer} shared
+ * @param {{ droppable?: boolean, compress?: boolean }} [opts]
+ */
+export function sendEncodedParts(entries, shared, { droppable = false, compress = false } = {}) {
+  if (typeof shared !== 'string' && !Buffer.isBuffer(shared)) return 0;
+  const links = new Map();
+  let sent = 0, sharedBytes = null;
+  for (const { ws, prefix, suffix } of entries) {
+    try {
+      if (ws && ws.linked === true && ws.link && typeof ws.link.fanout === 'function') {
+        if (ws.readyState !== WS_OPEN) continue;
+        const queued = ws.bufferedAmount;
+        if (queued > NET_DEFAULTS.hardBufferBytes) { ws.terminate(); continue; }
+        if (droppable && queued > NET_DEFAULTS.snapDropBytes) continue;
+        let targets = links.get(ws.link);
+        if (!targets) { targets = []; links.set(ws.link, targets); }
+        targets.push({ socket: ws, prefix, suffix });
+        sent++;
+      } else {
+        const whole = prefix?.length || suffix?.length
+          ? Buffer.concat([prefix || Buffer.alloc(0), (sharedBytes ??= Buffer.isBuffer(shared) ? shared : Buffer.from(shared)), suffix || Buffer.alloc(0)])
+          : shared;
+        if (sendRaw(ws, whole, { droppable, compress })) sent++;
+      }
+    } catch { /* one socket never breaks the others */ }
+  }
+  for (const [link, targets] of links) {
+    try { link.fanout(targets, shared); } catch { /* the link drops itself */ }
+  }
+  return sent;
+}
+
 /** True for frames that may be skipped under backpressure (only battle snapshots). */
 export const isDroppable = (msg) => !!msg && msg.t === 'b.snap';
 
@@ -844,6 +890,11 @@ export class Network {
   /** One heartbeat check of a socket: ping it, or drop it when it did not answer since its previous ping. */
   heartbeatConn(conn, now) {
     try {
+      if (conn.ws.linked === true) {
+        // An ingress link session: the ingress pings the real browser socket and the link is pinged as a whole.
+        if (!conn.closing && !conn.session && now - conn.openedAt > this.opts.helloTimeoutMs) conn.close(CLOSE.HELLO_TIMEOUT, 'hello timeout');
+        return;
+      }
       if (conn.closing) {
         // Closing handshake never completed within a heartbeat interval → drop the TCP connection.
         if (!conn.alive) conn.ws.terminate();
