@@ -5,9 +5,10 @@ import { initializeData } from '../../data.js';
 const { epoch, data, maxSessions = 0, role = 'combat', trialProgressMs = 50 } = workerData;
 const sessions = new Map();
 const log = Object.freeze({ error() {}, warn() {}, info() {} });
-const reply = (request, result) => parentPort.postMessage({
+const replyMessage = (request, result) => ({
   type: 'reply', epoch, kind: request.kind ?? 'combat', generation: request.generation, seq: request.seq, ...result,
 });
+const reply = (request, result) => parentPort.postMessage(replyMessage(request, result));
 const event = (generation, session, name, extra = {}) => parentPort.postMessage({
   type: 'trialEvent', epoch, kind: 'trial', generation, eventSeq: ++session.eventSeq, event: name, ...extra,
 });
@@ -50,7 +51,22 @@ try {
     });
   };
   parentPort.on('message', (request) => {
-    if (!request || request.epoch !== epoch || typeof request.generation !== 'string') return;
+    if (!request || request.epoch !== epoch) return;
+    if (request.type === 'batch') {
+      // One wire turn for several combat sessions (at most one command each): run them in FIFO order and answer
+      // with one message. Each command keeps its own validation, failure isolation and reply.
+      const replies = [];
+      const respond = (r, result) => replies.push(replyMessage(r, result));
+      for (const r of Array.isArray(request.requests) ? request.requests : []) {
+        if (r && typeof r.generation === 'string' && (r.kind ?? 'combat') === 'combat') serve({ ...r, type: 'request' }, respond);
+      }
+      parentPort.postMessage({ type: 'batchReply', epoch, replies });
+      return;
+    }
+    if (typeof request.generation !== 'string') return;
+    serve(request, reply);
+  });
+  function serve(request, reply) {
     const { generation, seq, op, payload } = request;
     if (request.type === 'trialControl' && role === 'trial') {
       const session = sessions.get(generation);
@@ -94,7 +110,7 @@ try {
         if (cap > 0 && [...sessions.values()].filter((s) => s.kind === kind).length >= cap) throw new Error('worker session limit reached');
         if (op === 'run' && typeof payload?.summary !== 'boolean') throw new Error('invalid summary mode');
         const engine = kind === 'trial' ? new TrialEngine(op === 'run' ? payload.input : payload,
-          { log, isolated: true, summary: op === 'run' && payload.summary }) : new CombatEngine(payload, { log });
+          { log, isolated: true, summary: op === 'run' && payload.summary }) : new CombatEngine(payload, { log, cloneOutput: false });
         const session = { kind, engine, seq };
         sessions.set(generation, session);
         if (op === 'run') {
@@ -113,7 +129,7 @@ try {
         if (op !== 'advance') throw new Error(`unknown trial operation ${op}`);
         dto = session.engine.advance(p.ticks);
       } else switch (op) {
-        case 'advance': dto = session.engine.advance(p.ticks, { snapshotFields: p.snapshotFields }); break;
+        case 'advance': dto = session.engine.advance(p.ticks, { snapshotFields: p.snapshotFields, metaFields: p.metaFields }); break;
         case 'state': dto = session.engine.state({ snapshotFields: p.snapshotFields }); break;
         case 'forceField': dto = session.engine.forceField(p.fieldId, p.reason); break;
         case 'forceAll': dto = session.engine.forceAll(p.reason); break;
@@ -126,7 +142,7 @@ try {
       sessions.delete(generation);
       reply(request, { error: { message: String(e?.message ?? e), code: 'WORKER_COMMAND' } });
     }
-  });
+  }
   parentPort.on('close', () => {
     for (const session of sessions.values()) dispose(session);
     sessions.clear();

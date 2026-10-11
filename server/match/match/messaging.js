@@ -10,16 +10,20 @@ import { DELAYS } from './common.js';
 import { wireMessage } from '../../../shared/i18n.js';
 
 export class MatchMessaging {
-  sendTo(playerId, msg) {
+  /** @param {string} [wire] JSON.stringify(msg) when the caller already has it: a host may deliver it as is */
+  sendTo(playerId, msg, wire) {
     if (this.disposed) return false;
     const ps = this.players.get(playerId) || this.spectators.get(playerId);
     if (!ps || ps.isBot || ps.left) return false;
-    try { return !!this.sendFn(playerId, msg); } catch (e) { this.reportError('send', e); return false; }
+    try { return !!(typeof wire === 'string' ? this.sendFn(playerId, msg, wire) : this.sendFn(playerId, msg)); }
+    catch (e) { this.reportError('send', e); return false; }
   }
 
-  broadcast(msg) {
+  /** @param {string} [wire] JSON.stringify(msg), encoded once for every member */
+  broadcast(msg, wire) {
     if (this.disposed) return;
-    try { this.broadcastFn(msg); } catch (e) { this.reportError('broadcast', e); }
+    try { if (typeof wire === 'string') this.broadcastFn(msg, wire); else this.broadcastFn(msg); }
+    catch (e) { this.reportError('broadcast', e); }
   }
 
   /** @param {string|{ msgid: string, params?: object }} text a string or msg() (shared/i18n.js) */
@@ -99,7 +103,7 @@ export class MatchMessaging {
     const json = JSON.stringify(view);
     if (!force && json === ps._lastPriv) return;
     ps._lastPriv = json;
-    this.sendTo(ps.playerId, view);
+    this.sendTo(ps.playerId, view, json);
   }
 
   _maybeSendPublic(force) {
@@ -123,6 +127,7 @@ export class MatchMessaging {
     if (!force && json === this._lastPubJson) return;
     this._lastPubJson = json;
     this._lastPubAt = now;
-    this.broadcast(view);
+    // The dedupe key omits serverNow; the frame itself is encoded once here instead of once per member.
+    this.broadcast(view, JSON.stringify(view));
   }
 }

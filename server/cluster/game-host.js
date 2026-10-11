@@ -269,9 +269,9 @@ export class GameHost {
       ctx.match = new this.MatchClass({ ...matchSpec, data: this.data, combatPool: this.combatPool, trialPool: this.trialPool,
         // This host owns server-authoritative games even without SP_COMBAT.
         clientCombat: false, log: this.log, now: this.now,
-        send: (id, msg) => this._emit(ctx, 'send', id, msg?.t, msg),
+        send: (id, msg, wire) => this._emit(ctx, 'send', id, msg?.t, msg, wire),
         sendEncoded: (id, type, data) => this._emit(ctx, 'encoded', id, type, data),
-        broadcast: msg => { this._emit(ctx, 'broadcast', null, msg?.t, msg); },
+        broadcast: (msg, wire) => { this._emit(ctx, 'broadcast', null, msg?.t, msg, wire); },
         onEnd: summary => this._end(ctx, summary) });
       if (typeof ctx.match.start !== 'function' || typeof ctx.match.dispose !== 'function') throw new TypeError('invalid Match interface');
     } catch {
@@ -406,16 +406,22 @@ export class GameHost {
 
   _allowed(member, type) { return member && !member.left && (member.role === 'player' || SPECTATOR_TYPES.has(type)); }
 
-  _emit(ctx, kind, playerId, type, payload) {
+  /**
+   * `wire` (send/broadcast only) is the Match's own JSON.stringify(payload), offered to each member channel's
+   * send(payload, wire): those exact bytes go out without a per-member re-encode, while capture, terminal and
+   * permission checks still read the payload object.
+   */
+  _emit(ctx, kind, playerId, type, payload, wire) {
     if (!this._live(ctx) || ctx.state === 'ended' || ctx.pendingEnd || typeof type !== 'string') return false;
     if (kind === 'encoded' && (!ENCODED_TYPES.has(type) || typeof payload !== 'string')) return false;
     if (kind !== 'encoded' && (!payload || typeof payload !== 'object')) return false;
     if (kind !== 'broadcast' && !this._allowed(ctx.members.get(playerId), type)) return false;
+    const encoded = kind !== 'encoded' && typeof wire === 'string' ? { wire } : {};
     if (ctx.state !== 'committed') {
-      try { ctx.buffer.push({ kind, playerId, type, payload: kind === 'encoded' ? payload : copy(payload) }); return true; }
+      try { ctx.buffer.push({ kind, playerId, type, payload: kind === 'encoded' ? payload : copy(payload), ...encoded }); return true; }
       catch { this._log('buffer frame'); return false; }
     }
-    return this._publish(ctx, { kind, playerId, type, payload });
+    return this._publish(ctx, { kind, playerId, type, payload, ...encoded });
   }
 
   _capture(ctx, frame) {
@@ -450,7 +456,8 @@ export class GameHost {
     let accepted;
     let threw = false;
     try {
-      accepted = frame.kind === 'encoded' ? binding.channel.sendEncoded(frame.type, frame.payload) : binding.channel.send(frame.payload);
+      accepted = frame.kind === 'encoded' ? binding.channel.sendEncoded(frame.type, frame.payload)
+        : typeof frame.wire === 'string' ? binding.channel.send(frame.payload, frame.wire) : binding.channel.send(frame.payload);
       this._rejectAsync(accepted, 'channel send');
     } catch { threw = true; this._log('channel send'); }
     if (accepted === true) return true;

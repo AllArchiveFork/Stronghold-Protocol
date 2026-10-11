@@ -571,3 +571,42 @@ test('two real Matches with a minimal fixture start independently and preserve d
   assert.equal(realMatches[0].disposed, true);
   assert.equal(realMatches[1].disposed, false);
 });
+
+test('Match-encoded send/broadcast wires reach every member channel as given, with the payload kept for capture', t => {
+  const wires = [];
+  const { host, prepare, bindAll, matches } = fixture(t, { start: m => {
+    const pub = { t: 'm.public', phase: 'PREP', round: 1 };
+    m.opts.broadcast(pub, JSON.stringify(pub));
+    const priv = { t: 'm.private', playerId: 'p1', gold: 3 };
+    m.opts.send('p1', priv, JSON.stringify(priv));
+  } });
+  prepare();
+  const channels = bindAll();
+  for (const [id, c] of Object.entries(channels)) c.send = function (msg, wire) { this.sent.push(msg); wires.push([id, msg.t, wire]); return true; };
+  host.commit('assignment-1');
+  const encoded = wires.filter(([, , wire]) => typeof wire === 'string');
+  assert.deepEqual(encoded.filter(([, type]) => type === 'm.public').map(([id, , wire]) => [id, wire]),
+    ['p1', 'p2', 's1'].map(id => [id, '{"t":"m.public","phase":"PREP","round":1}']));
+  assert.deepEqual(encoded.filter(([, type]) => type === 'm.private'), [['p1', 'm.private', '{"t":"m.private","playerId":"p1","gold":3}']]);
+  assert.ok(wires.some(([, type, wire]) => type === 'm.public' && wire === undefined), 'frames without a wire keep the one-argument send');
+  assert.deepEqual(channels.p1.encoded, []);
+  // Buffered startup frames keep their wire; non-string wires are ignored.
+  matches[0].opts.broadcast({ t: 'm.public', phase: 'PREP', round: 2 }, 42);
+  assert.equal(wires.at(-1)[2], undefined);
+});
+
+test('real Match encodes m.public once per broadcast and m.private once per send', t => {
+  const realMatches = [];
+  class RealMatch extends Match { constructor(opts) { super(opts); realMatches.push(this); } }
+  const data = { chess: { chess_fixture: { chessId: 'chess_fixture', visible: true, tier: 1, bonds: [] } } };
+  const host = new GameHost({ data, MatchClass: RealMatch });
+  t.after(() => host.close());
+  host.prepare(spec({ assignmentId: 'real-w', roomCode: 'WIRE', mode: 'solo', modeId: 'mode_single_normal', seats: [seat(0, 'pw')], spectators: [] }));
+  const c = channel(); const wires = [];
+  c.send = function (msg, wire) { this.sent.push(msg); wires.push([msg, wire]); return true; };
+  host.bind('real-w', 'pw', c);
+  host.commit('real-w');
+  const pub = wires.filter(([msg]) => msg.t === 'm.public'), priv = wires.filter(([msg]) => msg.t === 'm.private');
+  assert.ok(pub.length && priv.length);
+  for (const [msg, wire] of [...pub, ...priv]) assert.equal(wire, JSON.stringify(msg), 'the wire is exactly the original encoding');
+});

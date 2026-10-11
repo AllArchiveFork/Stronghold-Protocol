@@ -297,6 +297,26 @@ export function encode(msg) {
 
 const onSendDone = (err) => { void err; }; // errors surface through the socket's 'error'/'close' events
 
+const corkedSockets = new WeakSet();
+const uncorkTurn = (socket) => {
+  corkedSockets.delete(socket);
+  try { socket.uncork(); } catch { /* a destroyed socket has nothing left to flush */ }
+};
+
+/**
+ * Coalesce the frames a WebSocket is sent during the current turn into one socket write: cork it now, uncork it on
+ * process.nextTick (before any I/O, timer or immediate runs). Frames, their order and every sendRaw limit are unchanged:
+ * ws.bufferedAmount still counts the corked bytes. A no-op for a socket that is already corked this turn. Never throws.
+ * @param {any} ws
+ */
+export function corkTurn(ws) {
+  const socket = ws?._socket;
+  if (!socket || corkedSockets.has(socket) || socket.destroyed || typeof socket.cork !== 'function') return;
+  try { socket.cork(); } catch { return; }
+  corkedSockets.add(socket);
+  process.nextTick(uncorkTurn, socket);
+}
+
 /**
  * Send an already-encoded frame. Skips when the socket is not OPEN, when `droppable` and the socket is
  * congested (> 1 MB queued), and terminates sockets whose queue exceeds 16 MB. A Buffer must hold the UTF-8

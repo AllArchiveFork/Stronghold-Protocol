@@ -8,6 +8,10 @@ import { snapshotTrialInput, MAX_TRIAL_TICKS } from './trial.js';
 const WORKER_URL = new URL('./worker.js', import.meta.url);
 const OPS = new Set(['advance', 'state', 'forceField', 'forceAll']);
 const MAX_REPLACEMENTS = 3; // lifetime budget per slot, NOT reset after a successful boot
+// The shared pacing tick equals the per-phase pacing interval it replaces (server/match/fields.js INTERVAL_MS).
+export const PACE_MS = 1000 / 30;
+// Combat commands of distinct sessions that may share one wire turn (one MessagePort message each way).
+export const MAX_BATCH = 64;
 const error = (message, code) => Object.assign(new Error(message), { code });
 function positive(n, name, max = Number.MAX_SAFE_INTEGER) {
   if (!Number.isInteger(n) || n < 1 || n > max) throw new RangeError(`${name} must be an integer in 1..${max}`);
@@ -25,7 +29,7 @@ function deferred() {
 export class CombatWorkerPool {
   constructor({ size, data = getData(), log = console, maxSessions = 0, maxPending = 8192,
     startupTimeoutMs = 15_000, requestTimeoutMs = 30_000, maxTrials = 64, maxTrialPending = 64,
-    role = 'combat', trialAckTimeoutMs = 5_000, trialStallTimeoutMs = 5_000 } = {}) {
+    role = 'combat', trialAckTimeoutMs = 5_000, trialStallTimeoutMs = 5_000, maxBatch = MAX_BATCH } = {}) {
     if (!['combat', 'trial'].includes(role)) throw new RangeError('role must be combat or trial');
     this.role = role;
     this.size = positive(size, 'size', role === 'trial' ? 2 : 64);
@@ -38,6 +42,11 @@ export class CombatWorkerPool {
     this.maxTrialPending = positive(maxTrialPending, 'maxTrialPending');
     this.trials = 0;
     this.trialPending = 0;
+    this.maxBatch = positive(maxBatch, 'maxBatch', 1024);
+    // One process-wide pacing interval for every server-streamed phase (see pace()).
+    this.pacers = new Set();
+    this.paceTimer = null;
+    this.pacing = null; // slots touched during the current pacing tick, posted once at its end
     this.startupTimeoutMs = positive(startupTimeoutMs, 'startupTimeoutMs');
     this.requestTimeoutMs = positive(requestTimeoutMs, 'requestTimeoutMs');
     if (!data || typeof data !== 'object') throw new TypeError('full raw combat data required');
@@ -103,6 +112,7 @@ export class CombatWorkerPool {
           boot.resolve();
           this._pump(slot);
         } else if (message.type === 'reply') this._reply(slot, message);
+        else if (message.type === 'batchReply' && this.role === 'combat') this._batchReply(slot, message);
         else if (message.type === 'trialEvent' && this.role === 'trial') this._trialEvent(slot, message);
         else if (message.type === 'fatal') this._fail(slot, error(message.message || 'combat worker bootstrap failed', 'WORKER_STARTUP'));
       };
@@ -125,6 +135,38 @@ export class CombatWorkerPool {
       }, this.startupTimeoutMs);
     } catch (e) { this._fail(slot, e); }
     return boot.promise;
+  }
+
+  /**
+   * Register a phase's pacing callback on the pool's single shared interval (PACE_MS) instead of a timer per phase.
+   * Every callback of a tick runs first; the commands they enqueue then leave as one wire turn per Worker. Returns the
+   * unsubscribe function. A throwing callback is logged and does not stop the others.
+   * @param {() => void} fn
+   */
+  pace(fn) {
+    if (typeof fn !== 'function') throw new TypeError('pace callback required');
+    this.pacers.add(fn);
+    if (!this.paceTimer && this.status !== 'closing' && this.status !== 'closed') {
+      this.paceTimer = setInterval(() => this._paceTick(), PACE_MS);
+      this.paceTimer.unref?.();
+    }
+    return () => {
+      this.pacers.delete(fn);
+      if (!this.pacers.size && this.paceTimer) { clearInterval(this.paceTimer); this.paceTimer = null; }
+    };
+  }
+
+  _paceTick() {
+    const touched = this.pacing = new Set();
+    try {
+      for (const fn of [...this.pacers]) {
+        if (!this.pacers.has(fn)) continue;
+        try { fn(); } catch (e) { this._log(e); }
+      }
+    } finally {
+      this.pacing = null;
+      for (const slot of touched) this._pump(slot);
+    }
   }
 
   create(input, { onFailure = null } = {}) {
@@ -382,7 +424,8 @@ export class CombatWorkerPool {
       else this._fail(session.slot, failure);
     }, this.requestTimeoutMs);
     session.slot.queue.push(task);
-    this._pump(session.slot);
+    if (this.pacing) this.pacing.add(session.slot); // collected into one wire turn at the end of the pacing tick
+    else this._pump(session.slot);
     return done.promise;
   }
 
@@ -422,10 +465,34 @@ export class CombatWorkerPool {
       this._closeSession(task.session, failure, true);
       return;
     }
-    slot.active = task;
-    if (task.session && (task.op === 'init' || task.op === 'run')) {
-      task.session.sent = true;
-      if (task.kind === 'trial') slot.trial = task.session;
+    // Combat FIFO commands of other sessions queued behind this one share its wire turn: still one message in flight
+    // per Worker and one command per session, in queue order. Cleanup, trials and a session's second command wait.
+    let batch = null;
+    if (task.kind === 'combat' && task.session && this.maxBatch > 1) {
+      const sessions = new Set([task.session]);
+      for (let i = 0; i < slot.queue.length && (batch?.length ?? 1) < this.maxBatch;) {
+        const next = slot.queue[i];
+        if (next.kind !== 'combat' || !next.session || sessions.has(next.session)) { i++; continue; }
+        sessions.add(next.session);
+        slot.queue.splice(i, 1);
+        (batch ??= [task]).push(next);
+      }
+    }
+    slot.active = batch ? { batch } : task;
+    for (const t of batch ?? [task]) {
+      if (t.session && (t.op === 'init' || t.op === 'run')) {
+        t.session.sent = true;
+        if (t.kind === 'trial') slot.trial = t.session;
+      }
+    }
+    if (batch) {
+      slot.active.wireTimer = setTimeout(() => this._fail(slot, error('combat worker response timed out', 'REQUEST_TIMEOUT')), this.requestTimeoutMs);
+      try {
+        slot.worker.postMessage({ type: 'batch', epoch: slot.epoch, requests: batch.map((t) =>
+          ({ kind: t.kind, generation: t.generation, seq: t.seq, op: t.op, payload: t.payload })) });
+        for (const t of batch) t.payload = null;
+      } catch (e) { this._fail(slot, e); }
+      return;
     }
     // This watchdog remains even when the caller cancels an in-flight command and its promise is removed.
     // A blocked/looping worker must not strand every other phase or grow an unbounded cleanup queue.
@@ -437,12 +504,35 @@ export class CombatWorkerPool {
     } catch (e) { this._fail(slot, e); }
   }
 
+  _batchReply(slot, message) {
+    const active = slot.active;
+    if (!active?.batch || !Array.isArray(message.replies)) return;
+    clearTimeout(active.wireTimer);
+    slot.active = null;
+    const replies = new Map(message.replies.map((r) => [`${r?.generation}#${r?.seq}`, r]));
+    for (const task of active.batch) {
+      const reply = replies.get(`${task.generation}#${task.seq}`);
+      if (reply && (reply.kind ?? 'combat') === task.kind) { this._answer(slot, task, reply); continue; }
+      if (task.session && !task.session.closed) {
+        const e = error('combat worker skipped a batched command', 'WORKER_COMMAND');
+        this._settle(task, e);
+        this._closeSession(task.session, e, true);
+      }
+    }
+    this._pump(slot);
+  }
+
   _reply(slot, message) {
     const task = slot.active;
-    if (!task || message.generation !== task.generation || message.seq !== task.seq ||
+    if (!task || task.batch || message.generation !== task.generation || message.seq !== task.seq ||
         (message.kind ?? 'combat') !== task.kind) return; // stale/cancelled generation or wrong session kind
     clearTimeout(task.wireTimer);
     slot.active = null;
+    if (this._answer(slot, task, message)) this._pump(slot);
+  }
+
+  /** Settle one answered command. @returns {boolean} false when it already pumped the slot */
+  _answer(slot, task, message) {
     if (task.closedSession) {
       if (slot.trial === task.closedSession) slot.trial = null;
       task.closedSession.closedDone?.resolve();
@@ -463,13 +553,13 @@ export class CombatWorkerPool {
             this._settle(task, e);
             this._closeSession(task.session, e, true);
             this._pump(slot);
-            return;
+            return false;
           }
         } else if (task.op === 'init') task.session.initialized = true;
         this._settle(task, null, message.dto);
       }
     }
-    this._pump(slot);
+    return true;
   }
 
   _closeSession(session, failure, notify = false) {
@@ -484,6 +574,7 @@ export class CombatWorkerPool {
     slot.queue = slot.queue.filter((task) => task.session !== session);
     for (const task of removed) this._settle(task, failure);
     if (slot.active?.session === session) this._settle(slot.active, failure);
+    for (const task of slot.active?.batch ?? []) if (task.session === session) this._settle(task, failure);
     if (session.sent && slot.ready) slot.cleanup.set(session.generation, session);
     else session.closedDone?.resolve();
     const callback = session.onFailure;
@@ -516,8 +607,10 @@ export class CombatWorkerPool {
     slot.startup = null;
     if (slot.active) {
       clearTimeout(slot.active.wireTimer);
-      this._settle(slot.active, failure);
-      slot.active.closedSession?.closedDone?.resolve();
+      for (const task of slot.active.batch ?? [slot.active]) {
+        this._settle(task, failure);
+        task.closedSession?.closedDone?.resolve();
+      }
       slot.active = null;
     }
     // Register termination before callbacks: an onFailure callback may itself await pool.close().
@@ -567,6 +660,8 @@ export class CombatWorkerPool {
   close() {
     if (this._closePromise) return this._closePromise;
     this.status = 'closing';
+    if (this.paceTimer) { clearInterval(this.paceTimer); this.paceTimer = null; }
+    this.pacers.clear();
     this._closePromise = (async () => {
       const e = error('combat pool closed', 'POOL_CLOSED');
       for (const slot of this.slots) {

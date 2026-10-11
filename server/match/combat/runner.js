@@ -3,6 +3,7 @@
 import { TICK } from '../../sim/constants.js';
 import { INTERVAL_MS, GAME_SPEED, HARD_CAP_SECONDS, snapFrame } from '../fields.js';
 import { damageFrame, emptyDamageRows } from '../../sim/damageBoard.js';
+import { RealScheduler } from '../scheduler.js';
 
 // Bound each FIFO worker turn, not the active game-time debt. At 2x this covers a 533 ms service cycle.
 export const MAX_WORKER_ADVANCE_TICKS = 32;
@@ -84,6 +85,7 @@ export class WorkerFieldRunner {
     this.stopped = false;
     this.session = null;
     this.interval = null;
+    this.unpace = null;
     this.inflight = false;
     this.ready = false;
     this.held = null;
@@ -105,11 +107,19 @@ export class WorkerFieldRunner {
     try {
       this.inflight = true;
       this.session = this.m.combatPool.create({ specs: this.fields.map((f) => f.spec), boss: this.boss,
-        wireFrames: true, coalesceFrames: true, damageBoard: true, snapshotHz: this.m.snapshotHz, gameSpeed: this.m.gameSpeed }, {
+        wireFrames: true, coalesceFrames: true, damageBoard: true, snapshotHz: this.m.snapshotHz, gameSpeed: this.m.gameSpeed,
+        metaOnDemand: true, terminalOnce: true }, {
         onFailure: (e) => this._fail(e),
       });
       this.session.ready.then((out) => this._receive(out, true), (e) => this._fail(e));
-      this.interval = this.m.sched.setInterval(() => this.m.guard(() => this._pump()), INTERVAL_MS);
+      // Real-time phases share the pool's one pacing tick (same INTERVAL_MS cadence): every phase's command of a tick
+      // reaches its Worker in one wire turn. Custom/test schedulers keep their own interval.
+      if (this.m.sched instanceof RealScheduler && typeof this.m.combatPool.pace === 'function') {
+        this.unpace = this.m.combatPool.pace(() => {
+          if (!this.active) { this._release(); return; } // a disposed/replaced phase leaves the shared tick by itself
+          this.m.guard(() => this._pump());
+        });
+      } else this.interval = this.m.sched.setInterval(() => this.m.guard(() => this._pump()), INTERVAL_MS);
     } catch (e) { this._fail(e); }
   }
 
@@ -126,6 +136,7 @@ export class WorkerFieldRunner {
 
   _release() {
     if (this.interval) { this.m.sched.clearInterval(this.interval); this.interval = null; }
+    if (this.unpace) { const unpace = this.unpace; this.unpace = null; unpace(); }
     this.session?.close();
     this.session = null;
   }
@@ -172,7 +183,20 @@ export class WorkerFieldRunner {
     }
     const n = Math.min(Math.floor(this.acc / TICK + 1e-9), MAX_WORKER_ADVANCE_TICKS);
     this.acc = Math.max(0, this.acc - n * TICK);
-    if (n > 0) this._request('advance', { ticks: n, snapshotFields: this.fields.filter((f) => this._watchers(f.fieldId).length).map((f) => f.fieldId) });
+    if (n > 0) {
+      const snapshotFields = this.fields.filter((f) => this._watchers(f.fieldId).length).map((f) => f.fieldId);
+      this._request('advance', { ticks: n, snapshotFields, metaFields: this._metaFields(snapshotFields) });
+    }
+  }
+
+  /**
+   * Live fields whose snapshots must also carry field meta. A solo battle can pause, and a paused rejoin/watch is
+   * answered from the cached meta/snapshot pair without a Worker turn, so its watched fields keep every pair complete.
+   * Elsewhere only a pending rejoin needs one (state replies and finished fields always carry meta).
+   */
+  _metaFields(snapshotFields) {
+    if (this.m.isSolo) return snapshotFields;
+    return [...new Set(this.resync.values())];
   }
 
   _request(op, payload) {
@@ -265,7 +289,8 @@ export class WorkerFieldRunner {
       for (const pid of this._watchers(f.fieldId)) {
         if (this.resync.get(pid) === f.fieldId) {
           // Rejoin at the newest consistent tick in this batch, never send a current meta then an older snapshot.
-          if (latest.get(f.fieldId) === frame) { this._sendCached(pid, f); this.resync.delete(pid); }
+          // A live frame without meta cannot serve it: the next pump asks for state, which always carries one.
+          if (latest.get(f.fieldId) === frame && (frame.metaWire || frame.meta)) { this._sendCached(pid, f); this.resync.delete(pid); }
           continue;
         }
         if (frame.snapshotWire || frame.eventsWire) {
@@ -275,6 +300,15 @@ export class WorkerFieldRunner {
           if (frame.events?.length) this.m.sendTo(pid, { t: 'b.ev', fieldId: f.fieldId, gt: frame.gt ?? frame.snapshot.t, ev: frame.events });
           if (frame.snapshot) this.m.sendTo(pid, snapFrame(f.fieldId, frame.snapshot));
         }
+      }
+    }
+    // A finished field's unchanged terminal frame is sent by the Worker once; keep offering the cached final view to
+    // its watchers on every reply, under the same 1s retry/dedupe and phase-final bypass as a repeated frame.
+    for (const f of this.fields) {
+      if (f.live || latest.has(f.fieldId) || !f.battle._snapshotWire || !f.battle._metaWire) continue;
+      for (const pid of this._watchers(f.fieldId)) {
+        if (this.resync.get(pid) === f.fieldId) { this._sendCached(pid, f); this.resync.delete(pid); }
+        else this._sendSnapshot(pid, f, { snapshotWire: f.battle._snapshotWire, metaWire: f.battle._metaWire }, forceSnapshots || out.done);
       }
     }
     for (const f of damageFields) for (const pid of this._watchers(f.fieldId)) this._sendDamageCached(pid, f);

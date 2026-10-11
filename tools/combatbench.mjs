@@ -30,7 +30,8 @@ const lineup = [
   ['chess_char_5_12_a', 11, 5], ['chess_char_6_13_a', 9, 8],
 ];
 function input(seed) {
-  return { wireFrames: true, snapshotHz, specs: [buildBattleSpec({
+  // The same lean reply options WorkerFieldRunner requests (meta on demand, terminal frames once).
+  return { wireFrames: true, snapshotHz, metaOnDemand: true, terminalOnce: true, specs: [buildBattleSpec({
     seed, fieldId: 'n:p', kind: 'normal', stageId: 'act2autochess_m01', timeLimit: 60, routes,
     spawns: Array.from({ length: 70 }, (_, i) => ({ time: i % 10 * 0.2, enemyKey: keys[i % keys.length], routeIndex: i % routes.length, mods: { hpMul: 10 } })),
     players: [{ playerId: 'p', units: lineup.map(([chessId, row, col], i) => ({ uid: i + 1, kind: 'chess', chessId, row, col, abs: true })) }],

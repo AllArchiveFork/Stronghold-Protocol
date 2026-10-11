@@ -206,7 +206,7 @@ test('workers: long debt is scalar/hard-cap bounded; force controls precede furt
   assert.deepEqual(h.failures, []);
 });
 
-test('workers: coalesced in-flight resync sends only newest matching metadata/snapshot, not stale spawn events', async (t) => {
+test('workers: coalesced in-flight resync waits for one state turn with the newest matching metadata/snapshot, not stale spawn events', async (t) => {
   let now = 1000;
   const pool = new DelayedPool(() => now, 300);
   const h = remote(pool, () => now);
@@ -214,23 +214,27 @@ test('workers: coalesced in-flight resync sends only newest matching metadata/sn
   await pool.deliver();
   now += 500;
   h.runner._pump();
-  const latest = pool.queue[0].dto.frames.findLast((f) => f.fieldId === 'n:p0' && f.snapshotWire);
-  const opening = JSON.parse(pool.queue[0].dto.frames.find((f) => f.fieldId === 'n:p0' && f.startMetaWire).startMetaWire);
-  const meta = JSON.parse(latest.metaWire);
-  const listed = new Set(meta.units.map(u => u.id));
-  const resyncMetaWire = JSON.stringify({ ...meta, unitStats: opening.unitStats.filter(u => listed.has(u.id)) });
-  assert.ok(pool.queue[0].dto.frames.some((f) => f.eventsWire && !f.snapshotWire));
+  const inflight = pool.queue[0].dto;
+  const opening = JSON.parse(inflight.frames.find((f) => f.fieldId === 'n:p0' && f.startMetaWire).startMetaWire);
+  assert.ok(inflight.frames.some((f) => f.eventsWire && !f.snapshotWire));
+  assert.ok(inflight.frames.filter((f) => f.snapshotWire).every((f) => f.metaWire === null), 'live advance frames carry no field meta');
   h.m.watchers.set('p0', 'n:p0');
   h.runner.requestField('p0', 'n:p0');
   const before = h.frames.length;
   await pool.deliver();
-  const received = h.frames.slice(before).filter(([, , wire]) => JSON.parse(wire).fieldId === 'n:p0');
-  assert.deepEqual(received.filter(([, type]) => type !== 'b.damage'),
+  const forField = () => h.frames.slice(before).filter(([, , wire]) => JSON.parse(wire).fieldId === 'n:p0');
+  assert.deepEqual(forField(), [], 'a meta-less in-flight advance neither serves the rejoin nor leaks its stale spawn events');
+  assert.equal(h.runner.resync.size, 1);
+  assert.equal(h.commands.at(-1)[0], 'state', 'the rejoin and the fresh damage resync share one state turn');
+  const latest = pool.queue[0].dto.frames.findLast((f) => f.fieldId === 'n:p0' && f.snapshotWire);
+  const meta = JSON.parse(latest.metaWire);
+  const listed = new Set(meta.units.map(u => u.id));
+  const resyncMetaWire = JSON.stringify({ ...meta, unitStats: opening.unitStats.filter(u => listed.has(u.id)) });
+  await pool.deliver();
+  assert.deepEqual(forField().filter(([, type]) => type !== 'b.damage'),
     [['p0', 'm.field', resyncMetaWire], ['p0', 'b.snap', latest.snapshotWire]]);
   assert.equal(h.runner.resync.size, 0);
   assert.equal(h.fields[0].battle.snapshot().t, JSON.parse(latest.snapshotWire).gt);
-  assert.equal(h.commands.at(-1)[0], 'state', 'a coalesced advance cannot satisfy fresh damage resync with an old 1Hz sample');
-  await pool.deliver();
   const score = JSON.parse(h.frames.filter(([, type, wire]) => type === 'b.damage' && JSON.parse(wire).fieldId === 'n:p0').at(-1)[2]);
   assert.equal(score.gt, h.fields[0].battle.time);
   assert.equal(score.owners[0].total, pool.engine.fields[0].battle.damageRows().owners[0].total);
@@ -311,17 +315,21 @@ test('workers: real single-worker FIFO gives all 24 phases a bounded first turn 
   const hs = Array.from({ length: 24 }, () => remote(pool, () => now));
   t.after(() => hs.forEach((h) => h.runner.stop()));
   await until(() => hs.every((h) => h.runner.ready), 'all phases initialized');
-  const turns = [];
-  const reply = pool._reply.bind(pool);
-  pool._reply = (slot, message) => {
-    if (slot.active?.op === 'advance') turns.push(message.dto.ticks);
-    reply(slot, message);
+  const turns = [], wire = [];
+  const answer = pool._answer.bind(pool), reply = pool._reply.bind(pool), batchReply = pool._batchReply.bind(pool);
+  pool._answer = (slot, task, message) => {
+    if (task.op === 'advance') turns.push(message.dto.ticks);
+    return answer(slot, task, message);
   };
+  pool._reply = (slot, message) => { wire.push(1); reply(slot, message); };
+  pool._batchReply = (slot, message) => { wire.push(message.replies.length); batchReply(slot, message); };
   now += 1000;
   hs.forEach((h) => h.runner._pump());
   await until(() => hs.every((h) => h.runner.ticks === 60) && pool.stats().pending === 0, 'all active debt actually simulated');
   assert.deepEqual(turns.slice(0, 24), Array(24).fill(32));
   assert.deepEqual(turns.slice(24), Array(24).fill(60));
+  assert.ok(wire.length < 48 && wire.some((n) => n > 1), `queued commands of different phases share wire turns (${wire})`);
+  assert.equal(wire.reduce((a, b) => a + b, 0), 48);
   for (const h of hs) { assert.deepEqual(h.failures, []); assert.ok(h.runner.acc < TICK); assertMonotonic(h.frames); }
 });
 

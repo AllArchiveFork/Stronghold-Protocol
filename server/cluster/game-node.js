@@ -5,7 +5,7 @@ import { WebSocketServer } from 'ws';
 import { GameHost } from './game-host.js';
 import { createRpcAuthenticator, createRpcHandler, RpcError } from './rpc.js';
 import { createTicketAuthority } from './tickets.js';
-import { NET_DEFAULTS, TokenBucket, encode, sendRaw, isErrCode } from '../net.js';
+import { NET_DEFAULTS, TokenBucket, corkTurn, encode, sendRaw, isErrCode } from '../net.js';
 import { C2S, validateC2S, normalizeServerLoad, normalizeLoadDetails } from '../../shared/protocol.js';
 import { ERR, PROTOCOL_VERSION } from '../../shared/constants.js';
 import { normalizeGameLoad, normalizeClusterLoad, publicGameLabel } from '../../shared/cluster-load.js';
@@ -297,6 +297,8 @@ export async function startGameNode({ host = '127.0.0.1', port = 0, nodeId, gene
   }
   function write(conn, type, data) {
     if (stopped || conn.closing || conn.ws.readyState !== 1 || typeof data !== 'string') return false;
+    // One Worker reply fans b.ev/b.snap/m.damage… out per member: this turn's frames leave in one socket write.
+    corkTurn(conn.ws);
     const sent = sendRaw(conn.ws, data, { droppable: type === 'b.snap', compress: false });
     if (!sent && (type !== 'b.snap' || conn.ws.readyState !== 1)) closeConn(conn, 1013, 'CHANNEL_UNAVAILABLE');
     return sent;
@@ -411,7 +413,8 @@ export async function startGameNode({ host = '127.0.0.1', port = 0, nodeId, gene
       assignmentId: null, sessionId: null, bucket: new TokenBucket(NET_DEFAULTS.ratePerSec, NET_DEFAULTS.rateBurst, at),
       heavy: new TokenBucket(NET_DEFAULTS.heavyPerSec, NET_DEFAULTS.heavyBurst, at), dropWindowAt: at, drops: 0 };
     conn.channel = {
-      send(message) { const data = encode(message); return data !== null && enqueue(conn, message?.t, data); },
+      // `wire` is the host's JSON.stringify(message) of a shared frame: reuse it instead of encoding per member.
+      send(message, wire) { const data = typeof wire === 'string' ? wire : encode(message); return data !== null && enqueue(conn, message?.t, data); },
       sendEncoded(type, data) { return enqueue(conn, type, data); },
       close(code, reason) { closeConn(conn, code, reason); },
     };

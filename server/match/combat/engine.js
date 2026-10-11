@@ -24,8 +24,9 @@ class EngineRunner extends FieldRunner {
 }
 
 export class CombatEngine {
-  constructor({ specs, boss = null, wireFrames = false, coalesceFrames = false, damageBoard = false, snapshotHz = 20, gameSpeed = GAME_SPEED },
-    { data, log = QUIET, BattleClass, now = () => performance.now() } = {}) {
+  constructor({ specs, boss = null, wireFrames = false, coalesceFrames = false, damageBoard = false, snapshotHz = 20, gameSpeed = GAME_SPEED,
+    metaOnDemand = false, terminalOnce = false },
+    { data, log = QUIET, BattleClass, now = () => performance.now(), cloneOutput = true } = {}) {
     if (!Array.isArray(specs) || specs.length > MAX_PLAYER_CAPACITY) throw new TypeError(`specs must contain at most ${MAX_PLAYER_CAPACITY} fields`);
     // A leader phase remains ONE worker / ONE SharedBossPool, with at most ten pair fields.
     if ((boss || specs.some(s => s?.kind === 'boss' || s?.kind === 'hidden')) && specs.length > MAX_PLAYER_CAPACITY / 2) {
@@ -44,6 +45,15 @@ export class CombatEngine {
     this.wireFrames = wireFrames === true;
     this.coalesceFrames = this.wireFrames && coalesceFrames === true;
     this.coalescing = false;
+    // WorkerFieldRunner opts in to both (it keeps the consistent meta/snapshot pair and the 1s terminal retry itself):
+    // live frames carry field meta only for metaFields, state replies and finished fields; a finished field without a
+    // shared Boss pool (its final view can no longer change) sends its terminal frame/result once, not every reply.
+    this.metaOnDemand = metaOnDemand === true;
+    this.terminalOnce = terminalOnce === true;
+    this.metaFields = new Set();
+    this.stateOutput = false;
+    // A Worker posts each reply synchronously (postMessage copies it then); inline callers keep their isolated copy.
+    this.cloneOutput = cloneOutput !== false;
     this.disposed = false;
     this.frames = [];
     this.effects = [];
@@ -148,10 +158,15 @@ export class CombatEngine {
     } catch (e) { this._error(`field ${f.fieldId} start stats`, e); }
   }
 
+  _metaDue(f) {
+    return !this.metaOnDemand || this.stateOutput || !f.live || this.metaFields.has(f.fieldId);
+  }
+
   _frame(f, events = []) {
     let snapshot = null, meta = null;
+    const withMeta = this._metaDue(f);
     try { snapshot = f.battle.snapshot(); } catch (e) { this._error(`field ${f.fieldId} snapshot`, e); }
-    try { meta = f.battle.fieldMeta(); } catch (e) { this._error(`field ${f.fieldId} fieldMeta`, e); }
+    if (withMeta) try { meta = f.battle.fieldMeta(); } catch (e) { this._error(`field ${f.fieldId} fieldMeta`, e); }
     if (this.wireFrames) {
       // Encode at this exact tick boundary, once for all watchers. Only immutable strings cross the
       // worker port: no snapshot/event/meta object-tree cloning or per-viewer main-thread encoding.
@@ -160,7 +175,7 @@ export class CombatEngine {
         fieldId: f.fieldId,
         snapshotWire: JSON.stringify(snap),
         eventsWire: events.length ? JSON.stringify({ t: 'b.ev', fieldId: f.fieldId, gt: snap.gt, ev: events }) : null,
-        metaWire: JSON.stringify({ t: 'm.field', ...meta, fieldId: f.fieldId, kind: f.kind, live: !!f.live }),
+        metaWire: withMeta ? JSON.stringify({ t: 'm.field', ...meta, fieldId: f.fieldId, kind: f.kind, live: !!f.live }) : null,
       });
     } else {
       // Also isolate inline DTOs: a later command may not mutate a previously returned frame/result.
@@ -181,10 +196,27 @@ export class CombatEngine {
     }
   }
 
-  _begin(snapshotFields = [], coalescing = false) {
+  /** A finished field whose terminal frame/result already went out and whose final view cannot change. */
+  _terminalSent(f) {
+    return this.terminalOnce && !f.live && f.terminalSent === true && !f.battle?.sharedBoss;
+  }
+
+  /** Later events of a field whose unchanged terminal frame is not re-sent keep their original b.ev wire. */
+  _emitEvents(f) {
+    let events = [];
+    try { events = f.battle.drainEvents() || []; } catch (e) { this._error(`field ${f.fieldId} drainEvents`, e); }
+    if (!events.length) return;
+    const msg = eventFrame(f.fieldId, f.battle, events);
+    this.frames.push(this.wireFrames ? { fieldId: f.fieldId, eventsWire: JSON.stringify(msg) }
+      : structuredClone({ fieldId: f.fieldId, events, gt: msg.gt }));
+  }
+
+  _begin(snapshotFields = [], coalescing = false, metaFields = []) {
     if (this.disposed) throw new Error('combat engine disposed');
     if (!Array.isArray(snapshotFields)) throw new TypeError('snapshotFields must be an array');
+    if (!Array.isArray(metaFields)) throw new TypeError('metaFields must be an array');
     this.watched = new Set(snapshotFields);
+    this.metaFields = new Set(metaFields);
     this.frames = [];
     this.coalescing = this.coalesceFrames && coalescing;
   }
@@ -214,7 +246,11 @@ export class CombatEngine {
     // even with no watchers, and do not reuse an earlier frame whose boss state/meta is now stale.
     for (const f of this.fields) {
       if (state && (this.watched.has(f.fieldId) || !f.live)) this._frame(f);
-      else if (!f.live || final) this._emit(f, true);
+      else if (this._terminalSent(f) && !final) this._emitEvents(f);
+      else if (!f.live || final) {
+        this._emit(f, true);
+        if (!f.live) f.terminalSent = true;
+      }
     }
     const fields = this.fields.map((f) => {
       const b = f.battle;
@@ -223,7 +259,10 @@ export class CombatEngine {
       if (f.kind === 'unite') {
         try { left = uniteLeft(b); } catch (e) { this._error(`field ${f.fieldId} left`, e); }
       }
-      const result = !f.live ? this.runner.resultOf(f) : undefined;
+      // A once-sent result is retained by RemoteBattle; state/final replies still carry it.
+      const sendResult = !f.live && (!this._terminalSent(f) || !f.resultSent || state || final);
+      const result = sendResult ? this.runner.resultOf(f) : undefined;
+      if (sendResult) f.resultSent = true;
       this._saveErrors(f);
       return {
         fieldId: f.fieldId, kind: f.kind, players: f.players, live: f.live,
@@ -231,10 +270,10 @@ export class CombatEngine {
         killed: Number(b.killed) || 0, total: Number(b.total) || 0,
         resolved: Number.isFinite(b.resolved) ? Math.max(0, Math.min(Number(b.total) || 0, Math.trunc(b.resolved))) : null,
         progress, left, layerGains: battleLayerGains(b), errors: this.diagnostics.get(f.fieldId), ...(result ? { result } : {}),
-        ...(this.damageBoard && !f.live ? { damageRows: f.damageRows } : {}),
+        ...(this.damageBoard && sendResult ? { damageRows: f.damageRows } : {}),
       };
     });
-    const dto = structuredClone({
+    const output = {
       ticks: this.runner.ticks, time: this.runner.time, done: this.runner.done,
       fields, effects: this.effects,
       ...(this.damageBoard ? { damageFrames } : {}),
@@ -242,7 +281,8 @@ export class CombatEngine {
         maxHp: this.pool.maxHp, hp: this.pool.hp, byPlayer: [...this.pool.byPlayer],
         teamLp: this.boss.teamLp, overtimeApplied: this.boss.overtimeApplied,
       } : null,
-    });
+    };
+    const dto = this.cloneOutput ? structuredClone(output) : output;
     // Frames were already detached at their individual tick boundaries; don't clone their heavy unit
     // arrays a second time here (postMessage will perform the one necessary cross-thread copy).
     if (this.coalescing) {
@@ -263,9 +303,9 @@ export class CombatEngine {
     return dto;
   }
 
-  advance(ticks, { snapshotFields = [] } = {}) {
+  advance(ticks, { snapshotFields = [], metaFields = [] } = {}) {
     if (!Number.isInteger(ticks) || ticks < 0 || ticks > MAX_ADVANCE_TICKS) throw new RangeError(`ticks must be 0..${MAX_ADVANCE_TICKS}`);
-    this._begin(snapshotFields, ticks > MAX_TICKS_PER_INTERVAL);
+    this._begin(snapshotFields, ticks > MAX_TICKS_PER_INTERVAL, metaFields);
     for (let i = 0; i < ticks && !this.runner.done; i++) {
       this.runner._tick();
       if (this.runner.time >= HARD_CAP_SECONDS) this.runner._forceAll('timeout');
@@ -276,7 +316,8 @@ export class CombatEngine {
 
   state({ snapshotFields = [] } = {}) {
     this._begin(snapshotFields);
-    return this._output({ state: true });
+    this.stateOutput = true;
+    try { return this._output({ state: true }); } finally { this.stateOutput = false; }
   }
 
   forceField(id, reason = 'forced') {
