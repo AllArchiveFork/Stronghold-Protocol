@@ -108,5 +108,5 @@ python3 -I /opt/ark-cluster-formal/tools/cluster-private-code.py --profile forma
 
 ## 已知限制与正式化
 
-- 这套栈不受 `cluster-host-manager.py` 管理：没有 nft 租约 guard、CAS 状态、Main-thread 优先级或逐角色健康撤租。容器端口仅 loopback，bridge 由 Docker 隔离。`cluster-host-manager.py` 能解析 32 节点 policy（core 与 WG edge 的目标、key 与租约端口随之扩展），但这不等于本栈已纳入管理。
+- 这套栈不受 `cluster-host-manager.py` 管理：没有 nft 租约 guard、CAS 状态或逐角色健康撤租；Main-thread 优先级由 `main-thread-priority.py --profile local` 单独提供（见 [MAIN-THREAD-PRIORITY.md](../MAIN-THREAD-PRIORITY.md#local-profile)）。容器端口仅 loopback，bridge 由 Docker 隔离。`cluster-host-manager.py` 能解析 32 节点 policy（core 与 WG edge 的目标、key 与租约端口随之扩展），但这不等于本栈已纳入管理。
 - 正式化方向：host policy 增加 local 模式（core 项目内含 ingress 目标、只 loopback 映射、跳过 WG `network_ready`）、lease 规则放行 ingress→coordinator/game:3000、对应 unit（无 WG 依赖/handoff），以及相应测试。

@@ -27,6 +27,17 @@ DOCKER_ENV = {'PATH': '/usr/bin:/bin', 'HOME': '/root', 'LC_ALL': 'C'}
 LOCK = '/run/ark-main-thread-priority.lock'
 BETA_LOCK = '/run/ark-beta-main-thread-priority.lock'
 CORE_LOCK = '/run/ark-core-main-thread-priority.lock'
+LOCAL_LOCK = '/run/ark-local-main-thread-priority.lock'
+LOCAL_PROJECT = 'ark-cluster-formal-local'
+
+
+def local_targets():
+    """The Formal local stack (cluster-local-stack.py over a 32-game 3+1 core bundle, 16 ingress): per container its
+    Compose service, exact loopback bindings and workers. Fixed here like every profile; a new topology needs a new tool."""
+    roles = [('coordinator', (('3000/tcp', 35400), ('3001/tcp', 35410)), 0, 0)]
+    roles += [('ingress' if i == 1 else f'ingress-{i:02d}', (('3000/tcp', 35450 + i),), 0, 0) for i in range(1, 17)]
+    roles += [(f'game-{i:02d}', (('3000/tcp', 35410 + i),), 3, 1) for i in range(1, 33)]
+    return tuple((f'{LOCAL_PROJECT}-{service}', service, bindings, combat, trial) for service, bindings, combat, trial in roles)
 
 
 class Refused(Exception):
@@ -55,6 +66,10 @@ class Config:
     combat_workers: int = 6
     trial_workers: int = 1
     publish_ips: tuple = ('127.0.0.1',)
+    # Multi-container profile (local): every (container_name, service, bindings, combat, trial); target_config selects one.
+    targets: tuple = ()
+    # One local target's exact published bindings ((container port, host port) on 127.0.0.1); replaces the health mapping.
+    bindings: tuple = ()
 
     @property
     def worker_count(self):
@@ -62,15 +77,19 @@ class Config:
 
     @property
     def lock_path(self):
-        return {'prod': LOCK, 'beta': BETA_LOCK, 'core': CORE_LOCK}[self.profile]
+        return {'prod': LOCK, 'beta': BETA_LOCK, 'core': CORE_LOCK, 'local': LOCAL_LOCK}[self.profile]
+
+    @property
+    def target_names(self):
+        return tuple(target[0] for target in self.targets) if self.targets else (self.container_name,)
 
     @classmethod
     def parse(cls, value):
         if not isinstance(value, dict) or set(value) - {'profile', 'nice', 'startup_timeout_seconds', 'approved_images'}:
             raise Refused('invalid config keys')
         profile = value.get('profile', 'prod')
-        if not isinstance(profile, str) or profile not in ('prod', 'beta', 'core'):
-            raise Refused('profile must be prod, beta or core')
+        if not isinstance(profile, str) or profile not in ('prod', 'beta', 'core', 'local'):
+            raise Refused('profile must be prod, beta, core or local')
         nice = value.get('nice', DEFAULT_NICE)
         timeout = value.get('startup_timeout_seconds', 90)
         if type(nice) is not int or nice not in (0, DEFAULT_NICE):
@@ -97,7 +116,21 @@ class Config:
         if profile == 'core':
             return cls(tuple(pairs), nice, timeout, profile='core', combat_workers=12, trial_workers=2,
                        publish_ips=('127.0.0.1', '10.253.77.2'))
+        if profile == 'local':
+            return cls(tuple(pairs), nice, timeout, project=LOCAL_PROJECT, service='', container_name='', health_port=0,
+                       profile='local', combat_workers=0, trial_workers=0, publish_ips=(), targets=local_targets())
         return cls(tuple(pairs), nice, timeout)
+
+
+def target_config(config, name):
+    """The single-container config of fixed target `name`, or None. A single-target profile is its own only target."""
+    if not config.targets:
+        return config if name == config.container_name else None
+    for container_name, service, bindings, combat, trial in config.targets:
+        if container_name == name:
+            return replace(config, container_name=container_name, service=service, bindings=bindings,
+                           combat_workers=combat, trial_workers=trial, targets=())
+    return None
 
 
 def load_config(path):
@@ -176,6 +209,13 @@ def validate_info(info, image, config):
         raise Refused('container security baseline mismatch')
     if any(info.get(key) != 0 for key in ('cpu_quota', 'nano_cpus', 'memory')) or info.get('cpuset') != '':
         raise Refused('container resource baseline mismatch')
+    if config.bindings:
+        # local: the exact published set; exposed-only ports report null. No health mapping (see System.health).
+        published = info.get('all_ports')
+        expected = {port: [{'HostIp': '127.0.0.1', 'HostPort': str(host)}] for port, host in config.bindings}
+        if not isinstance(published, dict) or {port: value for port, value in published.items() if value} != expected:
+            raise Refused('fixed loopback bindings mismatch')
+        return
     ports = info.get('ports')
     expected = {(ip, str(config.health_port)) for ip in config.publish_ips}
     if (not isinstance(ports, list) or len(ports) != len(expected)
@@ -263,7 +303,8 @@ class System:
         return value
 
     def inspect(self, target):
-        info = self.docker('container', 'inspect', '--format', formatter(INSPECT_FIELDS), target)
+        fields = {**INSPECT_FIELDS, 'all_ports': '.NetworkSettings.Ports'} if self.config.bindings else INSPECT_FIELDS
+        info = self.docker('container', 'inspect', '--format', formatter(fields), target)
         if not IMAGE.fullmatch(str(info.get('image_id', ''))):
             raise Refused('invalid container image ID')
         if CID.fullmatch(target) and info.get('id') != target:
@@ -310,6 +351,10 @@ class System:
         return candidates[0]
 
     def health(self):
+        if self.config.profile == 'local':
+            # Game nodes and ingress serve no /healthz and loaded loopback publications stall: a local role is ready
+            # when its exact WorkerThread count is up (validate_threads; game 3+1, coordinator/ingress none).
+            return
         url = f'http://127.0.0.1:{self.config.health_port}/healthz'
         try:
             with self.health_opener.open(url, timeout=1) as response:
@@ -470,9 +515,20 @@ def runtime_lock(path=LOCK, *, timeout=0):
 
 
 def events_command(config, since):
+    # local: every service of the project; each start is mapped back to a fixed target (Watcher.handle).
+    service = [] if config.targets else ['--filter', 'label=com.docker.compose.service=' + config.service]
     return DOCKER + ['events', '--since', since, '--filter', 'type=container', '--filter', 'event=start',
-                     '--filter', 'label=com.docker.compose.project=' + config.project,
-                     '--filter', 'label=com.docker.compose.service=' + config.service, '--format', '{{.Actor.ID}}']
+                     '--filter', 'label=com.docker.compose.project=' + config.project, *service, '--format', '{{.Actor.ID}}']
+
+
+def container_name(config, target):
+    """A started container's name (a Docker event carries only its ID); a name passes through."""
+    if not CID.fullmatch(target):
+        return target
+    name = System(config).docker('container', 'inspect', '--format', formatter({'name': '.Name'}), target).get('name')
+    if not isinstance(name, str) or not name.startswith('/'):
+        raise Refused('invalid container name')
+    return name[1:]
 
 
 def stop_stream(stream):
@@ -489,9 +545,9 @@ def stop_stream(stream):
 
 class Watcher:
     def __init__(self, config_loader, system_factory=System, popen=subprocess.Popen, sleep=time.sleep,
-                 clock=time.monotonic, profile=None):
+                 clock=time.monotonic, profile=None, name_of=container_name):
         self.config_loader, self.system_factory, self.popen, self.sleep = config_loader, system_factory, popen, sleep
-        self.clock, self.profile = clock, profile
+        self.clock, self.profile, self.name_of = clock, profile, name_of
 
     def load_config(self):
         config = self.config_loader()
@@ -501,13 +557,22 @@ class Watcher:
             raise Refused('config profile changed; restart the matching policy unit')
         return config
 
+    def scoped(self, target):
+        config = self.load_config()
+        if not config.targets:
+            return config
+        scoped = target_config(config, self.name_of(config, target))
+        if scoped is None:
+            raise Refused('not a fixed local target')
+        return scoped
+
     def handle(self, target):
         try:
-            config = self.load_config()
+            config = self.scoped(target)
             deadline = self.clock() + config.startup_timeout_seconds
             for attempt in range(3):
                 if attempt:
-                    config = self.load_config()
+                    config = self.scoped(target)
                 remaining = math.ceil(deadline - self.clock())
                 if remaining <= 0:
                     raise Refused('policy application deadline exceeded')
@@ -534,7 +599,8 @@ class Watcher:
                             text=True, env=DOCKER_ENV, start_new_session=True)
         try:
             # The event cursor predates the scan, so a start during readiness isn't lost.
-            self.handle(config.container_name)
+            for name in config.target_names:
+                self.handle(name)
             for line in stream.stdout:
                 target = line.strip()
                 if CID.fullmatch(target):
@@ -554,10 +620,34 @@ class Watcher:
                 delay = min(30, delay * 2)
 
 
+def run_targets(config, args):
+    """A multi-container profile: --check / one apply visit every fixed target (one refusal does not stop the others;
+    exit 1 then, else 2 when any is not configured); --watch is the same Watcher over the whole project."""
+    if args.watch:
+        with runtime_lock(config.lock_path):
+            Watcher(lambda: load_config(args.config), profile=config.profile).run()
+        return 0
+    refused = unconfigured = 0
+    with (contextmanager(lambda: (yield))() if args.check else runtime_lock(config.lock_path)):
+        for name in config.target_names:
+            try:
+                result = Helper(System(target_config(config, name))).run(name, check=args.check)
+                emit('policy-checked' if args.check else 'policy-applied', target=name, **result)
+                unconfigured += not result['configured']
+            except Refused as error:
+                refused += 1
+                emit('refused', target=name, reason=str(error))
+            except OSError:
+                refused += 1
+                emit('refused', target=name, reason='host scheduling or proc access failed')
+    emit('targets-summary', targets=len(config.target_names), refused=refused, unconfigured=unconfigured)
+    return 1 if refused else 2 if unconfigured else 0
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config', required=True)
-    parser.add_argument('--profile', choices=('prod', 'beta', 'core'),
+    parser.add_argument('--profile', choices=('prod', 'beta', 'core', 'local'),
                         help='require a matching fixed config profile; never override config selectors')
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument('--check', action='store_true', help='read-only check; exit2 if policy is not applied')
@@ -576,6 +666,8 @@ def main():
         config = load_config(args.config)
         if args.profile is not None and config.profile != args.profile:
             raise Refused('config profile does not match requested fixed profile')
+        if config.targets:
+            return run_targets(config, args)
         if args.check:
             result = Helper(System(config)).run(config.container_name, check=True)
             emit('policy-checked', **result)

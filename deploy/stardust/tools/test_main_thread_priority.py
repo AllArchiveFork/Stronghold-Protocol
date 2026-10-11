@@ -656,12 +656,12 @@ class ProfileTests(unittest.TestCase):
 
     def test_profile_rejects_arbitrary_values_and_selector_overrides(self):
         value = {'approved_images': [{'revision': REV, 'image_id': IMAGE}]}
-        for profile in ('local', 'Beta', '', None, True, 1, [], {}):
+        for profile in ('Local', 'Beta', '', None, True, 1, [], {}):
             with self.subTest(profile=profile), self.assertRaises(m.Refused):
                 m.Config.parse({**value, 'profile': profile})
-        for profile in ('prod', 'beta', 'core'):
+        for profile in ('prod', 'beta', 'core', 'local'):
             for key in ('project', 'service', 'container_name', 'health_port', 'combat_workers',
-                        'trial_workers', 'worker_count', 'publish_ips', 'ports', 'lock_path'):
+                        'trial_workers', 'worker_count', 'publish_ips', 'ports', 'lock_path', 'targets', 'bindings'):
                 with self.subTest(profile=profile, key=key), self.assertRaises(m.Refused):
                     m.Config.parse({**value, 'profile': profile, key: 'override'})
 
@@ -1155,6 +1155,149 @@ class CoreProfileTests(unittest.TestCase):
         self.assertIn('--config /opt/ark-proto/main-priority/config.json --profile core --watch', service)
         self.assertNotIn('/opt/ark-proto-beta/', service)
         self.assertNotIn('Nice=-20', service)
+        self.assertNotIn('CAP_SYS_NICE', service)
+
+
+
+LOCAL_CONFIG = m.Config.parse({'profile': 'local', 'approved_images': [{'revision': REV, 'image_id': IMAGE}]})
+
+
+def local_info(name, cid=CID):
+    config = m.target_config(LOCAL_CONFIG, name)
+    ports = {'3000/tcp': None, '3001/tcp': None}
+    for port, host in config.bindings:
+        ports[port] = [{'HostIp': '127.0.0.1', 'HostPort': str(host)}]
+    value = {**info(config), 'id': cid, 'all_ports': ports}
+    value['ports'] = ports['3000/tcp']
+    return config, value
+
+
+class LocalProfileTests(unittest.TestCase):
+    """The Formal local stack: 49 fixed containers, readiness by exact WorkerThread count, exact loopback bindings."""
+
+    def test_fixed_targets_roles_and_lock(self):
+        names = LOCAL_CONFIG.target_names
+        self.assertEqual(len(names), 49)
+        self.assertEqual(len(set(names)), 49)
+        self.assertEqual(names[:3], ('ark-cluster-formal-local-coordinator', 'ark-cluster-formal-local-ingress',
+                                     'ark-cluster-formal-local-ingress-02'))
+        self.assertEqual(names[-1], 'ark-cluster-formal-local-game-32')
+        coordinator = m.target_config(LOCAL_CONFIG, names[0])
+        self.assertEqual((coordinator.service, coordinator.bindings, coordinator.worker_count),
+                         ('coordinator', (('3000/tcp', 35400), ('3001/tcp', 35410)), 0))
+        ingress = m.target_config(LOCAL_CONFIG, 'ark-cluster-formal-local-ingress-16')
+        self.assertEqual((ingress.service, ingress.bindings, ingress.worker_count), ('ingress-16', (('3000/tcp', 35466),), 0))
+        game = m.target_config(LOCAL_CONFIG, 'ark-cluster-formal-local-game-01')
+        self.assertEqual((game.service, game.bindings, game.combat_workers, game.trial_workers, game.targets),
+                         ('game-01', (('3000/tcp', 35411),), 3, 1, ()))
+        self.assertIsNone(m.target_config(LOCAL_CONFIG, 'ark-cluster-formal-local-game-33'))
+        self.assertIsNone(m.target_config(LOCAL_CONFIG, 'ark-proto'))
+        self.assertEqual(LOCAL_CONFIG.lock_path, m.LOCAL_LOCK)
+        self.assertEqual(len({config.lock_path for config in (*PROFILES, LOCAL_CONFIG)}), 4)
+        self.assertIs(m.target_config(CONFIG, 'ark-proto'), CONFIG)
+        self.assertIsNone(m.target_config(CONFIG, 'ark-proto-beta'))
+
+    def test_exact_loopback_bindings_and_baseline(self):
+        for name in ('ark-cluster-formal-local-coordinator', 'ark-cluster-formal-local-ingress-07',
+                     'ark-cluster-formal-local-game-20'):
+            config, value = local_info(name)
+            m.validate_info(value, image(), config)
+            first = next(iter(config.bindings))[0]
+            for change in ({'all_ports': {**value['all_ports'], first: [{'HostIp': '0.0.0.0', 'HostPort': '35400'}]}},
+                           {'all_ports': {**value['all_ports'], first: None}},
+                           {'all_ports': {**value['all_ports'], '9229/tcp': [{'HostIp': '127.0.0.1', 'HostPort': '9229'}]}},
+                           {'all_ports': {**value['all_ports'], first: value['all_ports'][first] * 2}},
+                           {'all_ports': None}, {'service': 'game-99'}, {'project': 'ark-cluster-formal'},
+                           {'pids': 256}, {'cap_add': ['SYS_NICE']}, {'nano_cpus': 2_000_000_000}):
+                with self.subTest(name=name, change=change), self.assertRaises(m.Refused):
+                    m.validate_info({**value, **change}, image(), config)
+
+    def test_role_workers_gate_readiness_and_only_main_changes(self):
+        for name, workers in (('ark-cluster-formal-local-game-05', 4), ('ark-cluster-formal-local-coordinator', 0),
+                              ('ark-cluster-formal-local-ingress', 0)):
+            config = m.target_config(LOCAL_CONFIG, name)
+            system = FakeSystem(config)
+            self.assertEqual(sum(t.name == 'WorkerThread' for t in system.helpers), workers)
+            with redirect_stdout(io.StringIO()):
+                result = m.Helper(system).run(name)
+            self.assertEqual([call[0] for call in system.calls], ['policy', 'nice'])
+            self.assertEqual((result['main_nice'], result['reset_on_fork'], result['configured']), (-20, True, True))
+        game = m.target_config(LOCAL_CONFIG, 'ark-cluster-formal-local-game-05')
+        system = FakeSystem(game)
+        system.helpers = system.helpers[1:]  # a replaced worker not back yet
+        with self.assertRaises(m.NotReady):
+            system.snapshot('ark-cluster-formal-local-game-05')
+
+    def test_local_health_is_the_thread_gate_not_http(self):
+        system = m.System(m.target_config(LOCAL_CONFIG, 'ark-cluster-formal-local-game-01'))
+        with patch.object(system.health_opener, 'open') as opener:
+            system.health()
+        opener.assert_not_called()
+
+    def test_events_follow_the_whole_project(self):
+        command = m.events_command(LOCAL_CONFIG, 'start-time')
+        self.assertIn('label=com.docker.compose.project=ark-cluster-formal-local', command)
+        self.assertFalse(any(part.startswith('label=com.docker.compose.service=') for part in command))
+        self.assertIn('label=com.docker.compose.service=ark-proto', m.events_command(CONFIG, 'start-time'))
+
+    def test_watcher_scans_every_target_and_maps_events_to_targets(self):
+        seen = []
+
+        class Recording(FakeSystem):
+            def snapshot(inner, target, ready=True):
+                seen.append((target, inner.config.container_name, inner.config.worker_count))
+                return FakeSystem.snapshot(inner, target, ready)
+
+        names = {'1' * 64: 'ark-cluster-formal-local-game-09', '2' * 64: 'ark-cluster-formal-local-redis'}
+        watcher = m.Watcher(lambda: LOCAL_CONFIG, system_factory=Recording, sleep=lambda _: None,
+                            name_of=lambda config, target: names.get(target, target))
+        with redirect_stdout(io.StringIO()) as output:
+            for name in LOCAL_CONFIG.target_names:
+                watcher.handle(name)
+            watcher.handle('1' * 64)
+            watcher.handle('2' * 64)
+        applied = [json.loads(line) for line in output.getvalue().splitlines() if '"policy-applied"' in line]
+        self.assertEqual(len(applied), 50)
+        self.assertIn(('1' * 64, 'ark-cluster-formal-local-game-09', 4), seen)
+        self.assertIn('not a fixed local target', output.getvalue())
+        self.assertEqual({entry[1] for entry in seen}, set(LOCAL_CONFIG.target_names))
+
+    def test_cli_visits_every_target_and_aggregates(self):
+        class Fixed(FakeSystem):
+            pass
+
+        def factory(config):
+            system = Fixed(config)
+            if config.container_name.endswith('game-03'):
+                system.ready = False
+            return system
+
+        args = ['main-thread-priority.py', '--config', '/x', '--profile', 'local', '--check']
+        with patch.object(sys, 'argv', args), patch.object(m.os, 'geteuid', return_value=0), \
+                patch.object(m.signal, 'signal'), patch.object(m, 'load_config', return_value=replace(LOCAL_CONFIG, startup_timeout_seconds=1)), \
+                patch.object(m, 'System', side_effect=factory), patch.object(m, 'runtime_lock') as lock, \
+                patch.object(m.time, 'sleep'), redirect_stdout(io.StringIO()) as output:
+            code = m.main()
+        events = [json.loads(line) for line in output.getvalue().splitlines()]
+        summary = events[-1]
+        self.assertEqual(summary['event'], 'targets-summary')
+        self.assertEqual((summary['targets'], summary['refused'], summary['unconfigured']), (49, 1, 48))
+        self.assertEqual(code, 1, 'one target could not be checked')
+        lock.assert_not_called()
+        self.assertTrue(all(event.get('target') for event in events[:-1]))
+
+    def test_local_example_and_unit(self):
+        root = Path(__file__).parents[1]
+        value = json.loads((root / 'main-thread-priority.local.example.json').read_text())
+        self.assertEqual(value, {'profile': 'local', 'nice': -20, 'startup_timeout_seconds': 90, 'approved_images': []})
+        with self.assertRaisesRegex(m.Refused, 'allowlist'):
+            m.Config.parse(value)
+        base = '/opt/ark-cluster-formal/main-priority'
+        self.assertEqual(unit_argv('local'), ['/usr/bin/python3', '-B', f'{base}/current/main-thread-priority.py',
+                                              '--config', f'{base}/config.json', '--profile', 'local', '--watch'])
+        service = (root / 'systemd/ark-local-main-thread-priority.service').read_text()
+        for needle in ('User=root', 'Nice=0', 'UMask=0077'):
+            self.assertIn(needle, service)
         self.assertNotIn('CAP_SYS_NICE', service)
 
 

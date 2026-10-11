@@ -4,7 +4,8 @@
 The coordinator, the bundle's fixed 16 or 32 games and N local ingress share the core bridge on one host.
 The node count and per-game worker pools come only from the verified core policy. Core keys and runtime
 files are reused untouched; ingress dial the bridge directly and nothing is published on the WG address.
-The root host manager does not cover this stack (no leases, priority or CAS), see LOCAL-STACK.md.
+The root host manager does not cover this stack (no leases or CAS), see LOCAL-STACK.md; Main-thread priority is
+main-thread-priority.py --profile local (MAIN-THREAD-PRIORITY.md).
 
 Opt-in --ingress-link: one new 32-byte key per local ingress (only here, never copied), each ingress mounting only its
 own key and naming the coordinator's private bridge listener; the coordinator gets a DERIVED runtime (the verified core
