@@ -30,6 +30,7 @@
 | `tools/prepare-material-lb.py`、`tools/test-prepare-material-lb.py` | 固定素材 profile 的离线生成/校验，不上传或激活 |
 | `tools/cluster-source-export.py`、`tools/cluster-generated-assets.py` | 逐 Git blob 导出及独立 generated renderer resource 清单 |
 | `tools/cluster-deploy.py`、`tools/cluster-host-manager.py` | 新受保护 bundle、角色准入、生命周期及精确租约管理 |
+| `tools/cluster-local-stack.py`、[cluster/LOCAL-STACK.md](cluster/LOCAL-STACK.md) | 应急同机（无 WG）core+本地 ingress 组合栈生成、切换与回滚 |
 | [WORKERS.md](WORKERS.md)、[WS-COMPRESSION.md](WS-COMPRESSION.md) | Worker 健康/故障策略与受控 WS 压缩 |
 | [MAIN-THREAD-PRIORITY.md](MAIN-THREAD-PRIORITY.md) | 宿主 Main-only 优先级、固定镜像/源码白名单与停用合同 |
 | `tools/main-thread-priority.py`、`systemd/ark-main-thread-priority.service` | 普通调度/reset-on-fork 与 Docker 启动事件保护 |

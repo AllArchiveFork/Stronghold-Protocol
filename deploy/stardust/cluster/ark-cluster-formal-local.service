@@ -1,0 +1,19 @@
+# Emergency WG-less co-located Formal stack. Replace <local-stack> with the generated output directory
+# before installing; it must never run together with ark-cluster-formal-edge.service (same loopback ports).
+[Unit]
+Description=Ark Formal co-located core+ingress stack (emergency WG-less topology)
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+Conflicts=ark-cluster-formal-edge.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/docker compose -p ark-cluster-formal-local -f /opt/ark-cluster-formal/bundles/<local-stack>/compose.json up -d
+ExecStop=/usr/bin/docker compose -p ark-cluster-formal-local -f /opt/ark-cluster-formal/bundles/<local-stack>/compose.json stop
+TimeoutStartSec=300
+TimeoutStopSec=180
+
+[Install]
+WantedBy=multi-user.target
