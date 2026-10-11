@@ -1,9 +1,11 @@
 # Emergency WG-less co-located Formal stack. Replace <local-stack> with the generated output directory
 # before installing; it must never run together with ark-cluster-formal-edge.service (same loopback ports).
+# Wants= rather than Requires=docker.service: an explicit docker restart must not propagate here, or
+# ExecStop would stop every container and Docker live-restore could not keep in-memory matches alive.
 [Unit]
 Description=Ark Formal co-located core+ingress stack (emergency WG-less topology)
 After=docker.service network-online.target
-Requires=docker.service
+Wants=docker.service
 Wants=network-online.target
 Conflicts=ark-cluster-formal-edge.service
 

@@ -89,6 +89,13 @@ class LocalStackTests(unittest.TestCase):
         with self.assertRaises(local.Refused):
             local.compose(self.core, self.root / 'tampered', profile=self.profile, ingress_instances=8)
 
+    def test_unit_template_survives_docker_restart_and_excludes_edge(self):
+        unit = (BASE.parent / 'cluster' / 'ark-cluster-formal-local.service').read_text().splitlines()
+        self.assertIn('Wants=docker.service', unit)
+        self.assertFalse(any(line.startswith(('Requires=', 'BindsTo=', 'PartOf=')) for line in unit))
+        self.assertIn('After=docker.service network-online.target', unit)
+        self.assertIn('Conflicts=ark-cluster-formal-edge.service', unit)
+
     def test_instance_count_follows_the_fixed_profile(self):
         with self.assertRaises(local.Refused):
             local.compose(self.core, self.root / 'nine', profile=self.profile, ingress_instances=9)
