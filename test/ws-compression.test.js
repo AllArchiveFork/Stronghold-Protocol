@@ -8,7 +8,9 @@ import { NET_DEFAULTS, encode, send, sendRaw } from '../server/net.js';
 import { resolveWsCompression, isCompressibleType } from '../server/wsCompression.js';
 import { PROTOCOL_VERSION, MATCHMAKING_VERSION } from '../shared/constants.js';
 
-const TYPES = ['b.snap', 'b.ev', 'm.field', 'm.damage'];
+const TYPES = ['m.public', 'm.private', 'm.unitStats', 'm.field', 'm.damage', 'b.damage'];
+/** Frames the lobby sends already encoded (sendEncodedToPlayer): two eligible, the high-rate battle stream plain. */
+const ENCODED = ['m.field', 'm.damage', 'b.damage', 'b.snap', 'b.ev'];
 const EXPECTED_OPTIONS = {
   threshold: 512,
   serverNoContextTakeover: true,
@@ -221,9 +223,9 @@ describe('WebSocket compression policy', { concurrency: false }, () => {
     }
   });
 
-  test('only the four battle-state types are compressible', () => {
+  test('only the large, low-rate state types are compressible; the battle stream stays plain', () => {
     for (const type of TYPES) assert.equal(isCompressibleType(type), true, type);
-    for (const type of ['welcome', 'hello', 'pong', 'ok', 'error', 'room.state', 'lobby.presence', 'queue.state', 'm.public', 'm.private', 'm.result', 'b.damage', 'b.result', 'constructor', '__proto__', '', undefined, null, 1]) {
+    for (const type of ['b.snap', 'b.ev', 'welcome', 'hello', 'pong', 'ok', 'error', 'room.state', 'lobby.presence', 'presence.state', 'queue.state', 'm.result', 'm.toast', 'm.ticker', 'b.result', 'constructor', '__proto__', 'hasOwnProperty', '', undefined, null, 1, {}]) {
       assert.equal(isCompressibleType(type), false, 'non-allowlisted type stays uncompressed');
     }
   });
@@ -240,7 +242,7 @@ describe('WebSocket compression policy', { concurrency: false }, () => {
   });
 
   test('send uses the allowlist, including a large synthetic credential-bearing welcome', () => {
-    for (const type of [...TYPES, 'welcome', 'm.private', 'room.state', 'b.damage']) {
+    for (const type of [...TYPES, 'b.snap', 'b.ev', 'welcome', 'room.state', 'm.result']) {
       const ws = spySocket();
       const msg = type === 'welcome'
         ? { t: type, token: '0'.repeat(32), padding: 'synthetic-welcome-only-'.repeat(100) }
@@ -295,7 +297,7 @@ describe('native WebSocket compression through the complete server', { concurren
       const room = await roomFor(srv, client);
       let sequence = 0;
       // These are the real encode-once lobby paths used for snapshots and events.
-      for (const type of [...TYPES, 'b.damage']) {
+      for (const type of ENCODED) {
         const msg = fixture(type, ++sequence), text = encode(msg), rawBytes = Buffer.byteLength(text);
         assert.equal(srv.lobby.sendEncodedToPlayer(room, welcome.playerId, type, text), true);
         const result = await receivedFrame(client, type, sequence);
@@ -305,20 +307,31 @@ describe('native WebSocket compression through the complete server', { concurren
         if (shouldCompress) assert.ok(result.frame.wireBytes < rawBytes * 0.5, 'actual PMD wire bytes are below half the synthetic JSON size');
         else assert.equal(result.frame.payloadBytes, rawBytes);
       }
+      // Public/private state frames are encoded by send(), with the same allowlist.
+      for (const type of ['m.public', 'm.private', 'm.unitStats']) {
+        const msg = fixture(type, ++sequence), rawBytes = Buffer.byteLength(encode(msg));
+        assert.equal(send(client.serverWs, msg), true);
+        const result = await receivedFrame(client, type, sequence);
+        assert.equal(result.frame.rsv1, compressed);
+        if (compressed) assert.ok(result.frame.wireBytes < rawBytes * 0.5, 'actual PMD wire bytes are below half the synthetic JSON size');
+      }
       // Broadcast encoding has its own sendRaw path and must preserve the same policy.
-      const broadcast = fixture('b.ev', ++sequence);
+      const broadcast = fixture('m.public', ++sequence);
       srv.lobby.broadcastRoom(room, broadcast);
-      assert.equal((await receivedFrame(client, 'b.ev', sequence)).frame.rsv1, compressed);
+      assert.equal((await receivedFrame(client, 'm.public', sequence)).frame.rsv1, compressed);
+      const stream = fixture('b.ev', ++sequence);
+      srv.lobby.broadcastRoom(room, stream);
+      assert.equal((await receivedFrame(client, 'b.ev', sequence)).frame.rsv1, false, 'a large broadcast battle event stays plain');
       // Do not let the 512-byte threshold mask a welcome-policy regression.
       const largeWelcome = { t: 'welcome', testSequence: ++sequence, token: '0'.repeat(32), padding: 'synthetic-welcome-only-'.repeat(100) };
       assert.equal(send(client.serverWs, largeWelcome), true);
       const largeResult = await receivedFrame(client, 'welcome', sequence);
       assert.equal(largeResult.frame.rsv1, false);
       assert.equal(largeResult.frame.payloadBytes, Buffer.byteLength(encode(largeWelcome)));
-      const small = { t: 'b.snap', testSequence: ++sequence, tick: 1, units: [] };
+      const small = { t: 'm.damage', testSequence: ++sequence, round: 1, owners: [] };
       assert.ok(Buffer.byteLength(encode(small)) < 512);
-      assert.equal(srv.lobby.sendEncodedToPlayer(room, welcome.playerId, 'b.snap', encode(small)), true);
-      assert.equal((await receivedFrame(client, 'b.snap', sequence)).frame.rsv1, false, 'small allowlisted frames stay below the threshold');
+      assert.equal(srv.lobby.sendEncodedToPlayer(room, welcome.playerId, 'm.damage', encode(small)), true);
+      assert.equal((await receivedFrame(client, 'm.damage', sequence)).frame.rsv1, false, 'small allowlisted frames stay below the threshold');
       client.transmit({ t: 'ping', c: 42, rid: 102 });
       assert.equal((await client.waitFor('pong', (msg) => msg.rid === 102)).msg.c, 42);
     });
@@ -368,7 +381,9 @@ describe('native WebSocket compression through the complete server', { concurren
     assert.equal(srv.lobby.sendEncodedToPlayer(room, welcome.playerId, 'b.snap', encode(fixture('b.snap', 501))), false);
     assert.equal(queuedSends, beforeSoft, 'soft-dropped snapshots never enter ws compression/send');
     assert.equal(srv.lobby.sendEncodedToPlayer(room, welcome.playerId, 'b.ev', encode(fixture('b.ev', 502))), true);
-    assert.equal((await receivedFrame(client, 'b.ev', 502)).frame.rsv1, true);
+    assert.equal((await receivedFrame(client, 'b.ev', 502)).frame.rsv1, false, 'the battle stream stays plain');
+    assert.equal(srv.lobby.sendEncodedToPlayer(room, welcome.playerId, 'm.damage', encode(fixture('m.damage', 504))), true);
+    assert.equal((await receivedFrame(client, 'm.damage', 504)).frame.rsv1, true, 'reliable state frames are still compressed');
     queued = NET_DEFAULTS.hardBufferBytes + 1;
     const beforeHard = queuedSends;
     const closed = new Promise((resolve) => client.ws.once('close', (code) => resolve(code)));

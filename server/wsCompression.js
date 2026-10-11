@@ -8,6 +8,10 @@ const OPTIONS = Object.freeze({
   zlibDeflateOptions: Object.freeze({ level: 6, memLevel: 5 }),
 });
 
+// Only the large, low-rate state frames. The high-rate battle stream (b.snap/b.ev, ~15 frames per watcher per second,
+// mostly under 1 KiB) stays plain: per-message deflate of those cost more CPU than the few bytes it saved.
+const COMPRESSIBLE = new Set(['m.public', 'm.private', 'm.unitStats', 'm.field', 'm.damage', 'b.damage']);
+
 export function resolveWsCompression(mode = 'off') {
   if (mode === 'off') return false;
   if (mode === 'on') return OPTIONS;
@@ -15,5 +19,5 @@ export function resolveWsCompression(mode = 'off') {
 }
 
 export function isCompressibleType(type) {
-  return type === 'b.snap' || type === 'b.ev' || type === 'm.field' || type === 'm.damage';
+  return typeof type === 'string' && COMPRESSIBLE.has(type);
 }

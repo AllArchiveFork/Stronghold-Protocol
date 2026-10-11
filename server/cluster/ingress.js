@@ -13,6 +13,9 @@ import { isCompressibleType, resolveWsCompression } from '../wsCompression.js';
 
 const safeId = v => typeof v === 'string' && v.length > 0 && v.length <= 128 && /^[A-Za-z0-9_-][A-Za-z0-9_.:-]*(?![\s\S])/.test(v);
 const typeOf = raw => /^\s*\{\s*"t"\s*:\s*"([A-Za-z0-9_.-]{1,64})"/.exec(raw.slice(0, 256))?.[1] ?? null;
+// Relayed frames stay the received UTF-8 Buffers (ws validated them; link.js DATA/FANOUT too): only this prefix is
+// decoded to read the type. 1 KiB of UTF-8 always decodes to more than the 256 UTF-16 units typeOf looks at.
+const frameType = raw => typeOf(typeof raw === 'string' ? raw : raw.toString('utf8', 0, 1024));
 const gameIntent = t => (t.startsWith('g.') && t !== 'g.leave') || t === 'b.progress' || t === 'b.result';
 const plain = v => !!v && Object.getPrototypeOf(v) === Object.prototype;
 const validRid = v => Number.isInteger(v) && v >= 0 && v <= 2 ** 31;
@@ -77,8 +80,17 @@ export async function startIngress({ host = '127.0.0.1', port = 0, coordinatorUr
       peer.handoffTimer.unref?.();
     } else { closeGame(peer.game); closeGame(peer.previousGame); }
   }
-  function outward(peer, raw, type = typeOf(raw)) {
+  // Frames sent to one browser in the same event-loop turn leave in one socket write: corked bytes still count in
+  // bufferedAmount (the same backpressure decisions) and keep their order; close/end/destroy flush or drop as before.
+  function cork(peer) {
+    const socket = peer.client._socket;
+    if (peer.corked || !socket || socket.destroyed) return;
+    peer.corked = true; socket.cork();
+    setImmediate(() => { peer.corked = false; socket.uncork(); });
+  }
+  function outward(peer, raw, type = frameType(raw)) {
     if (peer.closing) return false;
+    cork(peer);
     const ok = sendRaw(peer.client, raw, { droppable: type === 'b.snap', compress: isCompressibleType(type) });
     if (!ok && (type !== 'b.snap' || peer.client.readyState !== 1)) closePeer(peer, 1013, 'BACKPRESSURE');
     return ok;
@@ -96,18 +108,18 @@ export async function startIngress({ host = '127.0.0.1', port = 0, coordinatorUr
   function gameFrame(peer, game, raw, binary) {
     if (peer.game !== game || game.terminal || peer.closing) return;
     if (binary) { closePeer(peer, 1011, 'INVALID_GAME_FRAME'); return; }
-    const text = raw.toString(), type = typeOf(text);
+    const type = frameType(raw);
     // Only authenticated coordinator terminal receipts deliver results. Even a
     // late/replayed node end frame must not duplicate or overtake that receipt.
     if (type === 'm.result') return;
     if (type === 'm.public') {
       let frame;
-      try { frame = JSON.parse(text); } catch { closePeer(peer, 1011, 'INVALID_GAME_FRAME'); return; }
+      try { frame = JSON.parse(raw.toString()); } catch { closePeer(peer, 1011, 'INVALID_GAME_FRAME'); return; }
       if (['RESULT', 'ENDED'].includes(frame.phase)) return;
     }
     if (type === 'cluster.bound') {
       let message;
-      try { message = JSON.parse(text); } catch { closePeer(peer, 1011, 'INVALID_GAME_FRAME'); return; }
+      try { message = JSON.parse(raw.toString()); } catch { closePeer(peer, 1011, 'INVALID_GAME_FRAME'); return; }
       if (message.assignmentId !== game.assignmentId || message.sessionId !== peer.playerId) { closePeer(peer, 1011, 'INVALID_GAME_BIND'); return; }
       game.bound = true; clearTimeout(game.timer);
       closeGame(peer.previousGame); peer.previousGame = null;
@@ -115,16 +127,16 @@ export async function startIngress({ host = '127.0.0.1', port = 0, coordinatorUr
     }
     if (type === 'cluster.started') {
       let message;
-      try { message = JSON.parse(text); } catch { closePeer(peer, 1011, 'INVALID_GAME_FRAME'); return; }
+      try { message = JSON.parse(raw.toString()); } catch { closePeer(peer, 1011, 'INVALID_GAME_FRAME'); return; }
       if (message.assignmentId !== game.assignmentId || message.sessionId !== peer.playerId) { closePeer(peer, 1011, 'INVALID_GAME_BIND'); return; }
       game.started = true; flush(peer, game); return;
     }
     if (type?.startsWith('cluster.')) { closePeer(peer, 1011, 'INVALID_GAME_FRAME'); return; }
-    if (game.published && game.bound && game.started) { outward(peer, text, type); return; }
-    const bytes = Buffer.byteLength(text);
+    if (game.published && game.bound && game.started) { outward(peer, raw, type); return; }
+    const bytes = raw.length;
     if (game.pendingBytes + bytes > NET_DEFAULTS.hardBufferBytes) { closePeer(peer, 1013, 'BACKPRESSURE'); return; }
     if (type === 'b.snap' && game.pendingBytes > NET_DEFAULTS.snapDropBytes) return;
-    game.pending.push({ raw: text, type }); game.pendingBytes += bytes;
+    game.pending.push({ raw, type }); game.pendingBytes += bytes;
   }
   function route(peer, message) {
     if (!plain(message) || !safeId(message.assignmentId)) { closePeer(peer, 1011, 'INVALID_ROUTE'); return; }
@@ -209,31 +221,31 @@ export async function startIngress({ host = '127.0.0.1', port = 0, coordinatorUr
     control.on('message', (raw, binary) => {
       if (peer.closing) return;
       if (binary) { closePeer(peer, 1011, 'INVALID_CONTROL_FRAME'); return; }
-      const text = raw.toString(), type = typeOf(text);
+      const type = frameType(raw);
       if (type === 'welcome') {
         let welcome;
-        try { welcome = JSON.parse(text); } catch { closePeer(peer, 1011, 'INVALID_CONTROL_FRAME'); return; }
+        try { welcome = JSON.parse(raw.toString()); } catch { closePeer(peer, 1011, 'INVALID_CONTROL_FRAME'); return; }
         if (!safeId(welcome.playerId) || (peer.playerId && peer.playerId !== welcome.playerId)) { closePeer(peer, 1011, 'INVALID_IDENTITY'); return; }
         peer.playerId = welcome.playerId;
       }
       if (type?.startsWith('cluster.')) {
         const limit = type === 'cluster.terminal' ? 2 * 1024 * 1024 + 1024 : 8192;
-        if (Buffer.byteLength(text) > limit) { closePeer(peer, 1011, 'INVALID_ROUTE'); return; }
-        try { route(peer, JSON.parse(text)); } catch { closePeer(peer, 1011, 'INVALID_ROUTE'); }
+        if (raw.length > limit) { closePeer(peer, 1011, 'INVALID_ROUTE'); return; }
+        try { route(peer, JSON.parse(raw.toString())); } catch { closePeer(peer, 1011, 'INVALID_ROUTE'); }
         return;
       }
       // A late lobby heartbeat cannot replace the running game's load/latency sample.
       if (type === 'pong' && peer.game?.bound && peer.game.started && peer.game.published) return;
       if (type === 'queue.state' && peer.game && !peer.game.started) {
         let message;
-        try { message = JSON.parse(text); } catch { closePeer(peer, 1011, 'INVALID_CONTROL_FRAME'); return; }
+        try { message = JSON.parse(raw.toString()); } catch { closePeer(peer, 1011, 'INVALID_CONTROL_FRAME'); return; }
         if (message.state === 'matched') {
-          const bytes = Buffer.byteLength(text);
+          const bytes = raw.length;
           if (peer.matchedBytes + bytes > NET_DEFAULTS.hardBufferBytes) { closePeer(peer, 1013, 'BACKPRESSURE'); return; }
-          peer.matchedPending.push(text); peer.matchedBytes += bytes; return;
+          peer.matchedPending.push(raw); peer.matchedBytes += bytes; return;
         }
       }
-      outward(peer, text, type);
+      outward(peer, raw, type);
     });
     control.on('error', () => { if (!peer.closing) closePeer(peer); });
     control.on('close', (code) => {
@@ -259,16 +271,15 @@ export async function startIngress({ host = '127.0.0.1', port = 0, coordinatorUr
       if (HEAVY_TYPES.has(message.t) && !peer.heavy.take(at)) {
         outward(peer, encode(errorMsg(ERR.RATE, rid))); return;
       }
-      const text = raw.toString();
       const game = peer.game;
       if (game?.bound && game.started && game.published && (gameIntent(message.t) || message.t === 'ping')) {
-        if (!inward(game.socket, text)) closePeer(peer);
+        if (!inward(game.socket, raw)) closePeer(peer);
       } else if (peer.controlReady) {
-        if (!inward(control, text)) closePeer(peer);
+        if (!inward(control, raw)) closePeer(peer);
       } else {
-        const bytes = Buffer.byteLength(text);
+        const bytes = raw.length;
         if (peer.controlBytes + bytes > NET_DEFAULTS.snapDropBytes) { closePeer(peer, 1013, 'BACKPRESSURE'); return; }
-        peer.controlPending.push(text); peer.controlBytes += bytes;
+        peer.controlPending.push(raw); peer.controlBytes += bytes;
       }
     };
     client.on('message', (raw, binary) => { try { onClientFrame(raw, binary); } catch { closePeer(peer, 1011, 'FRAME_UNAVAILABLE'); } });
