@@ -57,7 +57,7 @@ SHA256SUMS
 - 每个代码URL为精确`location =`、每次`auth_request /_gate/check`、只GET/HEAD、MIME固定、`disable_symlinks on`、`etag on`、`expires off`。
 - 已知文件缺失时，**access门禁完成之后**的static404通过`error_page 404 = @ark_beta_cluster_code`进入受保护named fallback。没有`try_files`/rewrite改URI、版本query选择器、无凭据命中或proxy cache。
 - 未列出的`/js/`、`/css/`通过受保护prefix location到同一个固定协调器；不允许filesystem wildcard读取，也不继承旧单体/正式上游。
-- 三个proxy位置只能指向所选profile批准的唯一coordinator，保留原URI/query。目标字段示例为 `http://<APPROVED_COORDINATOR_IP>:<PROFILE_HTTP_PORT>`，不是可执行配置。必须先证明协调器与私有码TREE/commit build及配套release一致；stock版本标识与root runtime build是不同字段，不能凭同端口假定内容匹配。
+- 三个proxy位置只能指向所选profile批准的唯一coordinator，保留原URI/query。默认WG目标；无WG同机栈用`--topology local`改为该coordinator的core bridge地址`core_ip(2):3000`，metadata仅此时记录`topology`，`--verify`按记录值重建并拒绝不一致的显式`--topology`，见[LOCAL-STACK.md](LOCAL-STACK.md)。目标字段示例为 `http://<APPROVED_COORDINATOR_IP>:<PROFILE_HTTP_PORT>`，不是可执行配置。必须先证明协调器与私有码TREE/commit build及配套release一致；stock版本标识与root runtime build是不同字段，不能凭同端口假定内容匹配。
 - proxy覆盖真实IP/转发头，清除未可信Forwarded/CF/Upgrade，隐藏上游CORS/cache/安全头，避免重复或错误策略透传。
 
 Nginx在location增加`add_header`会取消server头继承，因此每个精确alias/prefix/named fallback都重复**stock Beta的七个原始安全表达式**：

@@ -10,7 +10,7 @@ Formal与Beta具有独立的Origin、安装/bundle目录、host policy、WG材�
 
 role guard优先级-20、bootstrap优先级-30；各profile只管自己的接口和容器IP。Formal不能选择Beta接口、端口、policy、bundle、WG目录或私有码站点，反之亦然；profile对象不可变，不在调用中切换module全局常量。
 
-安装目标、SSH host/key和公网endpoint应由私有受信inventory提供，不猜测NAT端口或新建管理通道。配置有固定peer与全部十六路由不代表握手、可达性或上线已经核验。所有入口共享一个全局大厅/queue，非独立realm；无sticky，也不对浏览器开放raw direct后端。
+安装目标、SSH host/key和公网endpoint应由私有受信inventory提供，不猜测NAT端口或新建管理通道。配置有固定peer与全部game路由不代表握手、可达性或上线已经核验。所有入口共享一个全局大厅/queue，非独立realm；无sticky，也不对浏览器开放raw direct后端。
 
 ## 固定源码、资源与镜像不能混称
 
@@ -42,7 +42,8 @@ python3 -I /opt/ark-cluster-formal/tools/cluster-deploy.py \
   --image-id "$ACTUAL_IMAGE_ID" --source-kind commit --build "$FULL_COMMIT" \
   --manifest-sha256 "$FULL_SOURCE_MANIFEST_SHA256"
 
-# 示例：在对应edge宿主分别运行，编号由批准inventory提供；每个入口有ALL16路由。
+# 示例：在对应edge宿主分别运行，编号由批准inventory提供；每个入口有全部game路由。
+# 32节点时core与每个edge都加相同的 --game-nodes 32。
 python3 -I /opt/ark-cluster-formal/tools/cluster-deploy.py \
   --profile formal --role edge --entry "$ENTRY_NUMBER" --out "$NEW_EDGE_BUNDLE" \
   --image-id "$ACTUAL_IMAGE_ID" --source-kind commit --build "$FULL_COMMIT" \
@@ -51,7 +52,7 @@ python3 -I /opt/ark-cluster-formal/tools/cluster-deploy.py \
 
 镜像OCI source固定为本站fork、revision=full commit，另有source-kind/manifest标签；manager核对实际sha256:imageID、CID、project/role、source/config、RO mounts、精确bridge/发布port、PID/startTicks/StartedAt/restart/节点epoch。Docker经典引擎mount顺序只在严格验证后排序，保留全部字段；IPAM只兼容未设置IPRange省略/空字符串，真实非空range或额外语义仍拒绝。
 
-Formal edge显式`--ingress-instances 1..8`生成固定数量的独立target；Beta仍只接受1或2。每个实例保持全部十六节点的相同路由，profile固定IP/loopback端口按序分配，不能用共享进程代次或伪造CID代替逐个核验。
+Formal edge显式`--ingress-instances 1..8`生成固定数量的独立target；Beta仍只接受1或2。每个实例保持全部game节点（16，或32）的相同路由，profile固定IP/loopback端口按序分配，不能用共享进程代次或伪造CID代替逐个核验。
 
 每game8combat+2trial、control/ingress0，capacity/maxRooms0、server/off、10Hz、压缩on。容器UID1000/read-only/cap-drop ALL/no-new-privileges/PIDs128，没有CPU/memory hardcap、CAP_SYS_NICE或whole-Node nice。root host先reset-on-fork再仅Main=-20，其他线程必须nice0/SCHED_OTHER。
 
@@ -86,11 +87,11 @@ python3 -I /opt/ark-cluster-formal/tools/cluster-host-manager.py \
 python3 -I /opt/ark-cluster-formal/tools/cluster-wg-recover.py --profile formal --action check
 ```
 
-新增unit/本地测试通过不等于公开激活。TLS/门禁/Cookie独立性、生成data/资源、受保护HTTP、ALL16routes、真实浏览器与DNS就绪应分别独立验收；一个内存coordinator无HA/状态迁移，不做负载或容量推论。
+新增unit/本地测试通过不等于公开激活。TLS/门禁/Cookie独立性、生成data/资源、受保护HTTP、全部game路由、真实浏览器与DNS就绪应分别独立验收；一个内存coordinator无HA/状态迁移，不做负载或容量推论。
 
 ## Formal/Beta commit私有码
 
-`cluster-private-code.py`两profile均接受显式`--source-kind commit`；默认仍Beta tree语义。Formal输出`localcode/cluster-formal-<build>/...`、`nginx/cluster-private-code-formal.conf`；站点alias是Formal SITE，stock `$ark_proto_frame/$ark_proto_csp`，fallback `@ark_formal_cluster_code`，唯一proxy为Formal profile批准的coordinator HTTP目标。Beta保留自己的`cluster-`prefix、SITE/maps/fallback及固定HTTP目标；两者不能混用。
+`cluster-private-code.py`两profile均接受显式`--source-kind commit`；默认仍Beta tree语义。Formal输出`localcode/cluster-formal-<build>/...`、`nginx/cluster-private-code-formal.conf`；站点alias是Formal SITE，stock `$ark_proto_frame/$ark_proto_csp`，fallback `@ark_formal_cluster_code`，唯一proxy为Formal profile批准的coordinator HTTP目标（默认WG；无WG同机栈用`--topology local`指向coordinator的core bridge地址，见[LOCAL-STACK.md](../LOCAL-STACK.md)）。Beta保留自己的`cluster-`prefix、SITE/maps/fallback及固定HTTP目标；两者不能混用。
 
 ```sh
 python3 -I /opt/ark-cluster-formal/tools/cluster-private-code.py \

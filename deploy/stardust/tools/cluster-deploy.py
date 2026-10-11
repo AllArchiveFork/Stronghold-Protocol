@@ -25,6 +25,7 @@ COORDINATOR_PORT, END_PORT = _BETA.coordinator_port, _BETA.end_port
 GAME_FIRST_PORT, INGRESS_PORT, ORIGIN = _BETA.game_first_port, _BETA.ingress_port, _BETA.origin
 HEX40, HEX64 = re.compile(r'[a-f0-9]{40}'), re.compile(r'[a-f0-9]{64}')
 IMAGE = re.compile(r'sha256:[a-f0-9]{64}')
+GAME_NODE_COUNTS = (16, 32)
 KNOWN_REPO = Path('/root/projects/Stronghold-Protocol')
 _TOOL = Path(__file__).resolve()
 _CANDIDATE_REPO = _TOOL.parents[3] if len(_TOOL.parents) > 3 else None
@@ -126,8 +127,11 @@ def ingress_service(instance, profile='beta'):
     return 'ingress' if instance == 1 else 'ingress-' + format(instance, '02d')
 
 
-def generate(out, *, image, build, manifest_sha256, source_kind, role, entry=1, profile='beta', ingress_instances=1):
+def generate(out, *, image, build, manifest_sha256, source_kind, role, entry=1, profile='beta', ingress_instances=1, game_nodes=16):
     p = profiles.get_profile(profile)
+    # Fixed inventories only; the default sixteen keeps existing bundles byte-identical.
+    require(type(game_nodes) is int and game_nodes in GAME_NODE_COUNTS and game_nodes <= p.max_game_nodes,
+            'invalid fixed game node count')
     require(type(ingress_instances) is int and 1 <= ingress_instances <= p.max_ingress_instances
             and (role == 'edge' or ingress_instances == 1), 'invalid fixed ingress instance count')
     require(source_kind in ('commit', 'tree'), 'invalid source identity kind')
@@ -158,11 +162,10 @@ def generate(out, *, image, build, manifest_sha256, source_kind, role, entry=1, 
 
     if role == 'core':
         node_entries = []
-        for index in range(1, 17):
+        for index in range(1, game_nodes + 1):
             node_id = 'game-' + format(index, '02d')
             write_new(keys_dir / (node_id + '.key'), secrets.token_bytes(32))
-            ip = p.core_ip(10 + index)
-            port = p.game_first_port + index - 1
+            ip, port = p.game_ip(index), p.game_host_port(index)
             config = {'role': 'game', 'nodeId': node_id, 'publicSlot': index, 'build': build,
                       'host': '0.0.0.0', 'port': 3000, 'keyFile': '/run/secrets/game.key',
                       'coordinatorUrl': f'http://{p.core_ip(2)}:3001', 'combatWorkers': 8,
@@ -197,7 +200,7 @@ def generate(out, *, image, build, manifest_sha256, source_kind, role, entry=1, 
         config = {'role': 'ingress', 'host': '0.0.0.0', 'port': 3000,
                   'coordinatorUrl': f'http://{p.wg_core}:{p.coordinator_port}',
                   'nodes': [{'nodeId': 'game-' + format(index, '02d'),
-                             'url': f'http://{p.wg_core}:{p.game_first_port + index - 1}'} for index in range(1, 17)],
+                             'url': f'http://{p.wg_core}:{p.game_host_port(index)}'} for index in range(1, game_nodes + 1)],
                   'origins': [p.origin], 'wsCompression': 'on', 'trustProxy': 'auto'}
         for instance in range(1, ingress_instances + 1):
             service_name = ingress_service(instance, profile)
@@ -218,16 +221,19 @@ def generate(out, *, image, build, manifest_sha256, source_kind, role, entry=1, 
               'compose_sha256': hashlib.sha256(compose_bytes).hexdigest(), 'project': project,
               'subnet': subnet, 'wg_interface': p.wg_interface, 'wg_local': local, 'wg_peers': peers,
               'origin': p.origin, 'targets': targets,
-              **({'ingress_instances': ingress_instances} if ingress_instances > 1 else {})}
+              **({'ingress_instances': ingress_instances} if ingress_instances > 1 else {}),
+              **({'game_nodes': game_nodes} if game_nodes != 16 else {})}
     write_new(out / 'host-policy.json', canonical(policy), mode=0o600, gid=0)
+    group = game_nodes // 4
     # This summary contains no secret bytes and is safe to inspect. It is not an activation receipt.
     write_new(out / 'bundle-summary.json', canonical({
         'version': 1, **({'profile': p.name} if p.name != 'beta' else {}), 'prepared': True, 'activated': False, 'sourceKind': source_kind, 'build': build,
         'manifestSha256': manifest_sha256, 'imageId': image, 'role': role,
-        'entry': entry, 'gameNodes': 16 if role == 'core' else 0,
+        'entry': entry, 'gameNodes': game_nodes if role == 'core' else 0,
         **({'ingressInstances': ingress_instances} if ingress_instances > 1 else {}),
-        'combatWorkersPerGame': 8, 'trialWorkersPerGame': 2, 'ingressRoutes': 16,
-        'ingressLogicalGroup': list(range((entry - 1) * 4 + 1, entry * 4 + 1)) if role == 'edge' else None,
+        'combatWorkersPerGame': 8, 'trialWorkersPerGame': 2, 'ingressRoutes': game_nodes,
+        # A deployment label only; every ingress still routes to ALL nodes.
+        'ingressLogicalGroup': list(range((entry - 1) * group + 1, entry * group + 1)) if role == 'edge' else None,
         'coordinatorHighAvailability': False,
     }), mode=0o600, gid=0)
     return policy
@@ -240,6 +246,7 @@ def main():
     parser.add_argument('--role', required=True, choices=('core', 'edge'))
     parser.add_argument('--entry', type=int, default=1, choices=range(1, 5))
     parser.add_argument('--ingress-instances', type=int, default=1, choices=range(1, 9))
+    parser.add_argument('--game-nodes', type=int, default=16, choices=GAME_NODE_COUNTS)
     parser.add_argument('--image-id', required=True)
     parser.add_argument('--build', required=True)
     parser.add_argument('--manifest-sha256', required=True)
@@ -249,7 +256,7 @@ def main():
         require(os.geteuid() == 0, 'host root required for protected deployment generation')
         policy = generate(args.out, image=args.image_id, build=args.build, manifest_sha256=args.manifest_sha256,
                           source_kind=args.source_kind, role=args.role, entry=args.entry, profile=args.profile,
-                          ingress_instances=args.ingress_instances)
+                          ingress_instances=args.ingress_instances, game_nodes=args.game_nodes)
         print(json.dumps({'event': 'cluster-bundle-prepared', 'role': policy['host_role'],
                           'source_kind': policy['source_kind'], 'build': policy['build'],
                           'targets': len(policy['targets']), 'activated': False}))

@@ -9,7 +9,7 @@
 - `server/cluster/coordinator.js` 持有一个全局 SessionRegistry、Lobby、好友房、party、queue、offer、唯一房码及分配目录，不创建战斗/试算池，不接收逐帧战斗推流。
 - `server/cluster/game-runtime.js` 的每个独立进程持有完整 Match/PlayerState、战斗与试算池；Boss、共享 HP/LP、联防、复活和结算留在同一节点，不跨节点拆战斗。
 - 高频 `m.field/b.snap/b.ev/m.damage` 等从所属节点直接到入口，沿用压缩白名单和背压，不绕协调器 MainThread。协调器和 ingress 的 combat/trial 为 0。
-- 固定 `cluster-deploy.py` core bundle 为一个 coordinator + 十六个 game，每 game 8 combat + 2 trial；Formal edge bundle 支持每入口 1–8 个 ingress，Beta 保留 1–2 个，配置覆盖全部十六节点。逻辑分组不是匹配分区；这些是模板约束，不是运行数量或容量证明。
+- 固定 `cluster-deploy.py` core bundle 为一个 coordinator + 固定数量 game，每 game 8 combat + 2 trial：Formal 为 16 或 32（`--game-nodes 32`），Beta 固定 16。Formal edge bundle 支持每入口 1–8 个 ingress，Beta 保留 1–2 个，配置覆盖全部 game 节点。无 WG 的同机组合栈见 [cluster/LOCAL-STACK.md](cluster/LOCAL-STACK.md)。逻辑分组不是匹配分区；这些是模板约束，不是运行数量或容量证明。
 
 不恢复 rolling/drain/多版本更新网关，不引入跨版本内存迁移。运行主机按部署者策略只保留必要镜像、宿主管理/恢复工具、runtime、密钥挂载与守卫；开发 checkout、导出、测试工具、文档和证据留开发/管理环境。必要宿主程序不能误删为开发源码。
 
@@ -52,7 +52,9 @@ python3 -I deploy/stardust/tools/cluster-source-export.py \
 
 `tools/cluster-deploy.py` 只生成新受保护 Compose/runtime/keys/host policy，不 SSH、Docker 或激活。输出在仓库外的允许 profile 路径，父目录受保护，拒绝链接、覆盖与跨 profile 路径；generated keys 不能进入 Git。`--profile` 明确 `formal` 或 `beta`，`--role` 为 `core` 或 `edge`，`--entry` 为 1–4。
 
-edge 默认 1 保留单实例合同。Formal 显式 `--ingress-instances 2..8` 生成 `ingress`、`ingress-02` 至批准数量的目标；Beta 仍只接受 1 或 2，core 的 ingress 参数仍固定为 1。每目标有独立 runtime、容器 IP/loopback 端口、CID、process generation、priority 和租约，不能用 sibling 健康替代。扩展实例保持相同的 coordinator 与全部十六节点路由。
+edge 默认 1 保留单实例合同。Formal 显式 `--ingress-instances 2..8` 生成 `ingress`、`ingress-02` 至批准数量的目标；Beta 仍只接受 1 或 2，core 的 ingress 参数仍固定为 1。每目标有独立 runtime、容器 IP/loopback 端口、CID、process generation、priority 和租约，不能用 sibling 健康替代。扩展实例保持相同的 coordinator 与全部 game 节点路由。
+
+`--game-nodes` 默认 16，此时 bundle 与原格式逐字节相同；Formal 可显式 32（Beta 拒绝），game 依次占用 core `.11`–`.42` 与 `35411`–`35442`，policy 只在非 16 时写 `game_nodes`。core 与对应 edge 必须用同一节点数生成；`cluster-host-manager.py` 据此核对目标、节点 key 和 edge 租约端口，计数/目标不符或多余字段均拒绝。扩容是新 bundle 新 key 的整体替换，不是对运行中 inventory 的追加。
 
 [cluster/DUAL-INGRESS.md](cluster/DUAL-INGRESS.md) 规定 WS-only 代理副本、逐目标维护与 CLOSED guard 迁移。只改实际活动 vhost 的 WS upstream，新握手选择批准的全部 target，已有 WS 不迁移；HTTP/auth/private/data/material 不改，不以升级前 retry 绕过 401/403。目录 bind 与单文件 bind 分别按身份/CAS处理，单文件保持 inode；采用实际启动配置检查及正常 reload，不新建第二公共代理。
 

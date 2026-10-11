@@ -464,6 +464,33 @@ class FormalPrivateCodeTests(unittest.TestCase):
             with self.assertRaises(code.Refused):
                 code.prepare(other.root / 'app', self.manifest, self.digest, COMMIT, self.root / 'new', profile=selected.name, source_kind='commit')
 
+    def test_formal_local_topology_fallbacks_dial_the_core_bridge_coordinator(self):
+        self.value.update(kind='commit', baseRevision=COMMIT); self.refresh()
+        wg_stage = self.root / 'wg-stage'
+        default = code.prepare(self.source, self.manifest, self.digest, COMMIT, wg_stage, profile='formal', source_kind='commit')
+        self.assertNotIn('topology', default)
+        wg_include = (wg_stage / 'nginx/cluster-private-code-formal.conf').read_text()
+        self.assertEqual(wg_include.count('proxy_pass http://10.253.79.2:35400;'), 3)
+        value = code.prepare(self.source, self.manifest, self.digest, COMMIT, self.output, profile='formal',
+                             source_kind='commit', topology='local')
+        self.assertEqual((value['namespace'], value['topology']), ('formal', 'local'))
+        include = (self.output / 'nginx/cluster-private-code-formal.conf').read_text()
+        self.assertEqual(include.count('proxy_pass http://172.30.245.2:3000;'), 3)
+        self.assertEqual(include.count('proxy_pass '), 3)
+        self.assertNotIn('10.253.79.', include)
+        self.assertNotIn('127.0.0.1', include)
+        for location in ('location ^~ /js/ {', 'location ^~ /css/ {', 'location @ark_formal_cluster_code {'):
+            body = include.split(location, 1)[1].split('\n}', 1)[0]
+            self.assertIn('    proxy_pass http://172.30.245.2:3000;', body)
+        # Only the three fallback targets and one comment differ from the WG include.
+        self.assertEqual(include.replace('http://172.30.245.2:3000;', 'http://10.253.79.2:35400;').replace(
+            '# Topology=local: fallback dials the co-located coordinator on its core bridge, not WG.\n', ''), wg_include)
+        self.assertEqual(code.verify(self.output, self.manifest, self.digest, COMMIT, profile='formal', source_kind='commit'), value)
+        with self.assertRaises(code.Refused):
+            code.verify(self.output, self.manifest, self.digest, COMMIT, profile='formal', source_kind='commit', topology='wg')
+        with self.assertRaises(code.Refused):
+            code.verify(self.output, self.manifest, self.digest, COMMIT, source_kind='commit')
+
 
 if __name__ == '__main__':
     unittest.main()

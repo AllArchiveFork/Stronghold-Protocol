@@ -35,10 +35,10 @@ class Fixture(unittest.TestCase):
         os.chmod(self.root, 0o700)
         self.addCleanup(shutil.rmtree, self.root)
 
-    def generate(self, name='core', role='core', entry=1, ingress_instances=1):
+    def generate(self, name='core', role='core', entry=1, ingress_instances=1, **extra):
         return deploy.generate(self.root / name, image=IMAGE, build=BUILD, manifest_sha256=MANIFEST,
                                source_kind='tree', role=role, entry=entry, profile=self.profile,
-                               ingress_instances=ingress_instances)
+                               ingress_instances=ingress_instances, **extra)
 
     def target(self, policy, role='game'):
         return next(row for row in policy['targets'] if row['role'] == role)
@@ -200,6 +200,64 @@ class GenerationTests(Fixture):
         link.symlink_to(file)
         with self.assertRaises(deploy.Refused):
             host.protected_read(link)
+
+
+class ProfileLayoutTests(unittest.TestCase):
+    """Every fixed inventory/publication of both profiles must coexist on one host without collisions."""
+    def layouts(self, p):
+        # WG core+edge, then each WG-less local stack size; a local stack replaces the edge on its host.
+        common = {'coordinator': [p.coordinator_port], 'end': [p.end_port]}
+        yield 'wg', {**common, 'ingress': [p.ingress_host_port(i) for i in range(1, p.max_ingress_instances + 1)],
+                     'game': [p.game_host_port(i) for i in range(1, p.max_game_nodes + 1)]}
+        for nodes in sorted({16, p.max_game_nodes}):
+            yield 'local-' + str(nodes), {**common, 'game': [p.game_host_port(i) for i in range(1, nodes + 1)],
+                'ingress': [p.local_ingress_host_port(i, nodes) for i in range(1, p.max_local_ingress_instances(nodes) + 1)]}
+
+    def test_fixed_ports_never_overlap_within_or_across_profiles(self):
+        owners = {}
+        for p in deploy.profiles.PROFILES.values():
+            for layout, roles in self.layouts(p):
+                ports = [port for values in roles.values() for port in values]
+                self.assertEqual(len(ports), len(set(ports)), (p.name, layout))
+                self.assertTrue(all(type(port) is int and 1024 < port < 65536 for port in ports))
+                for port in ports:
+                    self.assertIn(owners.setdefault(port, p.name), (p.name,), 'port shared across profiles')
+        formal, beta = deploy.profiles.get_profile('formal'), deploy.profiles.get_profile('beta')
+        self.assertEqual((formal.max_game_nodes, beta.max_game_nodes), (32, 16))
+        self.assertEqual([formal.game_host_port(i) for i in (1, 16, 32)], [35411, 35426, 35442])
+        self.assertEqual([formal.local_ingress_host_port(i, 16) for i in (1, 8)], [35401, 35408])
+        self.assertEqual([formal.local_ingress_host_port(i, 32) for i in (1, 16)], [35451, 35466])
+        self.assertEqual((formal.max_local_ingress_instances(16), formal.max_local_ingress_instances(32),
+                          beta.max_local_ingress_instances(16)), (8, 16, 2))
+
+    def test_game_and_local_ingress_addresses_fit_the_core_bridge_without_overlap(self):
+        for p in deploy.profiles.PROFILES.values():
+            self.assertTrue(p.core_subnet.endswith('.0/24'))
+            prefix = p.core_subnet.split('/')[0].rsplit('.', 1)[0] + '.'
+            for nodes in sorted({16, p.max_game_nodes}):
+                addresses = [p.core_ip(2), *(p.game_ip(i) for i in range(1, nodes + 1)),
+                             *(p.local_ingress_ip(i, nodes) for i in range(1, p.max_local_ingress_instances(nodes) + 1))]
+                self.assertEqual(len(addresses), len(set(addresses)), (p.name, nodes))
+                for address in addresses:
+                    self.assertTrue(address.startswith(prefix) and 2 <= int(address[len(prefix):]) <= 254, address)
+            edge = [p.ingress_ip(i) for i in range(1, p.max_ingress_instances + 1)]
+            self.assertEqual(len(edge), len(set(edge)))
+        formal = deploy.profiles.get_profile('formal')
+        self.assertEqual([formal.game_ip(i) for i in (1, 16, 32)], ['172.30.245.11', '172.30.245.26', '172.30.245.42'])
+        self.assertEqual([formal.local_ingress_ip(i, 16) for i in (1, 8)], ['172.30.245.31', '172.30.245.38'])
+        self.assertEqual([formal.local_ingress_ip(i, 32) for i in (1, 16)], ['172.30.245.51', '172.30.245.66'])
+
+    def test_out_of_profile_nodes_and_local_ingress_are_refused(self):
+        formal, beta = deploy.profiles.get_profile('formal'), deploy.profiles.get_profile('beta')
+        for p, index in ((formal, 0), (formal, 33), (formal, True), (formal, '1'), (formal, 1.0), (beta, 17)):
+            with self.assertRaises(ValueError): p.game_ip(index)
+            with self.assertRaises(ValueError): p.game_host_port(index)
+        for p, instance, nodes in ((formal, 9, 16), (formal, 17, 32), (formal, 0, 32), (formal, True, 32), (formal, 1, 33),
+                                   (formal, 1, 0), (formal, 1, True), (formal, 1, '32'), (beta, 3, 16), (beta, 1, 32)):
+            with self.assertRaises(ValueError): p.local_ingress_ip(instance, nodes)
+            with self.assertRaises(ValueError): p.local_ingress_host_port(instance, nodes)
+        for p, nodes in ((formal, 33), (formal, True), (beta, 32)):
+            with self.assertRaises(ValueError): p.max_local_ingress_instances(nodes)
 
 
 class BridgeIpamTests(unittest.TestCase):
@@ -672,6 +730,149 @@ class IdentityTests(Fixture):
             applications = [value for args, value in calls if '-c' not in args]
             self.assertEqual(len(applications), 1)
             self.assertEqual(len(calls), 3 if legacy else 2)
+
+
+@unittest.skipUnless(os.geteuid() == 0, 'root-owned protected policy fixtures')
+class GameNodeCountTests(Fixture):
+    """Formal may expand to exactly thirty-two nodes; sixteen stays byte-identical to the original format."""
+    profile = 'formal'
+
+    def files(self, policy):
+        # Fixture keys are random and never compared or printed; everything else is path-normalized.
+        root = Path(policy['bundle'])
+        return {str(file.relative_to(root)): file.read_bytes().replace(str(root).encode(), b'BUNDLE')
+                for file in sorted(root.rglob('*')) if file.is_file() and file.parent.name != 'keys'}
+
+    def test_default_sixteen_output_is_unchanged_by_the_explicit_count(self):
+        for profile in ('beta', 'formal'):
+            for role, instances in (('core', 1), ('edge', 1), ('edge', 2)):
+                with self.subTest(profile=profile, role=role, instances=instances):
+                    name = '-'.join((profile, role, str(instances)))
+                    default = deploy.generate(self.root / ('default-' + name), image=IMAGE, build=BUILD, manifest_sha256=MANIFEST,
+                                              source_kind='tree', role=role, entry=2, profile=profile, ingress_instances=instances)
+                    explicit = deploy.generate(self.root / ('explicit-' + name), image=IMAGE, build=BUILD, manifest_sha256=MANIFEST,
+                                               source_kind='tree', role=role, entry=2, profile=profile, ingress_instances=instances,
+                                               game_nodes=16)
+                    self.assertNotIn('game_nodes', default)
+                    self.assertNotIn('game_nodes', explicit)
+                    left, right = self.files(default), self.files(explicit)
+                    self.assertEqual(left['compose.json'], right['compose.json'])
+                    # Only the Compose digest covers the independently located bind paths.
+                    self.assertEqual({k: v for k, v in json.loads(left.pop('host-policy.json')).items() if k != 'compose_sha256'},
+                                     {k: v for k, v in json.loads(right.pop('host-policy.json')).items() if k != 'compose_sha256'})
+                    self.assertEqual(left, right)
+                    summary = json.loads(Path(default['bundle'], 'bundle-summary.json').read_bytes())
+                    self.assertEqual((summary['gameNodes'], summary['ingressRoutes']), (16 if role == 'core' else 0, 16))
+                    self.assertEqual(summary['ingressLogicalGroup'], None if role == 'core' else [5, 6, 7, 8])
+
+    def test_formal_thirty_two_core_has_exact_keys_slots_addresses_and_ports(self):
+        p = deploy.profiles.get_profile('formal')
+        policy = self.generate('core32', game_nodes=32)
+        self.assertEqual(policy['game_nodes'], 32)
+        self.assertEqual(len(policy['targets']), 33)
+        self.assertEqual(host.load_policy(Path(policy['bundle']) / 'host-policy.json', profile='formal'), policy)
+        games = [row for row in policy['targets'] if row['role'] == 'game']
+        self.assertEqual([row['service'] for row in games], ['game-%02d' % i for i in range(1, 33)])
+        self.assertEqual([row['container_ip'] for row in games], ['172.30.245.%d' % (10 + i) for i in range(1, 33)])
+        self.assertEqual([[row['host_port'] for row in target['mappings']] for target in games],
+                         [[port, port] for port in range(35411, 35443)])
+        self.assertEqual(sorted(file.name for file in (Path(policy['bundle']) / 'keys').iterdir()),
+                         ['game-%02d.key' % i for i in range(1, 33)])
+        for row in games:
+            config = json.loads(Path(row['runtime_file']).read_bytes())
+            self.assertEqual((config['publicSlot'], config['combatWorkers'], config['trialWorkers']), (row['public_slot'], 8, 2))
+            self.assertEqual((row['combat_workers'], row['trial_workers']), (8, 2))
+        coordinator = self.target(policy, 'coordinator')
+        config = json.loads(Path(coordinator['runtime_file']).read_bytes())
+        self.assertEqual([row['publicSlot'] for row in config['nodes']], list(range(1, 33)))
+        self.assertEqual([row['url'] for row in config['nodes']], ['http://172.30.245.%d:3000' % (10 + i) for i in range(1, 33)])
+        compose = json.loads(Path(policy['compose_file']).read_bytes())
+        self.assertEqual(len(compose['services']), 33)
+        for row in policy['targets']:
+            env = compose['services'][row['service']]['environment']
+            self.assertEqual((env['SP_COMBAT_WORKERS'], env['SP_TRIAL_WORKERS']), ('8', '2') if row['role'] == 'game' else ('0', '0'))
+        summary = json.loads(Path(policy['bundle'], 'bundle-summary.json').read_bytes())
+        self.assertEqual((summary['gameNodes'], summary['ingressRoutes'], summary['combatWorkersPerGame']), (32, 32, 8))
+        # WG publication of the expanded inventory stays exact; every peer reaches the last node.
+        predicate = PredicateTests()
+        leases = {row['service']: {'network_id': NETWORK, 'container_id': CID} for row in policy['targets']}
+        packet = {'meta:iifname': p.wg_interface, 'meta:oifname': 'br-' + NETWORK[:12], 'ip:saddr': p.wg_peers[3],
+                  'ip:daddr': '172.30.245.42', 'tcp:dport': 3000, 'ct:current:direction': 'original',
+                  'ct:original:saddr': p.wg_peers[3], 'ct:original:daddr': p.wg_core, 'ct:original:proto-dst': 35442}
+        self.assertEqual(predicate.evaluate(policy, leases, 'forward', packet), 'accept')
+        self.assertEqual(predicate.evaluate(policy, leases, 'forward', {**packet, 'ct:original:proto-dst': 35443}), 'drop')
+
+    def test_thirty_two_node_edge_routes_and_leases_cover_every_node_port(self):
+        p = deploy.profiles.get_profile('formal')
+        expanded = self.generate('edge32', role='edge', entry=3, ingress_instances=8, game_nodes=32)
+        self.assertEqual(host.load_policy(Path(expanded['bundle']) / 'host-policy.json', profile='formal'), expanded)
+        runtime = json.loads(Path(expanded['targets'][0]['runtime_file']).read_bytes())
+        self.assertEqual([row['url'] for row in runtime['nodes']], ['http://10.253.79.2:%d' % port for port in range(35411, 35443)])
+        summary = json.loads(Path(expanded['bundle'], 'bundle-summary.json').read_bytes())
+        self.assertEqual((summary['gameNodes'], summary['ingressRoutes'], summary['ingressLogicalGroup']), (0, 32, list(range(17, 25))))
+        original = self.generate('edge16', role='edge', entry=3, ingress_instances=8)
+        predicate = PredicateTests()
+        for policy, last_open in ((expanded, 35442), (original, 35426)):
+            leases = independent_leases(policy)
+            packet = {'meta:iifname': 'br-' + NETWORK[:12], 'meta:oifname': p.wg_interface, 'ip:saddr': p.ingress_ip(1),
+                      'ip:daddr': p.wg_core, 'tcp:dport': last_open, 'ct:current:direction': 'original'}
+            self.assertEqual(predicate.evaluate(policy, leases, 'forward', packet), 'accept')
+            self.assertEqual(predicate.evaluate(policy, leases, 'forward', {**packet, 'tcp:dport': last_open + 1}), 'drop')
+
+    def test_thirty_two_node_core_guard_journal_has_the_expanded_bound(self):
+        policy = self.generate('core32', game_nodes=32)
+        guard = host.Guard(policy, nft=MemoryNft(), state_file=self.root / 'core32.guard.json')
+        self.assertEqual(guard.state_limit(), host.GUARD_JOURNAL_LIMIT)
+        leases = {name: {**lease, 'node_generation': 'fixture-epoch-' + name if name.startswith('game-') else None}
+                  for name, lease in independent_leases(policy).items()}
+        guard.update(leases); guard.check(leases)
+        guard.update({}); guard.check({})
+        self.assertEqual(set(guard.state()['owned_leases']), {row['service'] for row in policy['targets']})
+        small = host.Guard(self.generate('core16'), nft=MemoryNft(), state_file=self.root / 'core16.guard.json')
+        self.assertEqual(small.state_limit(), host.LIMIT)
+
+    def test_unsupported_counts_refuse_before_creating_output(self):
+        for profile, count in (('formal', 0), ('formal', 17), ('formal', 33), ('formal', 64), ('formal', -16), ('formal', True),
+                               ('formal', '32'), ('formal', 32.0), ('formal', None), ('beta', 32), ('beta', 17)):
+            for role in ('core', 'edge'):
+                with self.subTest(profile=profile, count=count, role=role), self.assertRaises(deploy.Refused):
+                    deploy.generate(self.root / 'invalid', image=IMAGE, build=BUILD, manifest_sha256=MANIFEST,
+                                    source_kind='tree', role=role, profile=profile, game_nodes=count)
+                self.assertFalse((self.root / 'invalid').exists())
+
+    def test_tampered_counts_targets_and_stray_fields_are_refused(self):
+        policy = self.generate('core32', game_nodes=32)
+        sixteen = self.generate('core16')
+        edge = self.generate('edge32', role='edge', game_nodes=32)
+        variants = []
+        for field, value in (('game_nodes', 16), ('game_nodes', 33), ('game_nodes', 24), ('game_nodes', True),
+                             ('game_nodes', '32'), ('game_nodes', 32.0), ('game_nodes', None)):
+            changed = deepcopy(policy); changed[field] = value; variants.append(changed)
+        changed = deepcopy(policy); changed.pop('game_nodes'); variants.append(changed)
+        changed = deepcopy(policy); changed['targets'].pop(); variants.append(changed)
+        changed = deepcopy(policy); changed['targets'] = changed['targets'][:16] + changed['targets'][-1:]; variants.append(changed)
+        changed = deepcopy(policy); changed['gameNodes'] = 32; variants.append(changed)
+        changed = deepcopy(policy); changed['targets'][31]['container_ip'] = '172.30.245.51'; variants.append(changed)
+        changed = deepcopy(policy); changed['targets'][31]['mappings'][0]['host_port'] = 35451; variants.append(changed)
+        changed = deepcopy(sixteen); changed['game_nodes'] = 32; variants.append(changed)
+        changed = deepcopy(sixteen); changed['game_nodes'] = 16; variants.append(changed)
+        changed = deepcopy(edge); changed['game_nodes'] = 16; variants.append(changed)
+        changed = deepcopy(edge); changed['game_nodes'] = 33; variants.append(changed)
+        for index, changed in enumerate(variants):
+            with self.subTest(variant=index), self.assertRaises(host.Refused):
+                host.parse_policy(changed, profile='formal')
+        # Beta has no expanded inventory even with an otherwise consistent sixteen-node policy.
+        beta_policy = deploy.generate(self.root / 'beta', image=IMAGE, build=BUILD, manifest_sha256=MANIFEST,
+                                      source_kind='tree', role='core', profile='beta')
+        for role, value in (('core', beta_policy), ('edge', deploy.generate(self.root / 'beta-edge', image=IMAGE, build=BUILD,
+                            manifest_sha256=MANIFEST, source_kind='tree', role='edge', profile='beta'))):
+            changed = deepcopy(value); changed['game_nodes'] = 32
+            with self.subTest(beta=role), self.assertRaises(host.Refused):
+                host.parse_policy(changed, profile='beta')
+        # Every expanded node key (also mounted by the coordinator) must exist at load time.
+        (Path(policy['bundle']) / 'keys' / 'game-32.key').unlink()
+        with self.assertRaises((host.Refused, deploy.Refused)):
+            host.load_policy(Path(policy['bundle']) / 'host-policy.json', profile='formal')
 
 
 def independent_leases(policy):

@@ -23,6 +23,7 @@ TOOL_PATH = 'deploy/stardust/tools/cluster-private-code.py'
 HEX40, HEX64 = re.compile(r'[a-f0-9]{40}'), re.compile(r'[a-f0-9]{64}')
 SEGMENT = re.compile(r'[A-Za-z0-9_-][A-Za-z0-9_.-]*')
 MAX_MANIFEST, MAX_FILE, MAX_CODE = 1024 * 1024, 8 * 1024 * 1024, 32 * 1024 * 1024
+TOPOLOGIES = ('wg', 'local')
 
 
 class Refused(Exception):
@@ -231,8 +232,16 @@ def security_headers(marker, *, profile='beta'):
     ]
 
 
-def proxy_body(*, profile='beta'):
+def coordinator_upstream(profile='beta', topology='wg'):
     p = profiles.get_profile(profile)
+    require(topology in TOPOLOGIES, 'INVALID_TOPOLOGY')
+    # The WG-less co-located stack has no WG address; host Nginx dials the coordinator's fixed
+    # core-bridge listener directly instead of its docker-proxy loopback publication.
+    return 'http://' + (p.core_ip(2) + ':3000' if topology == 'local' else p.wg_core + ':' + str(p.coordinator_port))
+
+
+def proxy_body(*, profile='beta', topology='wg'):
+    upstream = coordinator_upstream(profile, topology)
     return [
         '    auth_request /_gate/check;',
         '    if ($request_method !~ ^(GET|HEAD)$) { return 405; }',
@@ -259,15 +268,16 @@ def proxy_body(*, profile='beta'):
         '    proxy_hide_header X-Robots-Tag;',
         '    proxy_hide_header Strict-Transport-Security;',
         '    proxy_hide_header X-Ark-Code-Source;',
-        '    proxy_pass http://' + p.wg_core + ':' + str(p.coordinator_port) + ';',
+        '    proxy_pass ' + upstream + ';',
         *security_headers('cluster', profile=profile),
     ]
 
 
-def render_include(build, selected, *, profile='beta', source_kind='tree'):
+def render_include(build, selected, *, profile='beta', source_kind='tree', topology='wg'):
     p = profiles.get_profile(profile)
     fallback = '@ark_' + p.name + '_cluster_code'
     require(HEX40.fullmatch(build), 'INVALID_TREE_IDENTITY')
+    require(topology in TOPOLOGIES, 'INVALID_TOPOLOGY')
     prefix = '/www/sites/' + p.site + '/localcode/' + p.code_prefix + build
     lines = [
         '# STAGED private Beta TREE code; NOT an activation record.',
@@ -286,6 +296,8 @@ def render_include(build, selected, *, profile='beta', source_kind='tree'):
             '# CSP expression is stock; an empty $' + p.security_map + '_csp emits no CSP header.',
             '# Coordinator MUST be the SAME fixed source build; never the other profile/old monolith.',
         ]
+    if topology != 'wg':
+        lines.append('# Topology=local: fallback dials the co-located coordinator on its core bridge, not WG.')
     for row in selected:
         source_path = safe_path(row['path'])
         require(is_code(source_path), 'UNKNOWN_PRIVATE_CODE_ENTRY')
@@ -303,15 +315,15 @@ def render_include(build, selected, *, profile='beta', source_kind='tree'):
     # Exact locations win over these prefixes. Unknown code can ONLY proxy to the
     # same private coordinator, not a filesystem wildcard or old/formal backend.
     for prefix in ('/js/', '/css/'):
-        lines.extend(['', 'location ^~ ' + prefix + ' {', *proxy_body(profile=profile), '}'])
-    lines.extend(['', 'location ' + fallback + ' {', *proxy_body(profile=profile), '}', ''])
+        lines.extend(['', 'location ^~ ' + prefix + ' {', *proxy_body(profile=profile, topology=topology), '}'])
+    lines.extend(['', 'location ' + fallback + ' {', *proxy_body(profile=profile, topology=topology), '}', ''])
     return '\n'.join(lines).encode()
 
 
-def release_metadata(build, digest, source, selected, *, profile='beta', source_kind='tree'):
+def release_metadata(build, digest, source, selected, *, profile='beta', source_kind='tree', topology='wg'):
     p = profiles.get_profile(profile)
     tool_bytes, _ = read_file(Path(__file__).resolve())
-    include = render_include(build, selected, profile=profile, source_kind=source_kind)
+    include = render_include(build, selected, profile=profile, source_kind=source_kind, topology=topology)
     files = [{'path': row['path'][len('public/'):], 'sourcePath': row['path'], 'bytes': row['bytes'],
               'sha256': row['sha256'], 'sourceMode': row['mode'], 'mode': '0o644'} for row in selected]
     value = {'version': 1, 'namespace': p.name, 'sourceKind': source_kind, 'build': build,
@@ -319,7 +331,20 @@ def release_metadata(build, digest, source, selected, *, profile='beta', source_
              'baseRevision': source['baseRevision'], 'prepared': True, 'activated': False,
              'preparer': {'path': TOOL_PATH, 'sha256': sha(tool_bytes)}, 'files': files,
              'nginx': [{'path': 'nginx/cluster-private-code-' + profile + '.conf', 'bytes': len(include), 'sha256': sha(include)}]}
+    if topology != 'wg':
+        value['topology'] = topology  # WG releases keep their original metadata bytes.
     return value, include
+
+
+def recorded_topology(raw):
+    try:
+        value = json.loads(raw, object_pairs_hook=reject_duplicates,
+                           parse_constant=lambda _constant: (_ for _ in ()).throw(Refused('INVALID_JSON_CONSTANT')))
+    except (ValueError, UnicodeError):
+        raise Refused('STAGED_METADATA_MISMATCH') from None
+    # Only a non-default topology is ever recorded; the exact re-render below proves the rest.
+    require(isinstance(value, dict) and ('topology' not in value or value['topology'] == 'local'), 'STAGED_METADATA_MISMATCH')
+    return value.get('topology', 'wg')
 
 
 def expected_outputs(value):
@@ -344,8 +369,9 @@ def put(path, raw):
         os.close(fd)
 
 
-def prepare(source, manifest, digest, build, output, *, profile='beta', source_kind='tree'):
+def prepare(source, manifest, digest, build, output, *, profile='beta', source_kind='tree', topology='wg'):
     p = profiles.get_profile(profile)
+    require(topology in TOPOLOGIES, 'INVALID_TOPOLOGY')
     require(all(profiles.path_allowed(path, profile) for path in (source, manifest, output)), 'CROSS_PROFILE_SOURCE_PATH')
     source, output = root_directory(source), absolute(output)
     root_directory(output.parent)
@@ -353,7 +379,7 @@ def prepare(source, manifest, digest, build, output, *, profile='beta', source_k
     require(not os.path.lexists(output), 'OUTPUT_ALREADY_EXISTS')
     original, selected = source_manifest(manifest, digest, build, profile=profile, source_kind=source_kind)
     snapshots = verified_snapshots(source, selected)
-    value, include = release_metadata(build, digest, original, selected, profile=profile, source_kind=source_kind)
+    value, include = release_metadata(build, digest, original, selected, profile=profile, source_kind=source_kind, topology=topology)
     paths = [row['path'] for row in expected_outputs(value)] + ['release-manifest.json', 'SHA256SUMS']
     os.mkdir(output, 0o755)
     os.chmod(output, 0o755)
@@ -373,13 +399,17 @@ def prepare(source, manifest, digest, build, output, *, profile='beta', source_k
     return value
 
 
-def verify(output, manifest, digest, build, *, profile='beta', source_kind='tree'):
+def verify(output, manifest, digest, build, *, profile='beta', source_kind='tree', topology=None):
     profiles.get_profile(profile)
+    require(topology is None or topology in TOPOLOGIES, 'INVALID_TOPOLOGY')
     require(all(profiles.path_allowed(path, profile) for path in (output, manifest)), 'CROSS_PROFILE_SOURCE_PATH')
     output = root_directory(output)
     original, selected = source_manifest(manifest, digest, build, profile=profile, source_kind=source_kind)
-    value, include = release_metadata(build, digest, original, selected, profile=profile, source_kind=source_kind)
     metadata, metadata_mode = read_file(output / 'release-manifest.json', MAX_MANIFEST)
+    # Re-render with the recorded topology; an explicit expectation must agree with it.
+    recorded = recorded_topology(metadata)
+    require(topology is None or topology == recorded, 'TOPOLOGY_MISMATCH')
+    value, include = release_metadata(build, digest, original, selected, profile=profile, source_kind=source_kind, topology=recorded)
     require(metadata == canonical(value) and metadata_mode == 0o644, 'STAGED_METADATA_MISMATCH')
     paths = sorted([row['path'] for row in expected_outputs(value)] + ['release-manifest.json', 'SHA256SUMS'])
     files, dirs = inventory(output)
@@ -400,16 +430,21 @@ def main():
     parser.add_argument('--manifest', required=True)
     parser.add_argument('--manifest-sha256', required=True)
     parser.add_argument('--build', required=True)
+    # Prepare defaults to wg; verify defaults to the recorded topology and refuses a different explicit one.
+    parser.add_argument('--topology', choices=TOPOLOGIES)
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument('--out')
     mode.add_argument('--verify')
     args = parser.parse_args()
     try:
         require(bool(args.source) == bool(args.out), 'INVALID_CLI_MODE')
-        value = prepare(args.source, args.manifest, args.manifest_sha256, args.build, args.out, profile=args.profile, source_kind=args.source_kind) if args.out else \
-            verify(args.verify, args.manifest, args.manifest_sha256, args.build, profile=args.profile, source_kind=args.source_kind)
+        value = prepare(args.source, args.manifest, args.manifest_sha256, args.build, args.out, profile=args.profile,
+                        source_kind=args.source_kind, topology=args.topology or 'wg') if args.out else \
+            verify(args.verify, args.manifest, args.manifest_sha256, args.build, profile=args.profile, source_kind=args.source_kind,
+                   topology=args.topology)
         print(json.dumps({'event': 'cluster-private-code-' + ('prepared' if args.out else 'verified'),
                           'namespace': value['namespace'], 'sourceKind': value['sourceKind'], 'build': value['build'],
+                          'topology': value.get('topology', 'wg'),
                           'sourceManifestSha256': value['sourceManifestSha256'], 'urls': len(value['files']), 'activated': False}))
         return 0
     except (Refused, OSError, ValueError, TypeError):

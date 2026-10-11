@@ -104,5 +104,96 @@ class LocalStackTests(unittest.TestCase):
         self.assertEqual(len(compose['services']), 18)
 
 
+class ThirtyTwoNodeLocalStackTests(unittest.TestCase):
+    """The node count comes only from the verified core policy; legacy sixteen-node output is covered above."""
+    profile = 'formal'
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp(prefix='ark-cluster-local32-tests-',
+                                          dir=os.environ.get('CLUSTER_TEST_TMPDIR', '/root' if os.geteuid() == 0 else None)))
+        os.chmod(self.root, 0o700)
+        self.addCleanup(shutil.rmtree, self.root)
+        self.core = self.root / 'core'
+        deploy.generate(self.core, image=IMAGE, build=BUILD, manifest_sha256=MANIFEST, source_kind='tree',
+                        role='core', profile=self.profile, game_nodes=32)
+
+    def stack(self, name='local', instances=16):
+        summary = local.compose(self.core, self.root / name, profile=self.profile, ingress_instances=instances)
+        return summary, json.loads((self.root / name / 'compose.json').read_text())
+
+    def test_sixteen_ingress_follow_thirty_two_games_on_their_own_address_and_port_range(self):
+        summary, compose = self.stack()
+        self.assertEqual(len(compose['services']), 49)
+        self.assertEqual(summary['gameNodes'], 32)
+        self.assertEqual([row['service'] for row in summary['ingress']],
+                         ['ingress', *('ingress-%02d' % i for i in range(2, 17))])
+        self.assertEqual([row['container_ip'] for row in summary['ingress']], ['172.30.245.%d' % i for i in range(51, 67)])
+        self.assertEqual([row['host_port'] for row in summary['ingress']], list(range(35451, 35467)))
+        for row in summary['ingress']:
+            service = compose['services'][row['service']]
+            self.assertEqual(service['networks']['default']['ipv4_address'], row['container_ip'])
+            self.assertEqual(service['ports'], ['127.0.0.1:%d:3000' % row['host_port']])
+            self.assertEqual(int(row['container_ip'].rsplit('.', 1)[1]) + 35400, row['host_port'])
+            config = json.loads((self.root / 'local/runtime' / row['service'] / 'runtime.json').read_text())
+            self.assertEqual(config['coordinatorUrl'], 'http://172.30.245.2:3000')
+            self.assertEqual([node['nodeId'] for node in config['nodes']], ['game-%02d' % i for i in range(1, 33)])
+            self.assertEqual([node['url'] for node in config['nodes']], ['http://172.30.245.%d:3000' % i for i in range(11, 43)])
+        ports = [port for service in compose['services'].values() for port in service['ports']]
+        self.assertTrue(all(port.startswith('127.0.0.1:') for port in ports))
+        self.assertEqual(sorted(int(port.split(':')[1]) for port in ports), [35400, 35410, *range(35411, 35443), *range(35451, 35467)])
+        addresses = [service['networks']['default']['ipv4_address'] for service in compose['services'].values()]
+        self.assertEqual(len(addresses), len(set(addresses)))
+        self.assertTrue(all(service['restart'] == 'unless-stopped' for service in compose['services'].values()))
+
+    def test_eight_ingress_keep_the_expanded_layout(self):
+        summary, compose = self.stack('eight', 8)
+        self.assertEqual(len(compose['services']), 41)
+        self.assertEqual([row['container_ip'] for row in summary['ingress']], ['172.30.245.%d' % i for i in range(51, 59)])
+        ports = sorted(int(port.split(':')[1]) for service in compose['services'].values() for port in service['ports'])
+        self.assertEqual(ports, [35400, 35410, *range(35411, 35443), *range(35451, 35459)])
+        game = compose['services']['game-32']
+        self.assertEqual(game['networks']['default']['ipv4_address'], '172.30.245.42')
+        self.assertEqual(game['ports'], ['127.0.0.1:35442:3000'])
+        self.assertEqual(game['environment']['SP_COMBAT_WORKERS'], '8')
+
+    def test_core_keys_and_runtime_are_reused_untouched(self):
+        # Fixture keys are compared byte-for-byte, never hashed or printed.
+        before = {path: path.read_bytes() for path in self.core.rglob('*') if path.is_file()}
+        _, compose = self.stack()
+        self.assertTrue(before == {path: path.read_bytes() for path in self.core.rglob('*') if path.is_file()})
+        self.assertIn(str(self.core / 'keys') + ':/run/secrets:ro', compose['services']['coordinator']['volumes'])
+        self.assertEqual(compose['services']['game-32']['volumes'][1], str(self.core / 'keys/game-32.key') + ':/run/secrets/game.key:ro')
+        self.assertEqual(len(list((self.core / 'keys').iterdir())), 32)
+        for name, service in compose['services'].items():
+            if name.startswith('ingress'):
+                self.assertEqual(len(service['volumes']), 1)
+
+    def test_instance_bounds_follow_the_inventory(self):
+        for count in (0, 17, True, '16', 16.0):
+            with self.subTest(count=count), self.assertRaises(local.Refused):
+                local.compose(self.core, self.root / 'bad', profile=self.profile, ingress_instances=count)
+            self.assertFalse((self.root / 'bad').exists())
+        sixteen = self.root / 'core16'
+        deploy.generate(sixteen, image=IMAGE, build=BUILD, manifest_sha256=MANIFEST, source_kind='tree', role='core', profile=self.profile)
+        for count in (9, 16):
+            with self.subTest(count=count), self.assertRaises(local.Refused):
+                local.compose(sixteen, self.root / 'bad16', profile=self.profile, ingress_instances=count)
+            self.assertFalse((self.root / 'bad16').exists())
+
+    def test_tampered_core_policy_count_is_refused(self):
+        file = self.core / 'host-policy.json'
+        original = json.loads(file.read_text())
+        os.chmod(file, 0o600)
+        for change in ({'game_nodes': 16}, {'game_nodes': 33}, {'game_nodes': True}, {'game_nodes': None}):
+            file.write_bytes(deploy.canonical({**original, **change}))
+            with self.subTest(change=change), self.assertRaises(local.Refused):
+                local.compose(self.core, self.root / 'tampered', profile=self.profile, ingress_instances=8)
+            self.assertFalse((self.root / 'tampered').exists())
+        file.write_bytes(deploy.canonical({key: value for key, value in original.items() if key != 'game_nodes'}))
+        with self.assertRaises(local.Refused):
+            local.compose(self.core, self.root / 'tampered', profile=self.profile, ingress_instances=8)
+        self.assertFalse((self.root / 'tampered').exists())
+
+
 if __name__ == '__main__':
     unittest.main()

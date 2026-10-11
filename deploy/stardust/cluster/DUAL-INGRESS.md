@@ -4,7 +4,7 @@
 
 ## 范围
 
-Formal 固定 profile 支持每物理入口 1–8 个独立 Node ingress，Beta 保留 1–2 个。所有实例仍指向同一个 coordinator、十六个游戏节点及统一大厅／匹配池，沿用浏览器同源 WS、身份恢复、票据与私有视角隔离。增加进程用于分担 JS 主线程和转发工作，实际承载仍受网络、压缩、代理及系统资源影响。
+Formal 固定 profile 支持每物理入口 1–8 个独立 Node ingress，Beta 保留 1–2 个。所有实例仍指向同一个 coordinator、全部游戏节点（16，或 Formal 32）及统一大厅／匹配池，沿用浏览器同源 WS、身份恢复、票据与私有视角隔离。增加进程用于分担 JS 主线程和转发工作，实际承载仍受网络、压缩、代理及系统资源影响。
 
 准备、验证与切换分别需要授权。切换会结束被重建进程中的内存房间与对局；回滚镜像不能恢复它们。文档、模板与本地检查不能证明公开入口已激活。
 
@@ -21,7 +21,7 @@ Formal 固定 profile 支持每物理入口 1–8 个独立 Node ingress，Beta 
 | Beta示例 | ingress | `<BETA_INGRESS_IP>` | `<BETA_PRIMARY_PORT>` |
 | Beta示例 | ingress-02 | `<BETA_SECONDARY_IP>` | `<BETA_SECONDARY_PORT>` |
 
-Formal 可按批准数量继续生成 `ingress-03` 至 `ingress-08`，固定 IP 与 loopback 端口依次递增。每个实例有独立 runtime、容器、进程、端口映射、进程代次和精确租约。全部配置指向同一协调器，包含全部十六节点；不能以另一个实例的健康或优先级替代本实例检查。Beta示例不意味着该环境已启动或允许启动。
+Formal 可按批准数量继续生成 `ingress-03` 至 `ingress-08`，固定 IP 与 loopback 端口依次递增。每个实例有独立 runtime、容器、进程、端口映射、进程代次和精确租约。全部配置指向同一协调器，包含全部游戏节点；不能以另一个实例的健康或优先级替代本实例检查。Beta示例不意味着该环境已启动或允许启动。
 
 沿用 Main-only nice=-20、SCHED_OTHER/reset-on-fork、其他线程0；不 nice 整个 Node，不授容器 CAP_SYS_NICE，不新增 CPU／内存 hard cap。入口的健康合同是 HTTP404/private-no-store 加合法 Origin 的 WS upgrade，不能套用游戏的 HTTP200/health JSON。
 
@@ -36,7 +36,7 @@ node deploy/stardust/tools/prepare-dual-ingress-proxy.mjs \
   --source REVIEWED_ACTIVE_VHOST.conf --profile formal --ingress-instances 8 --out NEW_DIRECTORY
 ```
 
-必须输入实际活动 vhost 的已审查副本，而非拿仓库早期单机模板覆盖线上。工具默认准备双实例，也可通过 Formal `--ingress-instances 2..8` 绑定确切数量。仅将根 `/ws` 和已有精确 legacy WS location 的 named upstream 改为 `least_conn`：Formal 固定 profile 使用对应全部容器 IP 的原生监听，绕过 `docker-proxy`；loopback 发布端口保留供管理／回退，不能因为增加第二实例而重新让业务 WS 走用户态端口代理。Beta 保留原 loopback 行为，不由 Formal 修改连带切换。保留原 HTTP／auth／privatecode／data／material／Origin／可信转发头与超时字节。未知、重复、禁用门禁、retry 歧义及已准备输入拒绝，不 silently rewrite。
+必须输入实际活动 vhost 的已审查副本，而非拿仓库早期单机模板覆盖线上。工具默认准备双实例，也可通过 Formal `--ingress-instances 2..8` 绑定确切数量。仅将根 `/ws` 和已有精确 legacy WS location 的 named upstream 改为 `least_conn`：Formal 固定 profile 使用对应全部容器 IP 的原生监听，绕过 `docker-proxy`；loopback 发布端口保留供管理／回退，不能因为增加第二实例而重新让业务 WS 走用户态端口代理。Beta 保留原 loopback 行为，不由 Formal 修改连带切换。保留原 HTTP／auth／privatecode／data／material／Origin／可信转发头与超时字节。未知、重复、禁用门禁、retry 歧义及已准备输入拒绝，不 silently rewrite；只有显式 `--replace-prepared` 才替换文件开头与先前生成器输出逐字节相同的 WS block。无 WG 同机栈用 `--topology local --stack-summary`（仅 Formal，最多 16 个本地 ingress）及可选 `--tls-listen-backlog 4096`，其 HTTP backend 精确改址规则见 [LOCAL-STACK.md](LOCAL-STACK.md)。
 
 直连只能用于已核实固定网络／容器 IP、host-network 代理可达、同版 guard 已准入的实际实例；不改 Docker daemon、发布端口或 guard。自定义端口 API 仅为隔离 loopback fixture，manifest 的 `deploymentPortsMatchProfile:false` 不可当作生产批准材料。
 

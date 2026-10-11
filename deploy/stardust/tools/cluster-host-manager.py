@@ -37,6 +37,11 @@ GUARD_JOURNAL_LIMIT = 256 * 1024
 CONTROL_LIMIT = 4096
 
 
+def game_nodes(policy):
+    # parse_policy has already bound this to a fixed count within the profile maximum.
+    return policy.get('game_nodes', 16)
+
+
 def dual_ingress(policy):
     # Schema2 keeps the same independent ownership contract for every multi-instance edge.
     return policy['host_role'] == 'edge' and policy.get('ingress_instances', 1) > 1
@@ -78,11 +83,16 @@ def parse_policy(value, *, profile='beta'):
     fields = {'version', 'namespace', 'host_role', 'entry', 'source_kind', 'build', 'manifest_sha256',
               'image_id', 'bundle', 'compose_file', 'compose_sha256', 'project', 'subnet',
               'wg_interface', 'wg_local', 'wg_peers', 'origin', 'targets'}
-    require(isinstance(value, dict) and set(value) in (fields, fields | {'ingress_instances'}), 'invalid cluster policy fields')
+    require(isinstance(value, dict) and set(value) - fields <= {'ingress_instances', 'game_nodes'} and fields <= set(value),
+            'invalid cluster policy fields')
     role, entry = value['host_role'], value['entry']
     count = value.get('ingress_instances', 1)
     require(type(count) is int and 1 <= count <= p.max_ingress_instances and (role == 'edge' or 'ingress_instances' not in value),
             'invalid fixed ingress instance count')
+    # Absent means the original sixteen; an explicit field is written only for other fixed counts.
+    nodes = value.get('game_nodes', 16)
+    require(type(nodes) is int and nodes in deploy.GAME_NODE_COUNTS and nodes <= p.max_game_nodes
+            and ('game_nodes' not in value or nodes != 16), 'invalid fixed game node count')
     require(type(value['version']) is int and value['version'] == 1 and value['namespace'] == p.name
             and role in ('core', 'edge') and type(entry) is int and entry in range(1, 5), 'invalid fixed cluster role')
     require(value['source_kind'] in ('commit', 'tree') and deploy.HEX40.fullmatch(str(value['build']))
@@ -101,8 +111,8 @@ def parse_policy(value, *, profile='beta'):
             and value['wg_local'] == (p.wg_core if role == 'core' else p.wg_peers[entry - 1])
             and value['wg_peers'] == (list(p.wg_peers) if role == 'core' else [p.wg_core]), 'fixed cluster network required')
     targets = value['targets']
-    require(isinstance(targets, list) and len(targets) == (17 if role == 'core' else count), 'fixed target inventory required')
-    expected_services = ({'coordinator', *('game-' + format(index, '02d') for index in range(1, 17))} if role == 'core'
+    require(isinstance(targets, list) and len(targets) == (1 + nodes if role == 'core' else count), 'fixed target inventory required')
+    expected_services = ({'coordinator', *('game-' + format(index, '02d') for index in range(1, nodes + 1))} if role == 'core'
                          else {deploy.ingress_service(index, profile) for index in range(1, count + 1)})
     require(all(isinstance(row, dict) and isinstance(row.get('service'), str) for row in targets)
             and {row['service'] for row in targets} == expected_services, 'fixed target services required')
@@ -123,7 +133,7 @@ def parse_policy(value, *, profile='beta'):
             index = int(service[5:])
             require(row['node_id'] == service and type(row['public_slot']) is int and row['public_slot'] == index
                     and row['key_file'] == str(bundle / 'keys' / (service + '.key')), 'invalid node key or slot binding')
-            ip, port = p.core_ip(10 + index), p.game_first_port + index - 1
+            ip, port = p.game_ip(index), p.game_host_port(index)
         elif service == 'coordinator':
             ip, port = p.core_ip(2), p.coordinator_port
         else:
@@ -154,7 +164,7 @@ def load_policy(file, *, profile='beta'):
             protected_read(row['key_file'], exact_bytes=32)
             keys = (row['key_file'] + ':/run/secrets/game.key:ro',)
         elif row['role'] == 'coordinator':
-            for index in range(1, 17):
+            for index in range(1, game_nodes(policy) + 1):
                 protected_read(Path(policy['bundle']) / 'keys' / ('game-' + format(index, '02d') + '.key'), exact_bytes=32)
             keys = (str(Path(policy['bundle']) / 'keys') + ':/run/secrets:ro',)
         expected = deploy.service(row['role'], row['container_name'], directory,
@@ -499,7 +509,7 @@ def lease_rules(policy, leases):
                     match(tcp('sport'), mapping['container_port']), match(ct('direction'), 'reply'),
                     match(ct('state'), {'set': ['established']}), *common, {'accept': None}]))
     elif leases:
-        ports = [p.coordinator_port, *range(p.game_first_port, p.game_first_port + 16)]
+        ports = [p.coordinator_port, *(p.game_host_port(index) for index in range(1, game_nodes(policy) + 1))]
         for target in policy['targets']:
             lease = leases.get(target['service'])
             if lease is None:
@@ -652,7 +662,8 @@ class Guard:
 
     def state_limit(self):
         # Expanded journals include both exact lease ledgers and the prior nft snapshot.
-        return GUARD_JOURNAL_LIMIT if self.policy['namespace'] == 'formal' and self.policy.get('ingress_instances', 1) > 2 else LIMIT
+        expanded = self.policy.get('ingress_instances', 1) > 2 or game_nodes(self.policy) > 16
+        return GUARD_JOURNAL_LIMIT if self.policy['namespace'] == 'formal' and expanded else LIMIT
 
     def state(self):
         return protected_json(self.state_file, private=True, limit=self.state_limit())

@@ -81,6 +81,228 @@ test('ambiguous, ungated, duplicate, unexpected and already-prepared inputs are 
   assert.throws(() => prepareDualIngressProxy(source, { profile: 'unknown' }));
 });
 
+// WG-era Formal backends as installed (the repository template still names the old monolith port).
+const wgFormal = sources.formal.replace('upstream ark_proto_game_backend {\n    server 127.0.0.1:3120;',
+  'upstream ark_proto_ingress_backend {\n    server 172.30.246.2:3000;\n    keepalive 32;\n    keepalive_timeout 4s;\n}\n'
+  + 'upstream ark_proto_game_backend {\n    server 10.253.79.2:35400;');
+const sorted = value => Array.isArray(value) ? value.map(sorted) : value && typeof value === 'object'
+  ? Object.fromEntries(Object.keys(value).sort().map(key => [key, sorted(value[key])])) : value;
+// Same bytes as cluster-local-stack.py's stack-summary.json (Python sort_keys/indent=2), with fixture identities.
+function stackSummary(gameNodes, count, edit = value => value) {
+  const base = gameNodes <= 16 ? 30 : 50;
+  return JSON.stringify(sorted(edit({ version: 1, profile: 'formal', prepared: true, activated: false, project: 'ark-cluster-formal-local',
+    coreBundle: '/opt/ark-cluster-formal/bundles/core-fixture', coreComposeSha256: 'd'.repeat(64), composeSha256: 'c'.repeat(64),
+    imageId: 'sha256:' + 'b'.repeat(64), build: 'a'.repeat(40), sourceKind: 'tree', manifestSha256: 'a'.repeat(64), gameNodes,
+    ingress: Array.from({ length: count }, (_, i) => ({ service: i ? `ingress-${String(i + 1).padStart(2, '0')}` : 'ingress',
+      container_ip: `172.30.245.${base + i + 1}`, host_port: gameNodes <= 16 ? 35401 + i : 35451 + i })),
+    coordinatorPort: 35400, hostManagerLeases: false })), null, 2) + '\n';
+}
+const local = (summary, options = {}) => prepareDualIngressProxy(wgFormal, { topology: 'local', stackSummary: summary, ...options });
+const range = (first, count, format = x => x) => Array.from({ length: count }, (_, i) => format(first + i));
+// Undo exactly the generated WS block/triples and the recorded backend addresses.
+function restore(r) {
+  let text = r.vhost.slice(r.vhost.indexOf('\n\n') + 2);
+  for (const location of r.manifest.webSocketLocations) {
+    text = text.replace(`proxy_pass http://${r.manifest.upstream};\n        proxy_next_upstream error timeout;\n        proxy_next_upstream_tries 2;`, `proxy_pass http://${location.previousUpstream};`);
+  }
+  for (const row of r.manifest.backendRetargets) {
+    text = text.replace(`upstream ${row.upstream} {\n    server ${row.target}`, `upstream ${row.upstream} {\n    server ${row.previous}`);
+  }
+  return text;
+}
+
+test('stack summary fixture matches the Python generator bytes', () => {
+  assert.equal(stackSummary(16, 2), `{
+  "activated": false,
+  "build": "${'a'.repeat(40)}",
+  "composeSha256": "${'c'.repeat(64)}",
+  "coordinatorPort": 35400,
+  "coreBundle": "/opt/ark-cluster-formal/bundles/core-fixture",
+  "coreComposeSha256": "${'d'.repeat(64)}",
+  "gameNodes": 16,
+  "hostManagerLeases": false,
+  "imageId": "sha256:${'b'.repeat(64)}",
+  "ingress": [
+    {
+      "container_ip": "172.30.245.31",
+      "host_port": 35401,
+      "service": "ingress"
+    },
+    {
+      "container_ip": "172.30.245.32",
+      "host_port": 35402,
+      "service": "ingress-02"
+    }
+  ],
+  "manifestSha256": "${'a'.repeat(64)}",
+  "prepared": true,
+  "profile": "formal",
+  "project": "ark-cluster-formal-local",
+  "sourceKind": "tree",
+  "version": 1
+}
+`);
+});
+
+test('Formal local topology takes eight sixteen-node stack ingress at .31-.38 and retargets the known WG backends', () => {
+  const r = local(stackSummary(16, 8));
+  assert.equal(r.manifest.topology, 'local'); assert.equal(r.manifest.ingressInstances, 8);
+  assert.deepEqual(r.manifest.endpoints, range(31, 8, i => `172.30.245.${i}:3000`));
+  assert.deepEqual(r.manifest.publishedPorts, range(35401, 8));
+  assert.deepEqual(r.manifest.services, ['ingress', ...range(2, 7, i => `ingress-0${i}`)]);
+  assert.equal(r.manifest.upstreamTransport, 'container-direct'); assert.equal(r.manifest.deploymentPortsMatchProfile, true);
+  assert.equal(r.manifest.stackSummary.gameNodes, 16); assert.equal(r.manifest.stackSummary.sha256.length, 64);
+  assert.deepEqual(r.manifest.backendRetargets, [
+    { upstream: 'ark_proto_game_backend', previous: '10.253.79.2:35400', target: '172.30.245.2:3000', changed: true },
+    { upstream: 'ark_proto_ingress_backend', previous: '172.30.246.2:3000', target: '172.30.245.31:3000', changed: true }]);
+  assert.equal(r.manifest.existingHttpAuthPrivateAndMaterialPathsUnchanged, false);
+  assert.equal(r.manifest.tlsListen, null); assert.equal(r.manifest.replacedPreparedUpstream, null);
+  assert.ok(r.vhost.includes('upstream ark_proto_game_backend {\n    server 172.30.245.2:3000;\n    keepalive 32;\n'));
+  assert.ok(r.vhost.includes('upstream ark_proto_ingress_backend {\n    server 172.30.245.31:3000;\n    keepalive 32;\n    keepalive_timeout 4s;\n}'));
+  assert.doesNotMatch(r.vhost, /10\.253\.79\.|172\.30\.246\./);
+  assert.match(r.vhost, /\n    listen 443 ssl;\n    listen \[::\]:443 ssl;\n/);
+  assert.equal(restore(r), wgFormal, 'only the WS block/triples and the two backend addresses changed');
+});
+
+test('Formal local topology accepts sixteen thirty-two-node ingress at .51-.66 and the eight-instance layout', () => {
+  const r = local(stackSummary(32, 16));
+  assert.equal(r.manifest.ingressInstances, 16);
+  assert.deepEqual(r.manifest.endpoints, range(51, 16, i => `172.30.245.${i}:3000`));
+  assert.deepEqual(r.manifest.publishedPorts, range(35451, 16));
+  assert.equal(r.manifest.services[15], 'ingress-16');
+  assert.equal(r.manifest.backendRetargets[1].target, '172.30.245.51:3000');
+  assert.equal(r.vhost.slice(0, r.vhost.indexOf('\n\n')).match(/^    server /gm).length, 16);
+  assert.equal(restore(r), wgFormal);
+  const eight = local(stackSummary(32, 8), { ingressInstances: 8 });
+  assert.deepEqual(eight.manifest.endpoints, range(51, 8, i => `172.30.245.${i}:3000`));
+  assert.deepEqual(eight.manifest.publishedPorts, range(35451, 8));
+  assert.throws(() => local(stackSummary(32, 8), { ingressInstances: 2 }));
+  // WG keeps its own maximum.
+  assert.throws(() => prepareDualIngressProxy(wgFormal, { ingressInstances: 16 }));
+  assert.throws(() => prepareDualIngressProxy(wgFormal, { ingressInstances: 9 }));
+});
+
+test('local topology is Formal-only and the stack summary must be the exact fixed layout', () => {
+  assert.throws(() => prepareDualIngressProxy(sources.beta, { profile: 'beta', topology: 'local', stackSummary: stackSummary(16, 2) }), /Formal-only/);
+  assert.throws(() => prepareDualIngressProxy(wgFormal, { topology: 'local' }));
+  assert.throws(() => prepareDualIngressProxy(wgFormal, { stackSummary: stackSummary(16, 2) }));
+  assert.throws(() => prepareDualIngressProxy(wgFormal, { topology: 'direct' }));
+  assert.throws(() => local(stackSummary(16, 2), { ports: [35401, 35402] }));
+  const edits = [
+    value => ({ ...value, ingress: value.ingress.map((row, i) => i ? { ...row, container_ip: '172.30.245.52' } : row) }),
+    value => ({ ...value, ingress: value.ingress.map((row, i) => i ? { ...row, host_port: 35452 } : row) }),
+    value => ({ ...value, ingress: value.ingress.map((row, i) => i ? { ...row, container_ip: '172.30.246.3' } : row) }),
+    value => ({ ...value, ingress: value.ingress.map((row, i) => i ? { ...row, service: 'ingress-03' } : row) }),
+    value => ({ ...value, ingress: value.ingress.map((row, i) => i ? { ...row, extra: true } : row) }),
+    value => ({ ...value, ingress: [...value.ingress].reverse() }),
+    value => ({ ...value, gameNodes: 24 }), value => ({ ...value, gameNodes: '16' }), value => ({ ...value, profile: 'beta' }),
+    value => ({ ...value, project: 'ark-cluster-formal-core' }), value => ({ ...value, activated: true }),
+    value => ({ ...value, coordinatorPort: 35300 }), value => ({ ...value, hostManagerLeases: true }), value => ({ ...value, extra: 1 }),
+  ];
+  for (const edit of edits) assert.throws(() => local(stackSummary(16, 2, edit)));
+  // A thirty-two-node summary may not claim the sixteen-node addresses/ports, nor the reverse.
+  assert.throws(() => local(stackSummary(32, 2, value => ({ ...value, gameNodes: 16 }))));
+  assert.throws(() => local(stackSummary(16, 2, value => ({ ...value, gameNodes: 32 }))));
+  for (const [nodes, count] of [[16, 1], [16, 9], [32, 1], [32, 17]]) assert.throws(() => local(stackSummary(nodes, count)));
+  const valid = stackSummary(16, 2);
+  for (const text of [JSON.stringify(JSON.parse(valid)), valid.trimEnd(), valid.replace('"activated": false,', '"activated": true,\n  "activated": false,'), '', 'null', '[]']) {
+    assert.throws(() => local(text));
+  }
+});
+
+test('backend retargets compare-and-replace one known server and keep its parameters', () => {
+  const summary = stackSummary(16, 2);
+  const handEdited = wgFormal.replace('server 10.253.79.2:35400;', 'server 127.0.0.1:35400;').replace('server 172.30.246.2:3000;', 'server 172.30.245.31:3000;');
+  assert.deepEqual(prepareDualIngressProxy(handEdited, { topology: 'local', stackSummary: summary }).manifest.backendRetargets, [
+    { upstream: 'ark_proto_game_backend', previous: '127.0.0.1:35400', target: '172.30.245.2:3000', changed: true },
+    { upstream: 'ark_proto_ingress_backend', previous: '172.30.245.31:3000', target: '172.30.245.31:3000', changed: false }]);
+  const already = wgFormal.replace('server 10.253.79.2:35400;', 'server 172.30.245.2:3000;');
+  const done = prepareDualIngressProxy(already, { topology: 'local', stackSummary: summary });
+  assert.equal(done.manifest.backendRetargets[0].changed, false);
+  const params = wgFormal.replace('server 10.253.79.2:35400;', 'server 10.253.79.2:35400 max_fails=0;');
+  assert.ok(prepareDualIngressProxy(params, { topology: 'local', stackSummary: summary }).vhost.includes('server 172.30.245.2:3000 max_fails=0;\n    keepalive 32;'));
+  const withoutIngressBackend = sources.formal.replace('server 127.0.0.1:3120;', 'server 10.253.79.2:35400;');
+  assert.deepEqual(prepareDualIngressProxy(withoutIngressBackend, { topology: 'local', stackSummary: summary }).manifest.backendRetargets.map(row => row.upstream),
+    ['ark_proto_game_backend']);
+  for (const input of [
+    sources.formal, // Unknown monolith port.
+    wgFormal.replace('server 10.253.79.2:35400;', 'server 10.253.79.3:35400;'),
+    wgFormal.replace('server 10.253.79.2:35400;', 'server 10.253.79.2:35400;\n    server 10.253.79.2:35400 backup;'),
+    wgFormal.replace('server 172.30.246.2:3000;', 'server 172.30.246.3:3000;'),
+    wgFormal.replace('server 172.30.246.2:3000;', 'server 172.30.245.51:3000;\n    server 172.30.246.2:3000;'),
+    wgFormal + '\nupstream ark_proto_game_backend {\n    server 10.253.79.2:35400;\n}\n',
+    wgFormal.replace('upstream ark_proto_game_backend {', 'upstream ark_proto_game_backend_old {'),
+  ]) assert.throws(() => prepareDualIngressProxy(input, { topology: 'local', stackSummary: summary }));
+  // WG preparation never touches HTTP backends.
+  const wg = prepareDualIngressProxy(wgFormal);
+  assert.deepEqual(wg.manifest.backendRetargets, []); assert.equal(wg.manifest.existingHttpAuthPrivateAndMaterialPathsUnchanged, true);
+  assert.ok(wg.vhost.includes('server 10.253.79.2:35400;'));
+});
+
+test('TLS listen backlog rewrites exactly the two 443 listens, idempotently, and refuses conflicting options', () => {
+  for (const options of [{}, { topology: 'local', stackSummary: stackSummary(32, 16) }]) {
+    const r = prepareDualIngressProxy(wgFormal, { ...options, tlsListenBacklog: 4096 });
+    assert.deepEqual(r.manifest.tlsListen, { backlog: 4096, reuseport: true, rewritten: ['443', '[::]:443'], unchanged: [] });
+    assert.match(r.vhost, /\n    listen 443 ssl reuseport backlog=4096;\n    listen \[::\]:443 ssl reuseport backlog=4096;\n/);
+    assert.match(r.vhost, /\n    listen 80;\n    listen \[::\]:80;\n/);
+    assert.equal(r.vhost.match(/reuseport/g).length, 2);
+    const plain = prepareDualIngressProxy(wgFormal, options);
+    assert.equal(r.vhost.replaceAll(' reuseport backlog=4096;', ';'), plain.vhost);
+  }
+  const tuned = wgFormal.replace('listen 443 ssl;', 'listen 443 ssl reuseport backlog=4096;').replace('listen [::]:443 ssl;', 'listen [::]:443 ssl reuseport backlog=4096;');
+  const again = prepareDualIngressProxy(tuned, { tlsListenBacklog: 4096 });
+  assert.deepEqual(again.manifest.tlsListen.unchanged, ['443', '[::]:443']); assert.deepEqual(again.manifest.tlsListen.rewritten, []);
+  assert.equal(again.vhost, prepareDualIngressProxy(wgFormal, { tlsListenBacklog: 4096 }).vhost);
+  const half = wgFormal.replace('listen 443 ssl;', 'listen 443 ssl reuseport backlog=4096;');
+  assert.deepEqual(prepareDualIngressProxy(half, { tlsListenBacklog: 4096 }).manifest.tlsListen.rewritten, ['[::]:443']);
+  for (const input of [
+    wgFormal.replace('listen 443 ssl;', 'listen 443 ssl http2;'),
+    wgFormal.replace('listen 443 ssl;', 'listen 443 ssl reuseport;'),
+    wgFormal.replace('listen 443 ssl;', 'listen 443 ssl reuseport backlog=511;'),
+    wgFormal.replace('listen 443 ssl;', 'listen 443  ssl;'),
+    wgFormal.replace('listen 443 ssl;', 'listen 0.0.0.0:443 ssl;'),
+    wgFormal.replace('listen 443 ssl;', 'listen 443 ssl;\n    listen 443 ssl;'),
+    wgFormal.replace('    listen [::]:443 ssl;\n', ''),
+  ]) assert.throws(() => prepareDualIngressProxy(input, { tlsListenBacklog: 4096 }));
+  for (const tlsListenBacklog of [8192, 511, '4096', true, 0]) assert.throws(() => prepareDualIngressProxy(wgFormal, { tlsListenBacklog }));
+});
+
+test('explicit re-preparation replaces only an exact earlier generator block and keeps refusing anything else', () => {
+  const summary16 = stackSummary(16, 8), summary32 = stackSummary(32, 16);
+  const wg2 = prepareDualIngressProxy(wgFormal), wg8 = prepareDualIngressProxy(wgFormal, { ingressInstances: 8 });
+  assert.throws(() => prepareDualIngressProxy(wg2.vhost), /already present/);
+  assert.throws(() => prepareDualIngressProxy(wgFormal, { replacePrepared: true }), /exact earlier/);
+  assert.throws(() => prepareDualIngressProxy(wgFormal, { replacePrepared: 'yes' }));
+  const rerun = prepareDualIngressProxy(wg2.vhost, { ingressInstances: 8, replacePrepared: true });
+  assert.equal(rerun.vhost, wg8.vhost);
+  assert.deepEqual(rerun.manifest.replacedPreparedUpstream, { topology: 'wg', endpoints: wg2.manifest.endpoints });
+  assert.ok(rerun.manifest.webSocketLocations.every(row => row.previousUpstream === 'ark_cluster_formal_ingress_ws'));
+  // WG -> local, then a sixteen-node local stack -> thirty-two nodes, all converge on a fresh preparation.
+  const fresh16 = local(summary16), fresh32 = local(summary32, { tlsListenBacklog: 4096 });
+  assert.equal(prepareDualIngressProxy(wg8.vhost, { topology: 'local', stackSummary: summary16, replacePrepared: true }).vhost, fresh16.vhost);
+  const grown = prepareDualIngressProxy(fresh16.vhost, { topology: 'local', stackSummary: summary32, replacePrepared: true, tlsListenBacklog: 4096 });
+  assert.equal(grown.vhost, fresh32.vhost);
+  assert.equal(grown.manifest.replacedPreparedUpstream.topology, 'local');
+  assert.deepEqual(grown.manifest.backendRetargets.map(row => [row.previous, row.changed]), [['172.30.245.2:3000', false], ['172.30.245.31:3000', true]]);
+  const fixedPoint = prepareDualIngressProxy(fresh32.vhost, { topology: 'local', stackSummary: summary32, replacePrepared: true, tlsListenBacklog: 4096 });
+  assert.equal(fixedPoint.vhost, fresh32.vhost);
+  assert.ok(fixedPoint.manifest.backendRetargets.every(row => !row.changed));
+  assert.deepEqual(fixedPoint.manifest.tlsListen.unchanged, ['443', '[::]:443']);
+  // A local block is never silently re-labelled WG; custom/edited/partial outputs are not "exact earlier" outputs.
+  assert.throws(() => prepareDualIngressProxy(fresh16.vhost, { replacePrepared: true }));
+  const custom = prepareDualIngressProxy(wgFormal, { ports: [42001, 42002] });
+  for (const input of [
+    custom.vhost,
+    wg2.vhost.replace('172.30.246.3:3000', '172.30.246.4:3000'),
+    wg2.vhost.replace('max_fails=1 fail_timeout=5s;\n}', 'max_fails=1 fail_timeout=5s;\n    server 172.30.246.4:3000;\n}'),
+    '# reviewed\n' + wg2.vhost,
+    wg2.vhost.replace(`proxy_pass http://ark_cluster_formal_ingress_ws;\n        proxy_next_upstream error timeout;\n        proxy_next_upstream_tries 2;`, 'proxy_pass http://ark_proto_game_backend;'),
+    wg2.vhost.replace('proxy_next_upstream_tries 2;', 'proxy_next_upstream_tries 3;'),
+    wg2.vhost + '\nupstream ark_cluster_formal_ingress_ws { server 127.0.0.1:1; }\n',
+  ]) assert.throws(() => prepareDualIngressProxy(input, { ingressInstances: 2, replacePrepared: true }));
+  assert.throws(() => prepareDualIngressProxy(fresh16.vhost.replace('172.30.245.38:3000', '172.30.245.39:3000'), { topology: 'local', stackSummary: summary32, replacePrepared: true }));
+});
+
 const binary = process.env.DUAL_INGRESS_NGINX_BIN;
 const enabled = process.env.DUAL_INGRESS_NGINX_SMOKE === '1' && !!binary;
 async function freePort() {

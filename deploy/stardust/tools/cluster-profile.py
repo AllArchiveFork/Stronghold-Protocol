@@ -72,6 +72,38 @@ class Profile:
         return self.ingress_port + instance - 1
 
     @property
+    def max_game_nodes(self):
+        # Formal games publish 35411..35442 and sit at core .11..42; Beta keeps its sixteen.
+        return 32 if self.name == 'formal' else 16
+
+    def game_ip(self, index):
+        if type(index) is not int or not 1 <= index <= self.max_game_nodes:
+            raise ValueError('unsupported fixed game node')
+        return self.core_ip(10 + index)
+
+    def game_host_port(self, index):
+        self.game_ip(index)  # Validate before deriving a fixed mapping.
+        return self.game_first_port + index - 1
+
+    def max_local_ingress_instances(self, game_nodes):
+        if type(game_nodes) is not int or not 1 <= game_nodes <= self.max_game_nodes:
+            raise ValueError('unsupported fixed game node count')
+        # Only the expanded WG-less Formal stack gets its own wider ingress range; WG edges keep their maximum.
+        return 16 if game_nodes > 16 else self.max_ingress_instances
+
+    def local_ingress_ip(self, instance, game_nodes):
+        """WG-less stack ingress follow the games on the core bridge: .31.. behind 16 nodes, .51..66 above."""
+        if type(instance) is not int or not 1 <= instance <= self.max_local_ingress_instances(game_nodes):
+            raise ValueError('unsupported fixed local ingress instance')
+        return self.core_ip((30 if game_nodes <= 16 else 50) + instance)
+
+    def local_ingress_host_port(self, instance, game_nodes):
+        # Sixteen-node stacks keep the edge loopback ports; above that port == coordinator + address
+        # suffix (.51 <-> 35451), clear of the games' 35411..35442.
+        self.local_ingress_ip(instance, game_nodes)
+        return self.ingress_host_port(instance) if game_nodes <= 16 else self.coordinator_port + 50 + instance
+
+    @property
     def endpoints(self):
         return MappingProxyType(dict(zip(self.wg_peers, (
             host + ':' + str(self.wg_port)

@@ -76,8 +76,10 @@ class PrivateCodeTests(unittest.TestCase):
         self.assertEqual(include.count('location = /'), 4)
         self.assertEqual(include.count('auth_request /_gate/check;'), 7)
         stock = (BASE.parent / 'nginx' / 'ark-proto-beta.conf').read_text().split('proxy_hide_header')[0]
+        # Like business ACAO, the server-level Allow header only describes the anonymous health
+        # route's methods; location-level add_header blocks inheritance and private code never emits it.
         headers = [line.strip() for line in stock.splitlines() if line.strip().startswith('add_header ')
-                   and not line.strip().startswith('add_header Access-Control-Allow-Origin')]
+                   and not line.strip().startswith(('add_header Access-Control-Allow-Origin', 'add_header Allow '))]
         for directive in headers:
             with self.subTest(header=directive):
                 self.assertEqual(include.count(directive), 7)
@@ -99,6 +101,51 @@ class PrivateCodeTests(unittest.TestCase):
         self.assertIn('an empty $ark_beta_csp emits no CSP header', include)
         self.assertNotIn('gitBlob', json.dumps(value))
         self.assertNotIn('fullref', json.dumps(value))
+
+    def test_local_topology_dials_the_core_bridge_coordinator_and_default_stays_wg(self):
+        default = self.prepare()
+        self.assertNotIn('topology', default)
+        include = (self.output / default['nginx'][0]['path']).read_text()
+        self.assertEqual(include.count('proxy_pass http://10.253.78.2:35300;'), 3)
+        self.assertNotIn('Topology=', include)
+        selected = code.source_manifest(self.manifest, self.digest, self.build)[1]
+        self.assertEqual(include.encode(), code.render_include(self.build, selected))
+        self.assertEqual(include.encode(), code.render_include(self.build, selected, topology='wg'))
+        local = self.root / 'local'
+        value = code.prepare(self.source, self.manifest, self.digest, self.build, local, topology='local')
+        self.assertEqual(value['topology'], 'local')
+        text = (local / value['nginx'][0]['path']).read_text()
+        self.assertEqual(text.count('proxy_pass http://172.30.242.2:3000;'), 3)
+        self.assertEqual(text.count('proxy_pass '), 3)
+        self.assertNotIn('10.253.78.', text)
+        self.assertEqual(text.count('auth_request /_gate/check;'), 7)
+        self.assertEqual(code.verify(local, self.manifest, self.digest, self.build), value)
+        self.assertEqual(code.verify(local, self.manifest, self.digest, self.build, topology='local'), value)
+        with self.assertRaises(code.Refused): code.verify(local, self.manifest, self.digest, self.build, topology='wg')
+        with self.assertRaises(code.Refused): code.verify(self.output, self.manifest, self.digest, self.build, topology='local')
+        self.assertEqual(code.verify(self.output, self.manifest, self.digest, self.build, topology='wg'), default)
+        for bad in ('LOCAL', '', None, 'wg ', 'direct'):
+            with self.subTest(topology=bad), self.assertRaises(code.Refused):
+                code.prepare(self.source, self.manifest, self.digest, self.build, self.root / 'bad', topology=bad)
+            self.assertFalse((self.root / 'bad').exists())
+
+    def test_recorded_topology_cannot_be_forged_or_dropped(self):
+        for case in ('drop', 'wg', 'other', 'duplicate'):
+            with self.subTest(case=case):
+                fixture = PrivateCodeTests()
+                fixture.setUp()
+                try:
+                    value = code.prepare(fixture.source, fixture.manifest, fixture.digest, fixture.build, fixture.output, topology='local')
+                    file = fixture.output / 'release-manifest.json'
+                    changed = deepcopy(value)
+                    if case == 'drop': changed.pop('topology')
+                    if case in ('wg', 'other'): changed['topology'] = 'direct' if case == 'other' else 'wg'
+                    raw = code.canonical(changed)
+                    if case == 'duplicate': raw = raw.replace(b'"topology":"local"', b'"topology":"wg","topology":"local"')
+                    file.write_bytes(raw)
+                    with self.assertRaises(code.Refused): fixture.verify()
+                finally:
+                    fixture.doCleanups()
 
     def test_bytes_source_mode_extra_js_css_noncodes_missing_and_empty_dirs_refused(self):
         cases = ('bytes', 'mode', 'extra-js', 'extra-css', 'extra-map', 'extra-txt', 'missing', 'empty-dir')

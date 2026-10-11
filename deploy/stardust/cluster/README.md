@@ -6,8 +6,8 @@
 
 ## 固定profile与全局池
 
-- 每个profile使用一个coordinator和十六个完整对战进程，每game为**8combat+2trial**。coordinator和ingress不创建战斗/试算Worker。
-- 每入口都持有全部十六节点路由；逻辑部署分组不是路由或玩家分区。所有入口共享同一大厅/好友房/party/匹配池，同局、联防、Boss及观战固定一个owner，无需sticky。
+- 每个profile使用一个coordinator和固定数量的完整对战进程：Formal为16或32个（`--game-nodes 32`），Beta为16个；每game为**8combat+2trial**。coordinator和ingress不创建战斗/试算Worker。
+- 每入口都持有全部game节点路由；逻辑部署分组不是路由或玩家分区。所有入口共享同一大厅/好友房/party/匹配池，同局、联防、Boss及观战固定一个owner，无需sticky。
 - 内层WS不压缩，WG回程raw帧与外层PMD的CPU/字节应分别衡量。入口数量与标称带宽不能直接推导容量。
 - 网络仅允许profile批准的本地及peer `/32`、精确容器IP、端口和对应路由。拒绝任意地址、额外绑定及raw direct访问，不改默认路由或其他网络组件。
 - `0.0.0.0`只用于容器内监听，不允许在宿主裸露原始端口。公开流量仍走TLS、同源Origin、口令门禁、逐次private校验、private/no-store及同版素材。ingress HTTP始终404；受保护HTTP/privatecode/data由本地或coordinator供给。
@@ -40,7 +40,7 @@ python3 -I /opt/ark-cluster-beta/tools/cluster-deploy.py \
   --build "$FIXED_BUILD" --manifest-sha256 "$SOURCE_MANIFEST_SHA256"
 ```
 
-生成`compose.json`（JSON是Compose支持的YAML子集）、每角色`runtime/runtime.json`、root-only`host-policy.json`和非激活摘要。核心16个独立32-byte节点key只生成一次；每game只挂自己的key，coordinator挂全部节点key，ingress不持有节点key。真实key不进入argv/env/JSON正文/镜像/日志。容器只读文件采用root:1000、0440，父目录0750；policy/Compose0600。不存在的目录可创建，已有目录**包括空目录**都不覆盖。
+生成`compose.json`（JSON是Compose支持的YAML子集）、每角色`runtime/runtime.json`、root-only`host-policy.json`和非激活摘要。核心每个game（默认16，Formal显式`--game-nodes 32`时32）一个独立32-byte节点key，只生成一次；policy仅在非16时记录`game_nodes`，默认输出与原格式逐字节相同；每game只挂自己的key，coordinator挂全部节点key，ingress不持有节点key。真实key不进入argv/env/JSON正文/镜像/日志。容器只读文件采用root:1000、0440，父目录0750；policy/Compose0600。不存在的目录可创建，已有目录**包括空目录**都不覆盖。
 
 全部角色有init、UID/GID1000、read-only、cap-drop ALL、no-new-privileges、PIDs128、受限tmpfs与轮转日志；**没有CPU/内存hardcap、CAP_SYS_NICE或整个Node的nice包装**。Docker restart固定no，由新root生命周期闭锁后启动。
 
@@ -54,7 +54,7 @@ python3 -I /opt/ark-cluster-beta/tools/cluster-deploy.py \
 6. 已证明新guard闭锁后，按bootstrap实存hash/handle核对，仅删除批准bootstrap拒绝RULES。否则bootstrap继续DROP，即使其他表ACCEPT也不能接流量。
 7. 按模板安装独立`ark-cluster-beta-wg.service`依赖及core/edge manager服务。WG启动单元需独立安装审查，需要自己具备同一bootstrap-before-interface顺序；模板不会替调用者生成私钥或自动安装WG恢复。
 8. manager `--action serve`先闭锁→查新WG→仅启动缺失的本namespace角色/按已核准CID恢复已停止角色→检查actual image/source/config/mount/network/PID/cgroup/startTicks→实际8+2/privatehealth或worker0/relay协议→**先reset-on-fork，再只Main -20**→全代次再核验→最后发布精确WG租约。
-9. 全部批准入口均暖机并路由到全部16节点，再核验coordinator全16节点就绪、实际Nginx/TLS/认证/私有码/资源及浏览器。最后只更新所选profile的配套vhost；正常Nginx reload，不重启共享代理或其他game/auth。DNS改变不属于这些命令，也不因服务已启动自动执行。
+9. 全部批准入口均暖机并路由到全部game节点，再核验coordinator全部节点就绪、实际Nginx/TLS/认证/私有码/资源及浏览器。最后只更新所选profile的配套vhost；正常Nginx reload，不重启共享代理或其他game/auth。DNS改变不属于这些命令，也不因服务已启动自动执行。
 
 ## 健康与生命周期边界
 
@@ -70,7 +70,7 @@ python3 -I /opt/ark-cluster-beta/tools/cluster-deploy.py \
 
 ## 追加与范围
 
-应用CLI保留SIGHUP append-only路由/节点：先核验新game→先全部入口追加路由→最后coordinator允许新局选它，旧局不迁移。本轮root inventory固定16节点，runtime SHA固定；**不能直接HUP修改文件而不同时准备相应守卫批准材料**，否则守卫按漂移撤权。16之外的root inventory/生命周期扩展是下一份显式受控适配，不能声称此固定16profile已经支持任意node增删。
+应用CLI保留SIGHUP append-only路由/节点：先核验新game→先全部入口追加路由→最后coordinator允许新局选它，旧局不迁移。root inventory只接受固定的16节点，或Formal显式生成的32节点（新bundle、新key、整体替换），runtime SHA固定；**不能直接HUP修改文件而不同时准备相应守卫批准材料**，否则守卫按漂移撤权。不能声称已经支持运行中任意node增删。
 
 ## 本地验证
 
