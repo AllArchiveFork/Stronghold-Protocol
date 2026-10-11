@@ -68,6 +68,7 @@ export class MatchMessaging {
   flush(forcePublic = false) {
     if (this.disposed) return;
     if (this._privDirty.size) {
+      this._markStockChanges();
       const list = [...this._privDirty];
       this._privDirty.clear();
       for (const ps of list) {
@@ -77,6 +78,19 @@ export class MatchMessaging {
     }
     if (this._pubDirty || forcePublic) this._maybeSendPublic(forcePublic);
     if (this._damageDirty) this._flushDamage();
+  }
+
+  /**
+   * Shop displays reserve no stock, so any state change (a purchase, sale or merge, a bot's turn, an effect's grant) can
+   * change whether another player's card is still buyable: re-send m.private to the humans whose stock flags moved.
+   */
+  _markStockChanges() {
+    for (const ps of this.order) {
+      if (this._privDirty.has(ps) || ps.isBot || ps.left || !ps.connected || ps._stockSig === undefined) continue;
+      let sig;
+      try { sig = ps.stockSig(); } catch { continue; }
+      if (sig !== ps._stockSig) this._privDirty.add(ps);
+    }
   }
 
   _sendPrivate(ps, force) {

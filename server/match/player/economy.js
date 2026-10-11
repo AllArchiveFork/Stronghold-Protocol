@@ -141,17 +141,14 @@ export class PlayerEconomy {
       const rec = this.gd.chess(slot.id);
       // a DIY slot sells only as this player's own 自选 piece (a slotted slot's record carries `diyFor`)
       if (!rec || (rec.isDiy && !rec.diyFor)) return fail(ERR.BAD_TARGET);
-      const base = this.gd.baseIdOf(slot.id);
-      const need = rec.isGolden ? this.gd.goldenCopies : 1;
-      const pool = this.poolOf(base);
-      if (pool.has(base) && pool.left(base) < need) return fail(ERR.SOLD_OUT);
+      if (this.outOfStock(slot)) return fail(ERR.SOLD_OUT);
       if (handFull) return fail(ERR.HAND_FULL);
       this.spend(price);
       slot.sold = true;
       piece = this.acquireChess(slot.id, { source: 'buy' });
     } else {
       if (!this.gd.item(slot.id)) return fail(ERR.BAD_TARGET);
-      if (!this.m.itemPool.canGain(slot.id)) return fail(ERR.SOLD_OUT);
+      if (this.outOfStock(slot)) return fail(ERR.SOLD_OUT);
       if (handFull) return fail(ERR.HAND_FULL);
       this.spend(price);
       slot.sold = true;
@@ -163,6 +160,31 @@ export class PlayerEconomy {
     this._afterSpend(price, 'buy');
     this.recompute();
     return OK;
+  }
+
+  /**
+   * Whether the stock an unsold shop / offer slot draws from can no longer supply it. Displays reserve no copies (pool.js
+   * header), so another player can take the last ones after the roll: the pool — shared, the seat group's, or this
+   * player's 自选 stock (poolOf) — for an operator (an elite needs goldenCopies), the item stock for an item. buy and
+   * pickReward refuse such a slot (SOLD_OUT); m.private marks it `soldOut` so the card says so before the tap.
+   */
+  outOfStock(slot) {
+    if (!slot || slot.sold) return false;
+    if (slot.kind === 'item') return !!this.gd.item(slot.id) && !this.m.itemPool.canGain(slot.id);
+    const rec = this.gd.chess(slot.id);
+    if (!rec) return false;
+    const base = this.gd.baseIdOf(slot.id);
+    const pool = this.poolOf(base);
+    return pool.has(base) && pool.left(base) < (rec.isGolden ? this.gd.goldenCopies : 1);
+  }
+
+  /** The out-of-stock flags m.private last carried, as one string (Match.flush re-sends m.private when they move). */
+  stockSig() {
+    let sig = '';
+    for (const s of this.shop.slots) sig += this.outOfStock(s) ? '1' : '0';
+    const offer = this.offers[0];
+    if (offer) { sig += '|'; for (const s of offer.slots) sig += this.outOfStock(s) ? '1' : '0'; }
+    return sig;
   }
 
   refresh() {
