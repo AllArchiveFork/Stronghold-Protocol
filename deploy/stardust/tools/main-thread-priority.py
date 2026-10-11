@@ -29,6 +29,8 @@ BETA_LOCK = '/run/ark-beta-main-thread-priority.lock'
 CORE_LOCK = '/run/ark-core-main-thread-priority.lock'
 LOCAL_LOCK = '/run/ark-local-main-thread-priority.lock'
 LOCAL_PROJECT = 'ark-cluster-formal-local'
+# local-hz: the same Formal local stack on the Hangzhou host, published on its WG address instead of loopback.
+LOCAL_HZ_IP = '10.253.80.2'
 
 
 def local_targets():
@@ -68,8 +70,9 @@ class Config:
     publish_ips: tuple = ('127.0.0.1',)
     # Multi-container profile (local): every (container_name, service, bindings, combat, trial); target_config selects one.
     targets: tuple = ()
-    # One local target's exact published bindings ((container port, host port) on 127.0.0.1); replaces the health mapping.
+    # One local target's exact published bindings ((container port, host port) on bind_ip); replaces the health mapping.
     bindings: tuple = ()
+    bind_ip: str = '127.0.0.1'
 
     @property
     def worker_count(self):
@@ -77,7 +80,7 @@ class Config:
 
     @property
     def lock_path(self):
-        return {'prod': LOCK, 'beta': BETA_LOCK, 'core': CORE_LOCK, 'local': LOCAL_LOCK}[self.profile]
+        return {'prod': LOCK, 'beta': BETA_LOCK, 'core': CORE_LOCK, 'local': LOCAL_LOCK, 'local-hz': LOCAL_LOCK}[self.profile]
 
     @property
     def target_names(self):
@@ -88,8 +91,8 @@ class Config:
         if not isinstance(value, dict) or set(value) - {'profile', 'nice', 'startup_timeout_seconds', 'approved_images'}:
             raise Refused('invalid config keys')
         profile = value.get('profile', 'prod')
-        if not isinstance(profile, str) or profile not in ('prod', 'beta', 'core', 'local'):
-            raise Refused('profile must be prod, beta, core or local')
+        if not isinstance(profile, str) or profile not in ('prod', 'beta', 'core', 'local', 'local-hz'):
+            raise Refused('profile must be prod, beta, core, local or local-hz')
         nice = value.get('nice', DEFAULT_NICE)
         timeout = value.get('startup_timeout_seconds', 90)
         if type(nice) is not int or nice not in (0, DEFAULT_NICE):
@@ -116,9 +119,10 @@ class Config:
         if profile == 'core':
             return cls(tuple(pairs), nice, timeout, profile='core', combat_workers=12, trial_workers=2,
                        publish_ips=('127.0.0.1', '10.253.77.2'))
-        if profile == 'local':
+        if profile in ('local', 'local-hz'):
             return cls(tuple(pairs), nice, timeout, project=LOCAL_PROJECT, service='', container_name='', health_port=0,
-                       profile='local', combat_workers=0, trial_workers=0, publish_ips=(), targets=local_targets())
+                       profile=profile, combat_workers=0, trial_workers=0, publish_ips=(), targets=local_targets(),
+                       bind_ip=LOCAL_HZ_IP if profile == 'local-hz' else '127.0.0.1')
         return cls(tuple(pairs), nice, timeout)
 
 
@@ -212,7 +216,7 @@ def validate_info(info, image, config):
     if config.bindings:
         # local: the exact published set; exposed-only ports report null. No health mapping (see System.health).
         published = info.get('all_ports')
-        expected = {port: [{'HostIp': '127.0.0.1', 'HostPort': str(host)}] for port, host in config.bindings}
+        expected = {port: [{'HostIp': config.bind_ip, 'HostPort': str(host)}] for port, host in config.bindings}
         if not isinstance(published, dict) or {port: value for port, value in published.items() if value} != expected:
             raise Refused('fixed loopback bindings mismatch')
         return
@@ -351,7 +355,7 @@ class System:
         return candidates[0]
 
     def health(self):
-        if self.config.profile == 'local':
+        if self.config.profile in ('local', 'local-hz'):
             # Game nodes and ingress serve no /healthz and loaded loopback publications stall: a local role is ready
             # when its exact WorkerThread count is up (validate_threads; game 3+1, coordinator/ingress none).
             return
@@ -647,7 +651,7 @@ def run_targets(config, args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config', required=True)
-    parser.add_argument('--profile', choices=('prod', 'beta', 'core', 'local'),
+    parser.add_argument('--profile', choices=('prod', 'beta', 'core', 'local', 'local-hz'),
                         help='require a matching fixed config profile; never override config selectors')
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument('--check', action='store_true', help='read-only check; exit2 if policy is not applied')

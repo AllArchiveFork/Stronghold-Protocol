@@ -659,9 +659,9 @@ class ProfileTests(unittest.TestCase):
         for profile in ('Local', 'Beta', '', None, True, 1, [], {}):
             with self.subTest(profile=profile), self.assertRaises(m.Refused):
                 m.Config.parse({**value, 'profile': profile})
-        for profile in ('prod', 'beta', 'core', 'local'):
+        for profile in ('prod', 'beta', 'core', 'local', 'local-hz'):
             for key in ('project', 'service', 'container_name', 'health_port', 'combat_workers',
-                        'trial_workers', 'worker_count', 'publish_ips', 'ports', 'lock_path', 'targets', 'bindings'):
+                        'trial_workers', 'worker_count', 'publish_ips', 'ports', 'lock_path', 'targets', 'bindings', 'bind_ip'):
                 with self.subTest(profile=profile, key=key), self.assertRaises(m.Refused):
                     m.Config.parse({**value, 'profile': profile, key: 'override'})
 
@@ -1170,6 +1170,32 @@ def local_info(name, cid=CID):
     value = {**info(config), 'id': cid, 'all_ports': ports}
     value['ports'] = ports['3000/tcp']
     return config, value
+
+
+LOCAL_HZ_CONFIG = m.Config.parse({'profile': 'local-hz', 'approved_images': [{'revision': REV, 'image_id': IMAGE}]})
+
+
+class LocalHzProfileTests(unittest.TestCase):
+    """The same 49 fixed targets on the Hangzhou host: bindings published on its WG address, never loopback or any other."""
+
+    def test_same_targets_and_lock_bindings_on_the_wg_address(self):
+        self.assertEqual(LOCAL_HZ_CONFIG.target_names, LOCAL_CONFIG.target_names)
+        self.assertEqual(LOCAL_HZ_CONFIG.lock_path, m.LOCAL_LOCK)
+        self.assertEqual((LOCAL_CONFIG.bind_ip, LOCAL_HZ_CONFIG.bind_ip), ('127.0.0.1', '10.253.80.2'))
+        for name in ('ark-cluster-formal-local-coordinator', 'ark-cluster-formal-local-ingress-07',
+                     'ark-cluster-formal-local-game-20'):
+            config = m.target_config(LOCAL_HZ_CONFIG, name)
+            self.assertEqual((config.profile, config.bind_ip, config.bindings), ('local-hz', '10.253.80.2', m.target_config(LOCAL_CONFIG, name).bindings))
+            _, value = local_info(name)
+            hz = {port: ([{'HostIp': '10.253.80.2', 'HostPort': v[0]['HostPort']}] if v else v) for port, v in value['all_ports'].items()}
+            m.validate_info({**value, 'all_ports': hz}, image(), config)
+            with self.subTest(name=name), self.assertRaises(m.Refused):
+                m.validate_info(value, image(), config)
+            with self.subTest(name=name), self.assertRaises(m.Refused):
+                m.validate_info({**value, 'all_ports': hz}, image(), m.target_config(LOCAL_CONFIG, name))
+            first = next(iter(config.bindings))[0]
+            with self.subTest(name=name), self.assertRaises(m.Refused):
+                m.validate_info({**value, 'all_ports': {**hz, first: [{'HostIp': '0.0.0.0', 'HostPort': hz[first][0]['HostPort']}]}}, image(), config)
 
 
 class LocalProfileTests(unittest.TestCase):
