@@ -24,7 +24,10 @@ test('connection statuses share a compact, textual state component', () => {
   }
 });
 
-test('lobby lists all sixteen rows but battle rejects a cluster-scoped sample', () => {
+test('lobby lists all sixteen or thirty-two rows but battle rejects a cluster-scoped sample', () => {
+  const wide = { scope: 'cluster', nodes: Array.from({ length: 32 }, (_, i) => node(i + 1)) };
+  assert.equal(loadSummary(wide).caption, '集群 32/32');
+  assert.equal(collect(ServerStatusModal({ open: true, clusterLoad: wide }), view => view.type === 'tr').length, 33);
   const cluster = { scope: 'cluster', nodes: Array.from({ length: 16 }, (_, i) => node(i + 1)) };
   assert.equal(loadSummary(cluster).caption, '集群 16/16');
   const lobby = ServerStatusModal({ open: true, clusterLoad: cluster });
@@ -46,15 +49,17 @@ test('battle status names only its owner and ignores injected internal metadata'
   assert.match(JSON.stringify(pill), /叙拉古/);
 });
 
-test('site names cover the exact sixteen slots in order without changing wire labels or adding a notice', () => {
-  const names = ['罗德岛', '企鹅物流', '莱茵生命', '黑钢国际', '喀兰贸易', '龙门', '卡西米尔', '乌萨斯',
-    '炎', '拉特兰', '萨尔贡', '哥伦比亚', '叙拉古', '萨米', '伊比利亚', '卡兹戴尔'];
+test('site names cover the exact thirty-two slots in order without changing wire labels or adding a notice', () => {
+  const names = ['罗德岛', '企鹅物流', '莱茵生命', '黑钢国际', '喀兰贸易', '龙门近卫局', '卡西米尔', '乌萨斯',
+    '炎', '拉特兰', '萨尔贡', '哥伦比亚', '叙拉古', '萨米', '伊比利亚', '巴别塔',
+    '维多利亚', '雷姆必拓', '东', '谢拉格', '阿戈尔', '莱塔尼亚', '玻利瓦尔', '米诺斯',
+    '乌萨斯学生自治团', '深海猎人', '红松骑士团', '格拉斯哥帮', '汐斯塔', '鲤氏侦探事务所', '塔拉', 'S.W.E.E.P.'];
   const cluster = { scope: 'cluster', nodes: names.map((_, index) => node(index + 1)) };
   const before = JSON.stringify(cluster);
   const view = ServerStatusModal({ open: true, clusterLoad: cluster });
   const rows = collect(view, v => v.type === 'tr').slice(1);
   assert.deepEqual(rows.map(row => collect(row, v => v.props?.scope === 'row')[0].props.children), names);
-  for (let slot = 1; slot <= 16; slot++) {
+  for (let slot = 1; slot <= 32; slot++) {
     const label = node(slot).label, game = { scope: 'game', nodes: [node(slot)] };
     assert.equal(gameDisplayName(label), names[slot - 1]);
     assert.equal(loadSummary(game).caption, names[slot - 1]);
@@ -62,20 +67,19 @@ test('site names cover the exact sixteen slots in order without changing wire la
     assert.equal(scopedClusterLoad(game, 'game').nodes[0].label, label);
   }
   assert.equal(JSON.stringify(cluster), before);
-  assert.equal(new Set(names).size, 16);
-  assert.equal(gameDisplayName('game-17'), '对战 17');
+  assert.equal(new Set(names).size, 32);
+  assert.equal(gameDisplayName('game-33'), '对战 33');
   assert.equal(gameDisplayName('game-256'), '对战 256');
   for (const label of [null, undefined, 1, 'game-001', 'game-00', 'game-257', 'game-01\n', 'private-node', '罗德岛']) assert.equal(gameDisplayName(label), null);
   const notices = JSON.parse(source('../../data/announcements.json'));
-  assert.equal(notices.length, 3);
+  assert.equal(notices.length, 2);
   assert.equal(notices[0].title, '10 月 11 日更新与维护致歉');
-  assert.equal(notices[1].title, '0.2.2／0.2.3 累计更新');
   assert.doesNotMatch(notices.flatMap(notice => notice.paragraphs).join('\n'), /节点更名|服务器更名|罗德岛|企鹅物流/);
 });
 
-for (const lang of ['en', 'ja', 'ko', 'zh-TW']) test(`all sixteen display names follow the ${lang} catalog`, t => {
+for (const lang of ['en', 'ja', 'ko', 'zh-TW']) test(`all thirty-two display names follow the ${lang} catalog`, t => {
   const catalog = JSON.parse(source(`../../public/i18n/${lang}.json`));
-  const names = Array.from({ length: 16 }, (_, index) => gameDisplayName(node(index + 1).label));
+  const names = Array.from({ length: 32 }, (_, index) => gameDisplayName(node(index + 1).label));
   setMessages(lang, catalog); setLang(lang); t.after(() => setLang('zh'));
   for (let index = 0; index < names.length; index++) {
     assert.equal(typeof catalog[names[index]], 'string');

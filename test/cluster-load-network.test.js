@@ -107,3 +107,19 @@ test('singleton pongs stay unchanged and a failing optional diagnostics provider
     assert.equal(JSON.stringify(pong).includes('private'), false);
   }
 });
+
+test('lobby heartbeats share one normalized cluster summary per second instead of rebuilding it per ping', async t => {
+  let calls = 0;
+  const getClusterLoad = () => { calls++; return { scope: 'cluster', nodes: Array.from({ length: 32 }, (_, i) => ({ label: publicGameLabel(i + 1), status: 'ready', loadState: 'normal', loadDetails: details })) }; };
+  const server = await startServer({ port: 0, host: '127.0.0.1', quiet: true, combatWorkers: 0, trialWorkers: 0, getClusterLoad });
+  const conn = await client(server.url);
+  t.after(async () => { conn.socket.terminate(); await server.close(); });
+  const pongs = [];
+  for (let c = 1; c <= 3; c++) pongs.push(await conn.request('ping', { c }));
+  assert.equal(calls, 1);
+  assert.ok(pongs.every(pong => pong.clusterLoad.nodes.length === 32));
+  assert.deepEqual(pongs[2].clusterLoad, pongs[0].clusterLoad);
+  await new Promise(resolve => setTimeout(resolve, 1050));
+  await conn.request('ping', { c: 4 });
+  assert.equal(calls, 2);
+});

@@ -48,6 +48,9 @@ import { moderateName } from '../shared/names.js';
 export { sanitizeName } from '../shared/names.js';
 
 /** Tunables (all overridable through the Network / SessionRegistry constructors). */
+/** Every lobby heartbeat carries the same public cluster summary: normalize it at most once per this many ms. */
+export const CLUSTER_LOAD_CACHE_MS = 1000;
+
 export const NET_DEFAULTS = Object.freeze({
   ratePerSec: 40,               // token bucket refill rate
   rateBurst: 40,                // token bucket capacity
@@ -515,6 +518,7 @@ export class Network {
     this.getLoadState = typeof getLoadState === 'function' ? getLoadState : null;
     this.getLoadDetails = typeof getLoadDetails === 'function' ? getLoadDetails : null;
     this.getClusterLoad = typeof getClusterLoad === 'function' ? getClusterLoad : null;
+    this.clusterLoadCache = { at: -Infinity, value: null };
     this.opts = { ...NET_DEFAULTS, ...options };
     if (typeof this.opts.allowAsyncHandlers !== 'boolean') throw new TypeError('invalid asynchronous network handler option');
     /** @type {Map<import('ws').WebSocket, Connection>} */
@@ -614,7 +618,12 @@ export class Network {
       }
       if (this.getClusterLoad) {
         try {
-          const cluster = normalizeClusterLoad(this.getClusterLoad());
+          // one summary of every node per second instead of one per heartbeat (cost grew with clients × nodes)
+          const cache = this.clusterLoadCache;
+          if (!(now - cache.at >= 0 && now - cache.at < CLUSTER_LOAD_CACHE_MS)) {
+            this.clusterLoadCache = { at: now, value: normalizeClusterLoad(this.getClusterLoad()) };
+          }
+          const cluster = this.clusterLoadCache.value;
           if (cluster !== null) pong.clusterLoad = cluster;
         } catch { /* diagnostics cannot interrupt heartbeat replies */ }
       }
