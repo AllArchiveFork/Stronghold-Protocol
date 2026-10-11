@@ -1,7 +1,7 @@
 // Left team panel (research 06 §11.1, research 09 §3.1): one row per seat — avatar (band icon once picked), name, LP
 // tower, status glyph (… acting / ✓ ready / ⌛ deciding / ⚔ combat / door left / ✕ dead), AI badge, "you" marker, the
-// field being watched (eye badge), and emote bubbles. In a boss round the viewer's pair is framed in green from the
-// round's start (gameLogic teamFrameIds; community report of 2026-10-06, item 51).
+// field being watched (eye badge), the 预选盟约 glyph (ui/bondPlan.js) and emote bubbles. In a boss round the viewer's pair
+// is framed in green from the round's start (gameLogic teamFrameIds; community report of 2026-10-06, item 51).
 // Observing (client-side combat, `observe` prop — the official flow): tapping a teammate's avatar expands a mint
 // "前往查看" button under the row (when that teammate can be observed now; otherwise the reason is toasted through
 // onWatch); while observing, the own row shows a "返回战场" button. Without `observe` (server-run combat) a click
@@ -38,6 +38,7 @@ import { uniteRelayKey } from '../battle/observe.js';
 import { PHONE_QUERY, rosterPools, rosterStartsOpen, teamDensity, teamEmoteMode, teamPanelLayout } from './teamLayout.js';
 import { useMedia } from './device.js';
 import { useStore } from '../store.js';
+import { BondPlanTag } from './bondPlan.js';
 
 const cx = (...p) => p.flat().filter(Boolean).join(' ');
 
@@ -235,6 +236,7 @@ function TeamRow({ p, pub, myId, watching, onWatch, observe, clicks, selfLive, c
           tip=${rowLpTip(lp, cap)} />
         ${lp.left != null ? html`<${MissTag} n=${lp.left} name=${self ? null : p.name || t('博士')} />` : null}
         <${RowStatus} status=${status} meta=${meta} offline=${offline} />
+        ${p.bondPlan ? html`<${BondPlanTag} bondId=${p.bondPlan} compact=${true} class="team__plan" />` : null}
         ${watched && !self ? html`<span class="team__eye" title=${t('正在查看')}><${GIcon} name="eye" /></span>` : null}
       </div>
       <${ReviveAction} pub=${pub} myId=${myId} target=${p} compact=${list} />

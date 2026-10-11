@@ -1,5 +1,6 @@
 // Room screen (同盟等待室): 4 seat cards (avatar frame, name, ready state, AI badge, host crown),
-// host controls (difficulty picker, add/remove AI and the 「AI 队友最后选择」 switch in co-op, start), invite code with
+// host controls (difficulty picker, add/remove AI, each AI's strategy and the 「AI 队友最后选择」 switch in co-op, start),
+// invite code with
 // copy code / copy link, ready toggle and leave.
 //
 // Start rule (server/lobby.js): room.start needs every *other* human connected and ready; the
@@ -9,6 +10,8 @@
 // Spectator seats (community report #26, a remake feature): a co-op room with spectators shows the 观战席 strip under
 // the seats — names, offline marks, the host's ✕ (room.removeSpectator) — and a spectator's own view swaps the ready
 // button for 观战中 and offers 入座 (room.join of the room) while a player seat is free.
+// AI 指定策略: an AI seat card names the strategy that AI takes in the draft (room.setBotBand; room.state seats[].band,
+// null = 自动选择); the host's chip opens the picker, where a strategy already set for another AI is greyed out.
 // Texts go through t() (docs/I18N.md).
 
 import { useEffect, useRef, useState } from '../../vendor/hooks.module.js';
@@ -30,6 +33,9 @@ import { ExperimentalOptions, experimentalSummary } from '../ui/experimental.js'
 import { ServerStatusModal } from '../ui/serverStatus.js';
 import { MatchmakingPanel, queueActive } from '../ui/matchmaking.js';
 import { t, tc } from '../../../shared/i18n.js';
+import { useGameData, BandIcon } from '../ui/gameComponents.js';
+import { allowedBands } from './bandDraft.js';
+import { Modal } from '../ui/components.js';
 
 /**
  * Seats padded to the room's capacity (co-op 4, solo 1), each null or a seat record.
@@ -115,7 +121,7 @@ export function inviteLink(code) {
  */
 export { copyText };
 
-function SeatCard({ seat, index, room, facts, myId, busy, onAddBot, onRemoveBot, onKick }) {
+function SeatCard({ seat, index, room, facts, myId, busy, gd, queued, onAddBot, onRemoveBot, onKick, onBotBand }) {
   const coop = room.mode !== 'solo';
   if (!seat) {
     const canAdd = coop && facts.isHost;
@@ -150,6 +156,8 @@ function SeatCard({ seat, index, room, facts, myId, busy, onAddBot, onRemoveBot,
       <${AvatarFrame} size="xl" name=${seat.name} seat=${index} bot=${seat.isBot} self=${isMe} ready=${state === 'ready'} offline=${offline} />
       ${seat.isBot ? html`<span class="seat__bot-label"><${Icon} name="robot" />${t('AI 队友')}</span>` : null}
     </div>
+    ${seat.isBot && coop ? html`<${BotBandChip} seat=${seat} gd=${gd} editable=${facts.isHost && !queued} busy=${busy === `band${index}`}
+      onOpen=${() => onBotBand(index)} />` : null}
     <div class="seat__who">
       <span class="seat__name">${seat.name || t('博士')}</span>
       ${isMe ? html`<span class="seat__you">${t('你')}</span>` : null}
@@ -170,6 +178,48 @@ function SeatCard({ seat, index, room, facts, myId, busy, onAddBot, onRemoveBot,
       <//>` : null}
     </footer>
   </article>`;
+}
+
+/** An AI seat's strategy (自动选择 when none is set); the host's is a button opening the picker. */
+function BotBandChip({ seat, gd, editable, busy, onOpen }) {
+  const band = typeof seat.band === 'string' ? gd.band(seat.band) : null;
+  const body = html`${band ? html`<${BandIcon} bandId=${band.bandId} size="sm" />` : html`<${Icon} name="robot" />`}
+    <span class="seat__band-name">${band ? band.name : typeof seat.band === 'string' ? seat.band : t('自动选择')}</span>`;
+  return editable
+    ? html`<button type="button" class="seat__band is-editable" disabled=${busy} onClick=${onOpen} title=${t('指定该 AI 队友选择的策略')}>
+        <span class="seat__band-k">${t('策略')}</span>${body}<${Icon} name="edit" /></button>`
+    : html`<span class="seat__band"><span class="seat__band-k">${t('策略')}</span>${body}</span>`;
+}
+
+/**
+ * The host's strategy picker for one AI seat: 自动选择, then every co-op strategy; one already set for another AI of the
+ * room is disabled and names it (the server refuses a duplicate too).
+ */
+function BotBandPicker({ seat, room, gd, busy, onClose, onPick }) {
+  const seats = roomFacts(room, null).seats;
+  // an expanded room's 禁用鸭爵 option drops that strategy, as in its draft (server: the same GameData rule)
+  const bands = allowedBands(gd.list('bands'), 'MULTI', seats.length > MAX_SEATS && room.experimental?.disableDuckLord === true);
+  const usedBy = new Map();
+  for (const s of seats) if (s && s.isBot && s.seat !== seat.seat && typeof s.band === 'string') usedBy.set(s.band, s.name);
+  return html`<${Modal} open=${true} onClose=${onClose} title=${t('指定 AI 策略：{name}', { name: seat.name })} micro="AI STRATEGY"
+      class="botband-dlg" actions=${html`<${Button} variant="secondary" data-autofocus onClick=${onClose}>${t('关闭')}<//>`}>
+    <p class="botband-dlg__tip t-dim">${t('开局选择策略时，该 AI 队友会直接选择指定的策略，其他博士不能再选它。')}</p>
+    <div class="botband-dlg__grid" role="listbox" aria-label=${t('策略')}>
+      <button type="button" role="option" aria-selected=${seat.band == null ? 'true' : 'false'} disabled=${busy}
+          class=${`botband ${seat.band == null ? 'is-sel' : ''}`} onClick=${() => onPick(null)}>
+        <span class="botband__auto"><${Icon} name="robot" /></span><span class="botband__name">${t('自动选择')}</span>
+      </button>
+      ${bands.map((b) => {
+        const other = usedBy.get(b.bandId);
+        return html`<button key=${b.bandId} type="button" role="option" aria-selected=${seat.band === b.bandId ? 'true' : 'false'}
+            disabled=${busy || !!other} title=${other ? t('已指定给 {name}', { name: other }) : b.effectName || b.name}
+            class=${`botband ${seat.band === b.bandId ? 'is-sel' : ''} ${other ? 'is-used' : ''}`} onClick=${() => onPick(b.bandId)}>
+          <${BandIcon} bandId=${b.bandId} size="md" /><span class="botband__name">${b.name}</span>
+          ${other ? html`<span class="botband__used">${other}</span>` : b.effectName ? html`<span class="botband__eff">${b.effectName}</span>` : null}
+        </button>`;
+      })}
+    </div>
+  <//>`;
 }
 
 /** 观战席: the room's spectators (host: ✕ frees a seat), and 入座 for a spectator while a player seat is free. */
@@ -245,6 +295,8 @@ export function RoomScreen() {
   const [busy, setBusy] = useState(null);
   const [experimentalOpen, setExperimentalOpen] = useState(false);
   const [loadOpen, setLoadOpen] = useState(false);
+  const [bandSeat, setBandSeat] = useState(null);
+  const gd = useGameData();
   const alive = useRef(true);
   const inFlight = useRef(false); // synchronous guard against double clicks (state updates are async)
   useEffect(() => () => { alive.current = false; }, []);
@@ -282,6 +334,7 @@ export function RoomScreen() {
   };
   const setDifficulty = (difficulty) => run('diff', () => net.request('room.setDifficulty', { difficulty }));
   const setAiLast = (on) => run('ailast', () => net.request('room.setAiPicksLast', { on }));
+  const setBotBand = (seat, bandId) => run(`band${seat}`, async () => { await net.request('room.setBotBand', { seat, bandId }); setBandSeat(null); });
   // spectator seats: the host frees one; a spectator takes a free player seat with room.join of this room
   const removeSpectator = (playerId) => run(`rs${playerId}`, () => net.request('room.removeSpectator', { playerId }));
   const sit = () => run('sit', () => net.request('room.join', { code: room.code }));
@@ -354,7 +407,7 @@ export function RoomScreen() {
     </main>` : null}
     <main hidden=${queued} class=${`seats${coop ? '' : ' seats--solo'}${facts.seats.length > MAX_SEATS ? ' seats--expanded screen__scroll' : ''}`}>
       ${facts.seats.map((s, i) => html`<${SeatCard} key=${s ? `p${s.playerId}` : `e${i}`} seat=${s} index=${i} room=${room} facts=${facts}
-        myId=${me.playerId} busy=${busy} onAddBot=${addBot} onRemoveBot=${removeBot} onKick=${kick} />`)}
+        myId=${me.playerId} busy=${busy} gd=${gd} queued=${queued} onAddBot=${addBot} onRemoveBot=${removeBot} onKick=${kick} onBotBand=${setBandSeat} />`)}
       ${coop ? null : html`<aside class="solo-brief brackets">
         <${MicroLabel} tone="mint">BRIEFING<//>
         <h2>${DIFFICULTY_NAMES[room.difficulty] ? t(DIFFICULTY_NAMES[room.difficulty]) : ''}<span class="num t-dim"> ${info.code}</span></h2>
@@ -371,6 +424,8 @@ export function RoomScreen() {
     <${ExperimentalOptions} open=${experimentalOpen && !queued} value=${room.experimental} mode=${room.mode} source=${room.source} editable=${facts.isHost && online} busy=${!!busy}
       onChange=${experimental => run('experimental', () => net.request('room.setExperimental', { experimental }))} onClose=${() => setExperimentalOpen(false)} />
     <${ServerStatusModal} open=${loadOpen} online=${online} state=${conn.loadState} details=${conn.loadDetails} clusterLoad=${conn.clusterLoad} onClose=${() => setLoadOpen(false)} />
+    ${bandSeat != null && facts.isHost && facts.seats[bandSeat]?.isBot ? html`<${BotBandPicker} seat=${facts.seats[bandSeat]} room=${room} gd=${gd}
+      busy=${busy === `band${bandSeat}`} onClose=${() => setBandSeat(null)} onPick=${(bandId) => setBotBand(bandSeat, bandId)} />` : null}
 
     <footer hidden=${queued} class="room-bar">
       <div class="room-bar__left">

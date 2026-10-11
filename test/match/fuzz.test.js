@@ -10,6 +10,7 @@ import { DATA, makeMatch, checkInvariants } from './harness.js';
 
 const GAME = Object.keys(C2S).filter((t) => t.startsWith('g.') && t !== 'g.leave');
 const BANDS = Object.keys(DATA.bands);
+const BONDS = Object.keys(DATA.bonds);
 
 function randomIntent(rng, m, ps) {
   const t = rng.pick(GAME);
@@ -39,6 +40,7 @@ function randomIntent(rng, m, ps) {
       matchId: rng() < 0.8 ? m.battlePrefix : 'stale-match',
     };
     case 'g.emote': return { t, id: rng.pick(EMOTES) };
+    case 'g.bondPlan': return rng() < 0.2 ? { t } : { t, bondId: rng() < 0.7 ? rng.pick(BONDS) : rng.pick(['constructor', '__proto__', 'bond_x']) };
     case 'g.watch': return { t, fieldId: rng.pick(['n:p_0', 'n:p_1', 'n:ai_0', 'u', 'b1', 'b2', 'zz', '']) };
     case 'g.autoplay': return { t, on: rng() < 0.05 };
     case 'g.pause': return { t, on: rng() < 0.5 };

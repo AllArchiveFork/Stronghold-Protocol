@@ -651,3 +651,31 @@ test('a start whose players did not bind in time says so and is logged with its 
   assert.equal(h.lobby.roomOf(players[0]), room, 'the room stays open for the retry');
   assert.equal(room.match, null);
 });
+
+test('a node member removal (the AFK rule) sends m.removed on the control path, then the seat departs like a g.leave', async t => {
+  const h = harness(t), players = h.group(), room = h.privateRoom(players.slice(0, 3));
+  const promise = h.lobby.start(players[0]), done = h.complete(); await promise;
+  const assignmentId = done.handle.assignmentId, [host, idle, offline] = players;
+  assert.equal(h.lobby.receiveRemoved('unknown-assignment', idle.playerId, 'afk', 2), false);
+  idle.messages.length = 0; host.messages.length = 0;
+  const before = h.peers.length;
+  assert.equal(h.lobby.receiveRemoved(assignmentId, idle.playerId, 'afk', 2), true);
+  assert.deepEqual(idle.messages, [{ t: 'm.removed', reason: 'afk', rounds: 2 }], 'the removed player hears it first, then nothing of the room');
+  assert.deepEqual(h.peers.slice(before).map(p => [p.method, p.playerId]), [['leave', idle.playerId]], 'the node leave of a quitter follows');
+  h.peers.at(-1).work.resolve({ ok: true });
+  assert.equal(idle.roomCode, null); assert.equal(room.seatOf(idle.playerId).left, true);
+  const state = host.messages.filter(x => x.t === 'room.state').at(-1);
+  assert.equal(state.inMatch, true); assert.equal(state.seats.find(s => s?.playerId === idle.playerId).connected, false);
+  assert.equal(h.lobby.receiveRemoved(assignmentId, idle.playerId, 'afk', 2), true, 'a retried event is acknowledged');
+  assert.equal(h.peers.length, before + 1, 'and changes nothing');
+  // removed while offline: room.closed { reason: 'afk' } on the next resume
+  offline.connected = false; offline.ws.readyState = 3; h.lobby.onDisconnect(offline);
+  offline.messages.length = 0;
+  assert.equal(h.lobby.receiveRemoved(assignmentId, offline.playerId, 'afk', 2), true);
+  assert.deepEqual(offline.messages, []);
+  h.peers.at(-1).work.resolve({ ok: true });
+  offline.connected = true; offline.ws.readyState = 1; h.lobby.onHello(offline, { resumed: true, repeat: false });
+  assert.deepEqual(offline.messages.filter(x => x.t === 'room.closed'), [{ t: 'room.closed', reason: 'afk' }]);
+  assert.equal(h.lobby.roomOf(offline), null);
+  assert.equal(h.lobby.roomOf(host), room, 'the others play on');
+});

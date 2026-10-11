@@ -1,6 +1,6 @@
 // Process-local game actors. A whole Match stays here; this is neither a session
 // registry nor durable recovery. The caller owns authentication, transport and pools.
-import { Match } from '../match/Match.js';
+import { Match, AFK_REMOVE_ROUNDS } from '../match/Match.js';
 import { C2S, LOADOUT_LIMITS, OWNERSHIP_LIMITS, DIY_LIMITS, isNotOwnedList, isDiyPicks } from '../../shared/protocol.js';
 import { experimentalOptions, isExperimental } from '../../shared/experimental.js';
 import { SKIN_LIMITS, isSkinChoices } from '../../shared/skins.js';
@@ -13,10 +13,10 @@ const identifier = (v, max = 128) => typeof v === 'string' && v.length > 0 && v.
 const integer = (v, min, max = Number.MAX_SAFE_INTEGER) => Number.isSafeInteger(v) && v >= min && v <= max;
 const plain = v => !!v && typeof v === 'object' && (Object.getPrototypeOf(v) === Object.prototype || Object.getPrototypeOf(v) === null);
 const SPEC_KEYS = ['assignmentId', 'roomCode', 'build', 'protocol', 'seed', 'matchNo', 'mode', 'difficulty', 'modeId', 'seats', 'spectators', 'revivalEnabled', 'disableSharedPool', 'experimental', 'aiPicksLast', 'snapshotHz'];
-const SEAT_KEYS = ['seat', 'playerId', 'name', 'isBot', 'connected', 'loadout', 'ops', 'notOwned', 'diy', 'skins'];
-// Match's public observer contract, including the lobby's broadcast ticker/emote
-// and server-combat streams. Unknown types fail closed for observers.
-const SPECTATOR_TYPES = new Set(['m.public', 'm.field', 'm.result', 'm.ticker', 'm.emote', 'm.damage', 'b.start', 'b.snap', 'b.ev', 'b.pool', 'b.end', 'b.damage']);
+const SEAT_KEYS = ['seat', 'playerId', 'name', 'isBot', 'connected', 'loadout', 'ops', 'notOwned', 'diy', 'skins', 'band'];
+// Match's public observer contract, including the lobby's broadcast ticker/emote,
+// the AFK rule's m.notice and server-combat streams. Unknown types fail closed for observers.
+const SPECTATOR_TYPES = new Set(['m.public', 'm.field', 'm.result', 'm.ticker', 'm.emote', 'm.notice', 'm.damage', 'b.start', 'b.snap', 'b.ev', 'b.pool', 'b.end', 'b.damage']);
 const ENCODED_TYPES = new Set(['m.field', 'b.snap', 'b.ev', 'm.damage', 'b.damage']);
 const GAME_TYPES = new Set(Object.keys(C2S).filter(t => t.startsWith('g.') || t === 'b.progress' || t === 'b.result'));
 const fail = error => ({ error });
@@ -117,6 +117,7 @@ export function copyAssignmentSpec(input, fallbackAssignmentId) {
   if (!roster.length) invalid();
   const ids = new Set();
   const seats = new Set();
+  const bands = new Set();
   let humans = 0;
   const players = roster.map(input => {
     const s = dataRecord(input, SEAT_KEYS);
@@ -148,6 +149,12 @@ export function copyAssignmentSpec(input, fallbackAssignmentId) {
       if (!isSkinChoices(skins)) invalid();
       seat.skins = skins;
     }
+    // room.setBotBand: an AI seat's designated strategy, one AI seat per strategy (the Match checks it against its mode)
+    if (s.band !== undefined) {
+      if (s.band !== null && (!s.isBot || !identifier(s.band, 64) || bands.has(s.band))) invalid();
+      if (s.band !== null) bands.add(s.band);
+      seat.band = s.band;
+    }
     return seat;
   });
   const spectators = dataArray(spec.spectators ?? []);
@@ -174,11 +181,15 @@ function fingerprint(spec) {
 }
 
 export class GameHost {
-  constructor({ data, combatPool, trialPool, MatchClass = Match, now = Date.now, prepareMs = 15_000, retiredMs = 120_000, log = noopLog, onEnd = () => {}, terminalControl = false } = {}) {
+  // onRemoved({ assignmentId, generation, playerId, reason, rounds }): a Match removed a player (the AFK rule, _removed);
+  // afkRemoveRounds: that rule's Match option for every actor of this host.
+  constructor({ data, combatPool, trialPool, MatchClass = Match, now = Date.now, prepareMs = 15_000, retiredMs = 120_000, log = noopLog, onEnd = () => {}, terminalControl = false,
+    onRemoved = () => {}, afkRemoveRounds = AFK_REMOVE_ROUNDS } = {}) {
     if (typeof MatchClass !== 'function' || typeof now !== 'function' || typeof onEnd !== 'function'
-      || typeof terminalControl !== 'boolean') throw new TypeError('invalid game host callbacks');
+      || typeof terminalControl !== 'boolean' || typeof onRemoved !== 'function') throw new TypeError('invalid game host callbacks');
     if (!integer(prepareMs, 1, 300_000)) throw new RangeError('invalid prepareMs');
     if (!integer(retiredMs, 60_000, 300_000)) throw new RangeError('invalid retirement fence');
+    if (!integer(afkRemoveRounds, 0, 100)) throw new RangeError('invalid afkRemoveRounds');
     this.data = data;
     this.combatPool = combatPool;
     this.trialPool = trialPool;
@@ -189,6 +200,8 @@ export class GameHost {
     this.log = log ?? noopLog;
     this.onEnd = onEnd;
     this.terminalControl = terminalControl;
+    this.onRemoved = onRemoved;
+    this.afkRemoveRounds = afkRemoveRounds;
     this.contexts = new Map();
     // IDs are globally unique coordinator nonces, never deliberately reused.
     // Keep fences beyond RPC/admission lifetimes without retaining every match
@@ -268,11 +281,12 @@ export class GameHost {
       delete matchSpec.assignmentId; delete matchSpec.build; delete matchSpec.protocol;
       ctx.match = new this.MatchClass({ ...matchSpec, data: this.data, combatPool: this.combatPool, trialPool: this.trialPool,
         // This host owns server-authoritative games even without SP_COMBAT.
-        clientCombat: false, log: this.log, now: this.now,
+        clientCombat: false, log: this.log, now: this.now, afkRemoveRounds: this.afkRemoveRounds,
         send: (id, msg, wire) => this._emit(ctx, 'send', id, msg?.t, msg, wire),
         sendEncoded: (id, type, data) => this._emit(ctx, 'encoded', id, type, data),
         broadcast: (msg, wire) => { this._emit(ctx, 'broadcast', null, msg?.t, msg, wire); },
-        onEnd: summary => this._end(ctx, summary) });
+        onEnd: summary => this._end(ctx, summary),
+        onRemove: (id, removal) => this._removed(ctx, id, removal) });
       if (typeof ctx.match.start !== 'function' || typeof ctx.match.dispose !== 'function') throw new TypeError('invalid Match interface');
     } catch {
       this._log('construct');
@@ -439,7 +453,9 @@ export class GameHost {
     // In a coordinator topology the bounded terminal receipt is the sole final
     // delivery path. Its control WS also orders the result before lobby state and
     // teardown; the independent game WS cannot race it or produce a duplicate.
-    if (this.terminalControl && (frame.type === 'm.result' || (frame.type === 'm.public'
+    // A removed player's m.removed likewise goes out on that control WS, ahead of
+    // its detach (onRemoved → the coordinator), never on the game stream.
+    if (this.terminalControl && (frame.type === 'm.result' || frame.type === 'm.removed' || (frame.type === 'm.public'
       && ['RESULT', 'ENDED'].includes(frame.payload.phase)))) return true;
     if (frame.kind !== 'broadcast') return this._deliver(ctx, frame.playerId, frame);
     for (const [id, member] of ctx.members) {
@@ -541,6 +557,25 @@ export class GameHost {
     // Permanently leaving is not a socket drop; no onDisconnect follows.
     member.binding = null;
     return ctx.state === 'committed' ? this._invoke(ctx, 'onLeave', playerId) : OK;
+  }
+
+  // The Match removed a player (opts.onRemove: the AFK rule; it quits the seat itself
+  // right after). The membership ends here like a leave: no frame reaches it any more
+  // and its game channel closes as MEMBER_LEFT (after the frames already written).
+  // The owner is told: the coordinator sends m.removed on the control path, then
+  // leaves the room seat, whose leave RPC finds the member already gone.
+  _removed(ctx, playerId, removal) {
+    const member = ctx.members.get(playerId);
+    if (!this._live(ctx) || ctx.state !== 'committed' || member?.role !== 'player' || member.left) return;
+    member.left = true;
+    const binding = member.binding;
+    member.binding = null;
+    if (binding) this._closeChannel(binding.channel, 1000, 'MEMBER_LEFT');
+    try {
+      const returned = this.onRemoved(Object.freeze({ assignmentId: ctx.spec.assignmentId, generation: ctx.generation, playerId,
+        reason: typeof removal?.reason === 'string' ? removal.reason : 'removed', rounds: integer(removal?.rounds, 0, 100) ? removal.rounds : 0 }));
+      if (returned && typeof returned.then === 'function') Promise.resolve(returned).catch(() => this._log('onRemoved'));
+    } catch { this._log('onRemoved'); }
   }
 
   addSpectator(assignmentId, playerId) {

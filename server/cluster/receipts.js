@@ -1,4 +1,5 @@
-// Low-frequency end/replay receipts only. The caller binds opsForNode(nodeId)
+// Low-frequency end/replay receipts only (and the AFK rule's member removals,
+// one small event each). The caller binds opsForNode(nodeId)
 // to that fixed node's authenticated private RPC handler; no payload selects an
 // authority. Nothing here logs/persists receipts or starts a cleanup daemon.
 // A completed body is decoded and parsed exactly once (receipt-codec.js) into the
@@ -25,6 +26,9 @@ const ERROR_CODES = new Set(['BAD_REQUEST', 'EVENT_CONFLICT', 'STALE_ASSIGNMENT'
   'INTERNAL', 'NOT_FOUND', 'METHOD', 'CONTENT_TYPE']);
 const META_KEYS = ['assignmentId', 'nodeGeneration', 'actorGeneration', 'parts', 'totalBytes', 'sha256'];
 const CHUNK_KEYS = [...META_KEYS, 'index', 'data'];
+// member.removed: a Match removed a player (the AFK rule, server/match/Match.js afkRemoveRounds)
+const REMOVED_KEYS = ['assignmentId', 'nodeGeneration', 'actorGeneration', 'sessionId', 'reason', 'rounds'];
+const REMOVAL_REASONS = new Set(['afk']);
 const plain = v => !!v && typeof v === 'object'
   && (Object.getPrototypeOf(v) === Object.prototype || Object.getPrototypeOf(v) === null);
 const keys = (v, allowed) => plain(v) && Reflect.ownKeys(v).length === allowed.length
@@ -145,6 +149,18 @@ export async function sendEndReceipt({ client, nodeGeneration, receipt, signal }
     await callWithRetry(client, 'end.chunk', Object.freeze({ ...meta, index, data }), signal);
   }
   return callWithRetry(client, 'end.commit', meta, signal);
+}
+
+/**
+ * A Match removed a player (the AFK rule; GameHost onRemoved `removal`): one small authenticated event, retried like a
+ * receipt part. Resolves to the coordinator's acknowledgement, or explicitly rejects; no queue.
+ */
+export async function sendMemberRemoved({ client, nodeGeneration, removal, signal } = {}) {
+  if (!client || typeof client.call !== 'function' || !id(nodeGeneration) || !plain(removal) || !id(removal.assignmentId)
+    || !integer(removal.generation, 1) || !id(removal.playerId) || !REMOVAL_REASONS.has(removal.reason)
+    || !integer(removal.rounds, 1, 100)) fail('BAD_REQUEST');
+  return callWithRetry(client, 'member.removed', Object.freeze({ assignmentId: removal.assignmentId, nodeGeneration,
+    actorGeneration: removal.generation, sessionId: removal.playerId, reason: removal.reason, rounds: removal.rounds }), signal);
 }
 
 /**
@@ -329,10 +345,22 @@ export function createReceiptSink({ platform, lobby, now = Date.now, maxBytes = 
     if (!entry || entry.state === 'receiving' || entry.state === 'validating') return absent;
     return apply(entry, authorize(entry.nodeId, entry.meta));
   };
+  // member.removed (sendMemberRemoved): the same fixed node / epoch authority as a receipt, for a published assignment.
+  // The lobby applies it at most once; a retry, or a player that left meanwhile, finds the seat gone and is acknowledged.
+  const removed = (nodeId, payload) => {
+    open();
+    if (!keys(payload, REMOVED_KEYS) || !id(payload.assignmentId) || !id(payload.nodeGeneration) || !integer(payload.actorGeneration, 1)
+      || !id(payload.sessionId) || !REMOVAL_REASONS.has(payload.reason) || !integer(payload.rounds, 1, 100)) fail('BAD_REQUEST');
+    const info = platform.assignmentInfo(payload.assignmentId);
+    if (!matches({ nodeId, meta: payload }, info) || info.state !== 'published' || typeof lobby.receiveRemoved !== 'function'
+      || lobby.receiveRemoved(payload.assignmentId, payload.sessionId, payload.reason, payload.rounds) !== true) fail('STALE_ASSIGNMENT');
+    return accepted;
+  };
   const opsForNode = nodeId => {
     open();
     if (!id(nodeId)) throw new TypeError('invalid receipt node');
-    return Object.freeze({ 'end.chunk': payload => chunk(nodeId, payload), 'end.commit': payload => commit(nodeId, payload) });
+    return Object.freeze({ 'end.chunk': payload => chunk(nodeId, payload), 'end.commit': payload => commit(nodeId, payload),
+      'member.removed': payload => removed(nodeId, payload) });
   };
   const close = () => { closed = true; records.clear(); bufferedBytes = 0; offThread?.close(); };
   return Object.freeze({ opsForNode, flush, sweep, close });

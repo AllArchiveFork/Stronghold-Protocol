@@ -26,6 +26,8 @@ function scenario(t, o = {}) {
     roomCode: 'REVIVAL', mode: 'coop', difficulty: 'NORMAL', data: DATA, seats, seed: 4501, matchNo: o.matchNo ?? 1,
     revivalEnabled: o.enabled ?? true, scheduler: sched, timerScale: o.timerScale,
     BattleClass: FakeBattle, clientCombat: false, botRehearsal: 0,
+    // the scripted humans only ready: the AFK rule would remove them as the second prep ends (test/match/afk.test.js)
+    afkRemoveRounds: 0,
     send: (id, msg) => { sent.push([id, msg]); return true; }, broadcast: (msg) => broadcasts.push(msg), onEnd: (msg) => ended.push(msg),
   });
   t.after(() => m.dispose());

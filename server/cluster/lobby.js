@@ -3,7 +3,7 @@
 import { randomBytes, randomInt } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { Lobby, Room } from '../lobby.js';
-import { encode, isErrCode } from '../net.js';
+import { encode, isErrCode, sendSession } from '../net.js';
 import { ERR, MAX_SEATS, MAX_SPECTATORS, MATCHMAKING_VERSION, modeIdFor } from '../../shared/constants.js';
 import { experimentalOptions, isExperimental, sameExperimental } from '../../shared/experimental.js';
 import { MAX_PLAYER_CAPACITY, roomCapacity } from '../../shared/playerCapacity.js';
@@ -35,7 +35,7 @@ function matchDTO(room, seed, snapshotHz) {
       isBot: s.isBot, connected: s.connected, loadout: structuredClone(s.isBot ? null : s.loadout || null),
       ops: structuredClone(s.isBot ? null : s.ops || null),
       notOwned: structuredClone(s.isBot ? null : s.notOwned || null), diy: structuredClone(s.isBot ? null : s.diy || null),
-      skins: Object.freeze({ ...(s.isBot ? {} : s.skins || {}) }) })),
+      skins: Object.freeze({ ...(s.isBot ? {} : s.skins || {}) }), ...(s.isBot && s.band ? { band: s.band } : {}) })),
     spectators: room.spectators.map(s => s.playerId), ...(snapshotHz === undefined ? {} : { snapshotHz }),
   };
 }
@@ -504,6 +504,24 @@ export class ClusterLobby extends Lobby {
       }
       return this.finishEnd(plan, assignmentId, frames, receipt.lastPublic, JSON.parse(receipt.summary), receipt.summary);
     } catch { return false; }
+  }
+
+  /**
+   * Trusted node event ONLY (receipt sink member.removed: authenticated, node / actor epochs checked): the assignment's
+   * Match removed a player (the AFK rule). The player's m.removed (withheld from the game stream, GameHost._publish) goes
+   * out on its ordered control path first, then the seat departs like a g.leave (matchRemoved → removeMember →
+   * proxy.onLeave: revoke, then the node's leave, which finds the member gone). @returns {boolean} applied / nothing left
+   */
+  receiveRemoved(assignmentId, playerId, reason, rounds) {
+    const plan = this.assignments.get(assignmentId);
+    if (!plan || plan.proxy.ended || this.rooms.get(plan.room.code) !== plan.room || plan.room.matchCtx !== plan.ctx
+      || plan.room.disposed) return false;
+    const seat = plan.room.seatOf(playerId);
+    if (!seat || seat.isBot || seat.left) return true; // already departed (a g.leave crossed it, or a retry)
+    const session = this.registry.byId(playerId);
+    if (session?.connected && session.roomCode === plan.room.code) sendSession(session, { t: 'm.removed', reason, rounds });
+    this.matchRemoved(plan.room, playerId, reason);
+    return true;
   }
 
   endMembers(plan) {

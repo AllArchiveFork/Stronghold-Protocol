@@ -1875,5 +1875,22 @@
   "有未读公告": "Unread announcement",
   "反馈群": "Feedback group",
   "服务器在线人数已满，稍后自动重试": "The server is full. Retrying automatically shortly.",
-  "服务器在线人数已满（{online}/{limit}），稍后自动重试": "The server is full ({online}/{limit}). Retrying automatically shortly."
+  "服务器在线人数已满（{online}/{limit}），稍后自动重试": "The server is full ({online}/{limit}). Retrying automatically shortly.",
+  "连续 {n} 回合没有任何操作，你已被移出对局": "No action for {n} rounds in a row — you have been removed from the match.",
+  "你已被移出对局": "You have been removed from the match.",
+  "{name} 连续 {n} 回合没有任何操作，已被移出对局": "{name} took no action for {n} rounds in a row and was removed from the match.",
+  "预选盟约：{name}": "Bond plan: {name}",
+  "预选盟约": "Bond plan",
+  "已指定给 AI 队友": "Reserved for an AI teammate",
+  "AI 已指定": "AI reserved",
+  "自动选择": "Automatic",
+  "指定该 AI 队友选择的策略": "Choose the strategy this AI teammate picks",
+  "指定 AI 策略：{name}": "AI strategy: {name}",
+  "开局选择策略时，该 AI 队友会直接选择指定的策略，其他博士不能再选它。": "In the strategy draft this AI teammate takes the chosen strategy, and no other Doctor can pick it.",
+  "已指定给 {name}": "Reserved for {name}",
+  "不预选": "No plan",
+  "选择你打算发展的盟约，所有博士都能看到。只作沟通，不影响对局。": "Pick the bond you plan to build. Every Doctor can see it — it is only for coordination and does not affect the match.",
+  "你本回合没有任何操作，下回合备战仍无操作将被移出对局": "You took no action this round. Stay idle through the next prep and you will be removed from the match.",
+  "本回合仍无操作将被移出对局": "No action this round and you will be removed from the match",
+  "连续多个回合没有任何操作，你已被移出对局": "You took no action for several rounds in a row and were removed from the match."
 }

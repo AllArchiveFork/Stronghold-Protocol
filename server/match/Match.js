@@ -19,7 +19,8 @@
 //                            loadout?: { [baseChessId]: { skill: index, module: uniEquipId|'none'|null } } | null,
 //                            ops?: { [charId]: { potential: 1–6, cultivate: 0–3 } } | null,
 //                            notOwned?: string[] | null,
-//                            diy?: { [slotBaseId]: { charId, skillIndex, uniEquipId } } | null }>
+//                            diy?: { [slotBaseId]: { charId, skillIndex, uniEquipId } } | null,
+//                            band?: bandId | null }>
 //                    sorted by seat, ordinary 1–4 entries; opt-in friend-room capacity up to 20. Solo stays one seat.
 //                    Bot playerIds start with 'ai_'. Seat indexes may have gaps (e.g. seats 0 and 2).
 //                    `loadout` (DESIGN §16, optional): the human's operator loadout, already checked by the lobby
@@ -31,6 +32,11 @@
 //                    for the match; those chess fight as their stand-ins (PlayerState setNotOwned; bots own everything).
 //                    `diy` (0.2.0 自选编队, optional): the human's 自选 picks (shared/protocol.js checkDiyPicks) — fixed for
 //                    the match; the slotted operators join the human's own shop (PlayerState setDiy / initDiyStock).
+//                    `band` (optional, AI seats only; room.setBotBand): the strategy the host designated for the AI
+//                    seat — co-op only, and only a band the mode offers (gd.bandAllowed), one AI seat per band (the
+//                    lowest seat keeps a repeated one). The draft holds it for that seat until it picks: nobody else can
+//                    take it (MatchPhases.bandTaken) and the seat takes it on its turn (designatedBand); m.public
+//                    draft.reserved lists the held ones. Absent / null: the AI picks by itself (botPickBand).
 //   opts.spectators  string[] (optional)        the room's spectator seats (remake feature, community report #26;
 //                                              server/lobby.js): never players — see addSpectator below
 //   opts.seed        uint32                     master seed for all match randomness
@@ -47,6 +53,10 @@
 //                                              sent. The platform then (synchronously) returns the room to
 //                                              LOBBY and (asynchronously, next macrotask) calls dispose().
 //                                              `summary` is free-form JSON (kept as room.lastSummary).
+//   opts.onRemove(playerId, { reason, rounds }) → void   (optional) the match removed a human for good (the AFK rule,
+//                                              reason 'afk', right after it sent the player m.removed): the platform
+//                                              detaches the seat exactly like a g.leave, whose onLeave(playerId) follows
+//                                              at once or later (the match quits the seat itself either way)
 //
 // start()                   Called once, right after construction. Must broadcast the first m.public and send
 //                           each human its m.private. May call onEnd synchronously (the platform copes).
@@ -112,6 +122,7 @@
 // phase outside its battles (soloUntimed); the co-op strategy draft has ONE countdown — BAND_TURN_SECONDS per turn,
 // published as m.public.deadline — AI seats pick at once and a turn that runs out takes the highlighted strategy
 // (g.bandFocus → timeoutBand); g.unitStats answers m.unitStats: the stats the board's units start their next battle with.
+//   opts.afkRemoveRounds  integer ≥ 0 (default AFK_REMOVE_ROUNDS = 2; 0 = off): the AFK rule — see the leave policy below
 //   opts.experimental locked room revivalEnabled / disableSharedPool / optional disableDuckLord, false by default
 //   opts.snapshotHz   20 | 10 | 5, server snapshots only
 //   opts.clientCombat  default true (env SP_COMBAT=server → false: the legacy server-run + snapshot streaming mode)
@@ -146,19 +157,26 @@
 //     copy the seat holds returns to the shared pool at once, the seat leaves the round loop, the Final Assault
 //     pairing and the boss pool; its own running normal battle is force-ended. The seat shows status 'left'. When no
 //     human is left at all the match ends ('abandoned'); when nobody alive is left it ends as 'eliminated'.
+//   * idle human (挂机移出, opts.afkRemoveRounds; matches that started with ≥ 2 humans): as each round's PREP ends, before
+//     its battle, an alive human seat without an accepted substantive intent (common.js AFK_ACTIONS) since the previous
+//     check gains an idle round, one with such an intent — or under AI 托管 at that moment — resets to 0 (the first
+//     check counts from the match start: strategy draft, 机变). At afkRemoveRounds the seat is removed like a departed
+//     human: m.removed { reason: 'afk', rounds } to it, m.notice { kind: 'afkRemoved', playerId, name, rounds } to
+//     everyone else in the match (spectator seats included), opts.onRemove, onLeave (MatchPlatform._checkIdle).
 //
 // Code layout: this file keeps the constructor (options, seats, the per-match setup, the state fields); the methods
 // live in server/match/match/, one module per concern, and are installed on Match.prototype below in a fixed order,
 // with the descriptors of class methods (non-enumerable; `this` is the match, subclasses and `super` calls work as
 // before):
-//   platform.js      the interface above: start, handle, setLoadout, disconnect / reconnect / resync, leave, dispose
+//   platform.js      the interface above: start, handle, setLoadout, disconnect / reconnect / resync, leave, the AFK
+//                    rule's removal, dispose
 //   infra.js         error isolation, timers and the phase deadline, player lists, bonds in the pool, deploy field,
 //                    meta dispatch
 //   messaging.js     send / broadcast / toasts / tickers, dirty marks, flush (m.private per player, m.public throttled)
 //   views.js         m.public (statuses, field progress, pendingLp / uniteLeft), the nextEnemies preview, the prep
 //                    scout's m.field
 //   watch.js         spectator seats, g.watch, who is shown which field, resend on reconnect, prep-scout pushes
-//   intents.js       the g.* / b.* router, emotes, AI 托管, g.unitStats
+//   intents.js       the g.* / b.* router, emotes, AI 托管, g.unitStats, g.bondPlan
 //   pause.js         the solo pause
 //   phases.js        INFO_CHECK, BAND_DRAFT (the strategy draft), BATTLE_CHECK, ROUND_START
 //   spDraft.js       SP_DRAFT (机变) and the rolls the meta effects ask for (bounties, item ids, pools)
@@ -171,8 +189,8 @@
 //   bossRounds.js    FINAL_ASSAULT / HIDDEN_CORE: boss fields, the shared pool, plausibility budgets, the boss clock,
 //                    b.pool, the merged team LP, overtime, bounties after a boss field
 //   settle.js        SETTLE and RESULT
-//   common.js        what the modules share (FLOW_TICKER_PRIORITY, DELAYS, BAND_TURN_SECONDS — re-exported here, OK,
-//                    fail, BOSS_CLOCK_MS)
+//   common.js        what the modules share (FLOW_TICKER_PRIORITY, DELAYS, BAND_TURN_SECONDS, AFK_REMOVE_ROUNDS —
+//                    re-exported here, OK, fail, BOSS_CLOCK_MS, AFK_ACTIONS)
 
 import { PHASE, modeIdFor } from '../../shared/constants.js';
 import { experimentalOptions } from '../../shared/experimental.js';
@@ -206,8 +224,9 @@ import { MatchReports } from './match/reports.js';
 import { MatchUnite } from './match/unitePhase.js';
 import { MatchBoss } from './match/bossRounds.js';
 import { MatchSettle } from './match/settle.js';
+import { AFK_REMOVE_ROUNDS } from './match/common.js';
 
-export { FLOW_TICKER_PRIORITY, DELAYS, BAND_TURN_SECONDS, REVIVAL_UNAVAILABLE_REASONS } from './match/common.js';
+export { FLOW_TICKER_PRIORITY, DELAYS, BAND_TURN_SECONDS, REVIVAL_UNAVAILABLE_REASONS, AFK_REMOVE_ROUNDS } from './match/common.js';
 
 const BOT_REHEARSAL_DEFAULT = 3;
 /** Wall-clock ms of bot layout rehearsal per scheduler callback (real time; virtual time runs it in one go). */
@@ -253,6 +272,8 @@ export class Match {
     this.isSolo = this.mode === 'solo' || this.gd.isSolo;
     /** 「AI 队友最后选择」 (opts.aiPicksLast, GitHub #338): humans draft before AI seats (MatchPhases.humansFirst) */
     this.aiPicksLast = !this.isSolo && opts.aiPicksLast === true;
+    /** 挂机移出 (opts.afkRemoveRounds): idle rounds in a row that remove a human seat; 0 = off (MatchPlatform._checkIdle) */
+    this.afkRemoveRounds = Number.isInteger(opts.afkRemoveRounds) && opts.afkRemoveRounds >= 0 ? Math.min(opts.afkRemoveRounds, 100) : AFK_REMOVE_ROUNDS;
     this.ownsScheduler = !opts.scheduler;
     this.sched = opts.scheduler || new RealScheduler({ now: opts.now || Date.now, onError: (e) => this.reportError('timer', e) });
     this.registry = opts.registry || getDefaultRegistry();
@@ -356,6 +377,23 @@ export class Match {
      * (draft order and skip, 6 机变 cards, 联防 …) stay.
      */
     this.loneHuman = this.order.filter((p) => !p.isBot).length === 1;
+    /**
+     * Strategies the host designated for AI seats (opts.seats[].band, room.setBotBand): AI playerId → bandId, in seat
+     * order, co-op only, a band the mode offers, one seat per band. Empty: the draft is exactly as without the option.
+     * @type {Map<string, string>}
+     */
+    this.botBands = new Map();
+    if (!this.isSolo) {
+      const wanted = new Map();
+      for (const s of opts.seats) if (s && typeof s.band === 'string' && !wanted.has(s.playerId)) wanted.set(s.playerId, s.band);
+      const held = new Set();
+      for (const ps of this.order) {
+        const band = wanted.get(ps.playerId);
+        if (!ps.isBot || !band || held.has(band) || !this.gd.bandAllowed(band)) continue;
+        held.add(band);
+        this.botBands.set(ps.playerId, band);
+      }
+    }
 
     // per-match setup (DESIGN §6.5)
     const setup = setupMatchWaves(this.gd, this.rngSetup);

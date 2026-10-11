@@ -180,3 +180,7 @@
 @media (max-height: 560px) and (orientation: landscape) and (hover: hover) and (pointer: fine) {
   .team.team--list { --team-top: 1.9rem; --team-bottom: 1.4rem; }
 }
+
+/* 预选盟约 glyph on the row's status line (ui/bondPlan.js) */
+.team__plan { flex: none; border-color: rgba(78, 216, 175, .25); background: rgba(12, 15, 14, .6); }
+.team__plan .bglyph { width: .18rem; height: .18rem; }

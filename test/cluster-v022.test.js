@@ -203,3 +203,79 @@ test('v0.2.2 resolved count crosses low-rate worker state even without watched s
     assert.equal(remote.resolved, null, 'old worker view remains unknown, never fabricated zero');
   } finally { engine.dispose(); }
 });
+
+// room.setBotBand: an AI seat's designated strategy rides the same assignment path (seats[].band of that AI seat).
+const bot = (seatNo, playerId, extra = {}) => seat(seatNo, playerId, { isBot: true, ...extra });
+
+test('AI seat band: assignment copies it, bounds it to AI seats / one seat per band and includes it in actor identity', t => {
+  const host = new GameHost({ data: DATA, MatchClass: recordedMatch([]), log: QUIET }); t.after(() => host.close());
+  const withBand = spec({ seats: [seat(0, 'p1'), bot(1, 'ai_1', { band: 'band_amiya' }), bot(2, 'ai_2', { band: null })] });
+  const prepared = host.prepare(withBand);
+  assert.equal(prepared.seats[1].band, 'band_amiya');
+  assert.equal(prepared.seats[2].band, null);
+  assert.ok(Object.isFrozen(prepared.seats[1]));
+  assert.throws(() => host.prepare(spec({ seats: [seat(0, 'p1'), bot(1, 'ai_1', { band: 'band_bldsk' }), bot(2, 'ai_2', { band: null })] })),
+    e => e.code === 'ASSIGNMENT_CONFLICT', 'another band is another actor');
+  assert.equal(Object.hasOwn(copyAssignmentSpec(spec({ seats: [seat(0, 'p1'), bot(1, 'ai_1')] })).seats[1], 'band'), false, 'legacy seat stays optional');
+  for (const seats of [[seat(0, 'p1', { band: 'band_amiya' })], [seat(0, 'p1'), bot(1, 'ai_1', { band: 5 })],
+    [seat(0, 'p1'), bot(1, 'ai_1', { band: '' })], [seat(0, 'p1'), bot(1, 'ai_1', { band: 'band amiya' })],
+    [seat(0, 'p1'), bot(1, 'ai_1', { band: 'band_amiya' }), bot(2, 'ai_2', { band: 'band_amiya' })]]) {
+    assert.throws(() => copyAssignmentSpec(spec({ seats })), invalidSpec, JSON.stringify(seats));
+  }
+});
+
+test('AI seat band: the staged spec carries it, and a change during native preparation invalidates the admission', async t => {
+  const f = admissionFixture(t), room = f.lobby.roomOf(f.player);
+  assert.deepEqual(f.lobby.addBot(f.player), { ok: true });
+  assert.deepEqual(f.lobby.addBot(f.player), { ok: true });
+  assert.deepEqual(f.lobby.setBotBand(f.player, { seat: 1, bandId: 'band_amiya' }), { ok: true });
+  const starting = f.lobby.start(f.player);
+  assert.equal(f.calls[0].spec.seats[1].band, 'band_amiya');
+  assert.equal(Object.hasOwn(f.calls[0].spec.seats[2], 'band'), false);
+  assert.equal(f.calls[0].context.isCurrent(), true);
+  assert.deepEqual(f.lobby.setBotBand(f.player, { seat: 2, bandId: 'band_bldsk' }), { ok: true });
+  assert.equal(f.calls[0].context.isCurrent(), false);
+  f.finish(); assert.equal((await starting).error, ERR.WRONG_PHASE);
+  assert.equal(room.match, null); assert.equal(room.matchCount, 0);
+});
+
+// Actual ephemeral loopback RPC, with in-process ingress channels, as the v0.2.2 chain above.
+test('AI seat band: native lobby/platform/node chain holds it in the node Match draft and the AI takes it', async t => {
+  const key = Buffer.alloc(32, 0x24), records = [], transports = new Map(), registry = new SessionRegistry();
+  const node = await startGameNode({ nodeId: NODE, generation: EPOCH, build: BUILD, key, data: DATA,
+    MatchClass: recordedMatch(records), log: QUIET, shutdownMs: 50 });
+  const platform = new RemoteGamePlatform({ nodes: [{ nodeId: NODE, key, url: node.url }], build: BUILD, protocol: 1,
+    sendControl(playerId, frame) {
+      if (frame.t === 'cluster.prepare') {
+        const c = channel(); transports.set(playerId, c); node.gameHost.bind(frame.assignmentId, playerId, c);
+      }
+      return true;
+    } });
+  const lobby = new ClusterLobby({ registry, platform, getData: () => DATA, log: QUIET });
+  t.after(async () => { lobby.shutdown(); await platform.close(); await node.close(); });
+  const p = registry.create('Player'); p.connected = true;
+  p.ws = { readyState: 1, bufferedAmount: 0, send(raw, options, done) { done?.(); } };
+  lobby.onHello(p, { resumed: false, repeat: false });
+  assert.deepEqual(lobby.create(p, { mode: 'coop', difficulty: 'NORMAL' }), { ok: true });
+  const room = lobby.roomOf(p);
+  assert.deepEqual(lobby.addBot(p), { ok: true });
+  assert.deepEqual(lobby.addBot(p), { ok: true });
+  assert.deepEqual(lobby.setAiPicksLast(p, { on: true }), { ok: true });
+  assert.deepEqual(lobby.setBotBand(p, { seat: 2, bandId: 'band_bldsk' }), { ok: true });
+  const aiId = room.seats[2].playerId;
+  await platform.refresh(); assert.deepEqual(await lobby.start(p), { ok: true });
+  const plan = [...lobby.assignments.values()][0];
+  await platform.contexts.get(plan.spec.assignmentId).publication;
+  const match = records[0];
+  assert.deepEqual([...match.botBands], [[aiId, 'band_bldsk']]);
+  assert.deepEqual(match.handle(p.playerId, { t: 'g.infoReady' }), { ok: true });
+  match.sched.runUntil(() => match.phase === PHASE.BAND_DRAFT);
+  match.flush(true);
+  const pub = transports.get(p.playerId).sent.filter(f => f.t === 'm.public').at(-1);
+  assert.deepEqual(pub.draft.reserved, { band_bldsk: aiId });
+  assert.equal(match.handle(p.playerId, { t: 'g.band', bandId: 'band_bldsk' }).error, ERR.BAD_TARGET);
+  assert.deepEqual(match.handle(p.playerId, { t: 'g.band', bandId: 'band_amiya' }), { ok: true });
+  match.sched.runUntil(() => match.phase !== PHASE.BAND_DRAFT);
+  assert.equal(match.draft.picks[aiId], 'band_bldsk');
+  assert.equal(room.toState().seats[2].band, 'band_bldsk');
+});

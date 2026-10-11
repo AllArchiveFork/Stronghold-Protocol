@@ -85,16 +85,16 @@ test('shipped announcement data validates; optional board is mounted from the lo
   assert.match(board, /ariaLabel=\$\{t\('大厅公告板'\)\} trapFocus=\$\{true\}/);
 });
 
-test('today is one short apology with the maintenance, the interface changes and the fixes, and the introduction is retained', () => {
+test('today is one short notice: the boss HP fix, the three new rules and the maintenance; the introduction is retained', () => {
   const entries = parseAnnouncements(JSON.parse(source('../../data/announcements.json')));
   assert.equal(entries.length, 2);
-  assert.equal(entries[0].title, '10 月 11 日更新与维护致歉');
-  assert.equal(entries[0].date, '2026-10-11');
+  assert.equal(entries[0].title, '10 月 12 日更新：Boss 生命值修正与新功能');
+  assert.equal(entries[0].date, '2026-10-12');
   assert.equal(entries[1].title, '欢迎游玩卫戍协议！卫来！');
   assert.equal(entries[1].date, '2026-10-06');
   const today = entries[0].paragraphs.join('\n');
-  for (const phrase of ['非常抱歉', '对局卡顿', '加载缓慢', '连接中断', '对战集群扩充到 32 组', '不再卡在对局中',
-    '请刷新页面重新进入', '按卡池分组', '弹幕', '#488', '误判为加载失败']) assert.ok(today.includes(phrase), phrase);
+  for (const phrase of ['请刷新页面重新进入', 'Boss 生命值修正', '四分之一', '与上游一致', '预选盟约', 'AI 队友策略', '挂机移出',
+    '连续 2 个回合', '「准备就绪」', '会有提醒', 'AI 托管']) assert.ok(today.includes(phrase), phrase);
   assert.doesNotMatch(today, /保证不卡顿|带宽无限|固定比例下降|会话重置.*已修复|正在进行服务器扩容|不[^。；]{0,100}，也不/);
   assert.match(entries[1].paragraphs.join('\n'), /纯公益.*非官方/);
   assert.match(entries[1].paragraphs.join('\n'), /github\.com\/sganggs\/Stronghold-Protocol/);

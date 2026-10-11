@@ -51,7 +51,7 @@ import { GuideHost } from './ui/guide.js';
 import { installDeviceSupport } from './ui/device.js';
 import { LoadoutHost } from './screens/loadout.js';
 import { StatsHost } from './screens/stats.js';
-import { recordResult, installStatsRecorder } from './ui/stats.js';
+import { recordResult, recordQuit, installStatsRecorder } from './ui/stats.js';
 import { installLoadoutSync, installOwnershipSync, installDiySync, installSkinsSync } from './ui/loadoutSync.js';
 import { startBuildGuard } from './ui/buildGuard.js';
 import { acceptDamageSnapshot } from './ui/damageBoard.js';
@@ -211,6 +211,8 @@ const CLOSE_REASON = {
   kicked: N_('你已被移出同盟'), ended: N_('模拟已结束'), expired: N_('同盟已过期'), shutdown: N_('服务器维护中，同盟已关闭'),
   // the match's game node restarted / stopped answering, so its match cannot continue (server/cluster/coordinator.js closeReasonFor)
   'node-restarted': N_('对局服务器已重启，本局模拟已中断'), 'node-unavailable': N_('对局服务器连接中断，本局模拟已结束'),
+  // 挂机移出 while offline: the next connection hears it here instead of m.removed (server Match _removeIdle)
+  afk: N_('连续多个回合没有任何操作，你已被移出对局'),
 };
 
 function wireNet() {
@@ -275,6 +277,24 @@ function wireNet() {
     // its broadcast priority: the strip plays the highest first (ui/ticker.js enqueueTickerLines)
     const priority = Number.isFinite(msg.priority) ? msg.priority : 0;
     store.set((s) => ({ ticker: [...s.ticker.slice(-(TICKER_KEEP - 1)), { id: ++seq, text, at: Date.now(), type, playerId, round: s.match?.public?.round ?? null, priority }] }));
+  });
+  // 挂机移出 (server Match afkRemoveRounds): a human with no real action for N rounds in a row leaves the match like a
+  // quitter. The removed player gets m.removed — out of the room too, the run recorded as a quit, back to the lobby —
+  // and everyone else m.notice afkRemoved.
+  net.on('m.removed', async (msg) => {
+    const before = store.get();
+    const rounds = Number.isInteger(msg.rounds) && msg.rounds > 0 ? msg.rounds : 2;
+    try { await net.request('room.leave', {}); } catch { /* already out of the room */ }
+    if (!store.get().match.result) {
+      try { recordQuit(before); } catch (err) { console.warn('[stats] quit record failed', err); }
+    }
+    backToLobby();
+    toast(msg.reason === 'afk' ? t('连续 {n} 回合没有任何操作，你已被移出对局', { n: rounds }) : t('你已被移出对局'), 'warn', { ttl: 10000 });
+  });
+  net.on('m.notice', (msg) => {
+    if (msg.kind !== 'afkRemoved') return;
+    const rounds = Number.isInteger(msg.rounds) && msg.rounds > 0 ? msg.rounds : 2;
+    toast(t('{name} 连续 {n} 回合没有任何操作，已被移出对局', { name: typeof msg.name === 'string' && msg.name ? msg.name : t('博士'), n: rounds }), 'info', { ttl: 6000 });
   });
   net.on('m.emote', (msg) => {
     store.set((s) => ({ emotes: [...s.emotes.slice(-(EMOTE_KEEP - 1)), { seq: ++seq, playerId: msg.playerId, id: msg.id, at: Date.now() }] }));

@@ -419,6 +419,9 @@ export const C2S = {
   // the co-op room option 「AI 队友最后选择」 (GitHub #338; host, before the match): the strategy and 机变 drafts order every
   // human seat before every AI seat (server/match/match/phases.js humansFirst); room.state.aiPicksLast
   'room.setAiPicksLast': { on: isBool },
+  // the strategy an AI seat takes in the strategy draft (host, co-op, before the match; server/lobby.js setBotBand): a
+  // band id, absent / null = the AI picks by itself; room.state seats[].band
+  'room.setBotBand': { seat: (v) => isInt(v, 0, MAX_PLAYER_CAPACITY - 1), bandId: nullable(isId), $optional: ['bandId'] },
   'room.addBot': {},
   'room.removeBot': { seat: (v) => isInt(v, 0, MAX_PLAYER_CAPACITY - 1) },
   // the host removes another human before the match (server/lobby.js kick; community report #17); playerId = the one the
@@ -452,6 +455,9 @@ export const C2S = {
   // the strategy highlighted in the draft screen (user playtest #4 item 4): a turn that runs out takes it while it is
   // free (Match.timeoutBand); absent / null clears it
   'g.bandFocus': { bandId: nullable(isId), $optional: ['bandId'] },
+  // the core bond (盟约) the player means to build (a remake feature, display only): from INFO_CHECK until round 1's
+  // battle starts; every teammate and spectator sees it as m.public players[].bondPlan; absent / null clears it
+  'g.bondPlan': { bondId: nullable(isId), $optional: ['bondId'] },
   'g.buy': { slot: (v) => isInt(v, 0, 15) },
   'g.refresh': {},
   'g.freeze': {},
@@ -516,6 +522,11 @@ export const S2C = [
   'm.public', 'm.private', 'm.field', 'm.toast', 'm.ticker', 'm.emote', 'm.result',
   // m.unitStats { seq, round, units: [unitStatsEntry] } — the answer to g.unitStats (the requester only)
   'm.unitStats',
+  // the AFK rule (挂机移出, server/match/Match.js afkRemoveRounds): m.removed { reason: 'afk', rounds } — to the removed
+  // player, who is then out of the room as after g.leave (removed while offline: room.closed { reason: 'afk' } on its
+  // next resume instead) · m.notice { kind: 'afkRemoved', playerId, name, rounds } — to everyone else in the match
+  // (players and spectator seats)
+  'm.removed', 'm.notice',
   // client-side combat (DESIGN §14): b.start { battleId, fieldId, kind, spec, authoritative, startAt, serverNow, elapsed,
   // speed, watch? } · b.pool { hp, max, teamLp, acked: { [fieldId]: cumulative boss damage counted } } ·
   // b.end { battleId, fieldId, reason }

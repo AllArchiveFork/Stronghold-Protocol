@@ -121,6 +121,8 @@ export class MatchViews {
         revivalUnavailableReason: ps.revivalUnavailableReason,
         lp: Math.max(0, ps.lp),
         bandId: ps.bandId,
+        // the core bond the player announced it means to build (g.bondPlan; display only, kept the whole match), else null
+        bondPlan: ps.bondPlan ?? null,
         shopLevel: ps.shop.level,
         boardCount: ps.deployCount,
         ready: this.phase === PHASE.INFO_CHECK ? ps.infoReady : ps.ready,
@@ -156,6 +158,9 @@ export class MatchViews {
         order: d.order.slice(), turn: this.draftTurn(), picks: { ...d.picks }, skipsLeft: { ...d.skipsLeft }, turnDeadline: d.turnDeadline || 0,
         turnSeconds: d.untimed ? 0 : this.bandTurnMs() / 1000, untimed: !!d.untimed,
         ...(this.capacityExperiment ? { allowRepeat: true } : {}),
+        // room.setBotBand: the designated strategies still held for their AI seats (bandId → playerId; present only
+        // when the match has a designation and repeats are not allowed)
+        ...(this.botBands?.size && !this.capacityExperiment ? { reserved: this.reservedBands() } : {}),
       };
     }
     if (this.phase === PHASE.SP_DRAFT && this.sp) {

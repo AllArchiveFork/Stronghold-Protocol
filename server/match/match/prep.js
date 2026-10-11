@@ -1,6 +1,6 @@
 // server/match/match/prep.js — Match methods: the PREP phase — its start (deferred item merges, onPrepStart), the AI
 // seats' sliced preps (scheduleBotPrep: economy + layout, rehearsal, Ready), Ready and the deadline, and its end
-// (onPrepEnd, PlayerState.endPrep, then COMBAT or the Final Assault / Hidden Core).
+// (the AFK rule's check, onPrepEnd, PlayerState.endPrep, then COMBAT or the Final Assault / Hidden Core).
 // Installed on Match.prototype by server/match/Match.js (a method container: never instantiated; `this` is the match).
 
 import { PHASE } from '../../../shared/constants.js';
@@ -216,6 +216,9 @@ export class MatchPrep {
 
   endPrep() {
     if (this.phase !== PHASE.PREP) return;
+    // 挂机移出: an idle human is removed before this round's battle exists (it may end the match)
+    this._checkIdle();
+    if (this.ended || this.disposed || this.phase !== PHASE.PREP) return;
     for (const ps of this.order) this._cancelBotPrep(ps);
     this.setDeadline(0);
     const alive = this.alivePlayers();

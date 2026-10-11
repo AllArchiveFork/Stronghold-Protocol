@@ -123,6 +123,8 @@ export class GameData {
     this.modeInactiveBonds = new Set(Array.isArray(this.mode.inactiveBondIds) ? this.mode.inactiveBondIds : []);
     /** bandBondIds memo */
     this._bandBonds = new Map();
+    /** plannableBondIds memo */
+    this._plannableBonds = null;
     this.inactiveEnemies = new Set(Array.isArray(this.mode.inactiveEnemyKeys) ? this.mode.inactiveEnemyKeys : []);
     /** data/tuning.json (titles only, see the header) */
     this.tuning = this.raw.tuning && typeof this.raw.tuning === 'object' ? this.raw.tuning : {};
@@ -540,6 +542,24 @@ export class GameData {
     const out = Object.freeze(this.bondIds.filter((id) => set.has(id)));
     this._bandBonds.set(bandId, out);
     return out;
+  }
+
+  /**
+   * The bonds a player may announce as its plan (g.bondPlan, m.public players[].bondPlan — a remake feature, display
+   * only): every core faction bond (bonds.json `isCore`, bondType SEASON: 炎 萨尔贡 维多利亚 谢拉格 拉特兰 阿戈尔 叙拉古
+   * 卡西米尔) in every mode — the ones a mode never activates (标准模拟's 拉特兰 阿戈尔 卡西米尔) and the match's drawn set
+   * included (the owner's decision). The trait bonds (精准, 迅捷 …) are not plannable. Data order
+   * (identifier), frozen.
+   * @returns {readonly string[]}
+   */
+  plannableBondIds() {
+    if (!this._plannableBonds) this._plannableBonds = Object.freeze(this.bondIds.filter((id) => this.bond(id)?.isCore === true));
+    return this._plannableBonds;
+  }
+
+  /** @param {unknown} bondId @returns {boolean} whether `bondId` is one of plannableBondIds() (g.bondPlan) */
+  bondPlannable(bondId) {
+    return typeof bondId === 'string' && this.plannableBondIds().includes(bondId);
   }
 
   /**

@@ -36,7 +36,8 @@ export class MatchPhases {
   /**
    * The strategy draft (user playtest #4 item 4): ONE countdown — every turn has the same clock, BAND_TURN_SECONDS, and
    * m.public.deadline is the current turn's end (= draft.turnDeadline; the step header and the turn indicator show the
-   * same number). No separate step cap: the turns bound the step (≤ (seats + skips) × turn). AI seats pick at once. A
+   * same number). No separate step cap: the turns bound the step (≤ (seats + skips) × turn). AI seats pick at once — one
+   * the host designated a strategy for (room.setBotBand) takes that one, held for it until then (bandTaken). A
    * turn that runs out takes the strategy the player has highlighted (g.bandFocus) while it is free, else the default
    * (timeoutBand). Solo, and any single-human match (soloUntimed): untimed. Solo also keeps seat order and has no skip.
    */
@@ -121,6 +122,9 @@ export class MatchPhases {
       if (this.phase !== PHASE.BAND_DRAFT || token !== this._turnToken) return;
       const ps = this.players.get(this.draftTurn());
       if (!ps || !ps.botControlled) return;
+      // an AI seat the host designated a strategy for (room.setBotBand) takes it — held for it, so still free
+      const own = this.designatedBand(ps);
+      if (own) { this._applyBand(ps, own, { dedupe: true }); return; }
       // a strategy a teammate already took is not selectable (队友已选): the bot re-draws, else the first free one
       let id = botPickBand(this, ps);
       for (let k = 0; k < 8 && this.bandTaken(id, ps.playerId); k++) id = botPickBand(this, ps);
@@ -133,13 +137,40 @@ export class MatchPhases {
    * Whether `bandId` was already picked by another player of this draft. Research 09 §5 / DESIGN §14 corrections:
    * the strategy draft marks a teammate's pick as 队友已选 and it cannot be chosen again (co-op). The automatic
    * assignments — a turn that runs out and a departing seat — obey the same rule: see timeoutBand / defaultBand.
-   * Expanded-capacity rooms allow repeats, even with four or fewer participants/survivors.
+   * A strategy the host designated for an AI seat (room.setBotBand, this.botBands) counts as taken for everybody else
+   * until that seat picks it (reservedBands). Expanded-capacity rooms allow repeats, even with four or fewer
+   * participants/survivors (nothing is held there either: the AI seat takes its strategy all the same).
    */
   bandTaken(bandId, playerId) {
     if (this.capacityExperiment) return false;
     const picks = this.draft?.picks || {};
     for (const [pid, id] of Object.entries(picks)) if (pid !== playerId && id === bandId) return true;
+    for (const [pid, id] of this.botBands || []) if (pid !== playerId && id === bandId && !picks[pid]) return true;
     return false;
+  }
+
+  /**
+   * The designated strategies still held (room.setBotBand): bandId → the AI seat's playerId, for every AI seat that has
+   * not picked yet; {} in an expanded-capacity room (repeats allowed). m.public draft.reserved.
+   * @returns {Record<string, string>}
+   */
+  reservedBands() {
+    const out = {};
+    if (this.capacityExperiment) return out;
+    const picks = this.draft?.picks || {};
+    for (const [pid, id] of this.botBands || []) if (!picks[pid]) out[id] = pid;
+    return out;
+  }
+
+  /**
+   * The strategy the host designated for this AI seat (room.setBotBand) while it can take it — allowed by the mode and
+   * held by nobody else —, else null (the seat picks as without the option).
+   * @param {any} ps
+   * @returns {string | null}
+   */
+  designatedBand(ps) {
+    const id = ps && this.botBands?.get(ps.playerId);
+    return id && this.gd.bandAllowed(id) && !this.bandTaken(id, ps.playerId) ? id : null;
   }
 
   /**
@@ -236,8 +267,9 @@ export class MatchPhases {
     this._turnTimer = null;
     for (const ps of this.order) {
       if (!this.draft.picks[ps.playerId]) {
-        // one after another in seat order, so each default sees the ones assigned before it (no duplicates)
-        const id = this.defaultBand(ps.playerId);
+        // one after another in seat order, so each default sees the ones assigned before it (no duplicates); an AI seat
+        // with a designated strategy (room.setBotBand) takes that one
+        const id = this.designatedBand(ps) || this.defaultBand(ps.playerId);
         this.draft.picks[ps.playerId] = id;
         ps.bandId = id;
         ps.lp = this.gd.startLp(id);

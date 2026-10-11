@@ -8,10 +8,16 @@
 //     Humans and bots take the lowest free seat index; seat indexes never compact.
 //   * ▸ Being in a LOBBY room and sending room.create / room.join implicitly leaves it. While your room is
 //     in a match, create/join of another room fails with ROOM_STARTED (send g.leave or room.leave first).
-//   * Host-only: room.setDifficulty, room.setAiPicksLast, room.addBot, room.removeBot, room.kick, room.start.
-//     ▸ Changing the difficulty or the AI-picks-last option (co-op only) un-readies the other humans.
-//     ▸ room.start requires every other human to be connected and ready; the host's start counts as the host's
-//     ready (the host may still toggle room.ready for display).
+//   * Host-only: room.setDifficulty, room.setAiPicksLast, room.setBotBand, room.addBot, room.removeBot, room.kick,
+//     room.start. ▸ Changing the difficulty, the AI-picks-last option or an AI seat's strategy (co-op only) un-readies
+//     the other humans. ▸ room.start requires every other human to be connected and ready; the host's start counts as
+//     the host's ready (the host may still toggle room.ready for display).
+//   * room.setBotBand {seat, bandId} (co-op only, before the match): the strategy (BAND_DRAFT band) the AI seat takes,
+//     or null = it picks by itself (the default). The band must be one the match's mode offers (checked with the
+//     GameData the match builds — roomGameData) and is designated to at most one AI seat (BAD_TARGET). It lives on the
+//     AI seat (`seat.band`, room.state seats[].band of every AI seat): removing the AI clears it, the room keeps it for
+//     its next matches, and a difficulty / experimental change drops one the new rules no longer offer. The match gets
+//     it as seats[].band of that AI seat (Match holds it for that seat in the draft: MatchPhases.bandTaken).
 //   * room.kick {seat, playerId} (community report #17, owner approved): before the match only, the host removes another
 //     human like an AI seat (an AI seat stays room.removeBot's; never the host itself). `playerId` names the player the
 //     host confirmed: a seat that changed hands meanwhile (left, someone else joined) is refused with BAD_TARGET. The
@@ -39,16 +45,18 @@
 //   * Result replay: the match's final m.public and each human's m.result are kept after the match ends. A
 //     human who resyncs (resume after a drop, a reloaded tab, a repeated hello) while the room is back in LOBBY
 //     gets room.state followed by those two frames again, until they act in the room (ready, difficulty, the
-//     AI-picks-last option, AI seats, start), leave it, or a new match starts. A human removed by the lobby grace
-//     gets them right after `room.closed {timeout}` on their next resume (Match.onReconnect cannot do this: the
-//     lobby drops the match reference at onEnd and disposes it on the next macrotask).
+//     AI-picks-last option, AI seats and their strategies, start), leave it, or a new match starts. A human removed by
+//     the lobby grace gets them right after `room.closed {timeout}` on their next resume (Match.onReconnect cannot do
+//     this: the lobby drops the match reference at onEnd and disposes it on the next macrotask).
 //   * Optional per-network limits (internet clients only, see net.js clientAddress): positive `maxRoomsPerAddr`
 //     and `maxMatchesPerAddr` cap concurrent rooms and running matches (room.create / room.start → ERR.RATE).
 //     These and the global `maxRooms` admission cap default to 0 (unlimited). Match rules, reconnect policy,
 //     per-socket backpressure and Worker execution/queue safeguards are independent and remain enforced.
 //   * Permanent departure during a match (room.leave, g.leave, reconnect window expired): the seat is
 //     marked departed (shown as connected=false), match.onLeave(playerId) is called, and the seat is freed
-//     when the match ends. 'g.leave' is handled here and never reaches match.handle().
+//     when the match ends. 'g.leave' is handled here and never reaches match.handle(). A human the match removes
+//     (opts.onRemove: the AFK rule, option `afkRemoveRounds`, default 2, 0 = off) departs the same way (matchRemoved):
+//     the match already sent it m.removed; one removed while offline gets room.closed {reason:'afk'} on its next resume.
 //   * All other 'g.*' messages go to room.match.handle(playerId, msg); its {ok}/{error} becomes the reply.
 //   * Match lifecycle: room.start → new Match({...}) → room.state (inMatch=true) → match.start(). The match gets
 //     `matchNo` = the room's match number (1, 2, …): with the seed it keeps battleIds unique across the room's
@@ -56,7 +64,7 @@
 //     onEnd(summary) → room back to LOBBY (departed seats freed, humans un-readied, disconnected humans
 //     get the lobby grace), dispose() on the next macrotask. Players can start again.
 //   * room.closed reasons: 'timeout' (removed after lobby grace), 'kicked' (room.kick, room.removeSpectator), 'empty' (a
-//     spectator whose room lost its last player), 'shutdown' (server stopping).
+//     spectator whose room lost its last player), 'afk' (removed by the match while offline), 'shutdown' (server stopping).
 //   * Operator loadout (DESIGN §16): room.loadout { entries } is checked strictly against the game data
 //     (shared/protocol.js checkLoadout: known visible chess, a skill index legal for the normal AND the elite status, a
 //     module of the elite or 'none'; any bad entry rejects the whole message, nothing is stored). ▸ It is stored on the
@@ -107,7 +115,8 @@ import { MAX_PLAYER_CAPACITY, PLAYER_CAPACITY_VERSION, roomCapacity } from '../s
 import { encode, isDroppable, isErrCode, sendEncodedMany, sendRaw, sendSession } from './net.js';
 import { isCompressibleType } from './wsCompression.js';
 import { getData as defaultGetData, lookup } from './data.js';
-import { Match as DefaultMatch } from './match/Match.js';
+import { Match as DefaultMatch, AFK_REMOVE_ROUNDS } from './match/Match.js';
+import { GameData } from './match/gamedata.js';
 import { Matchmaking } from './matchmaking.js';
 import { KITTED_CHARS } from './sim/content/kits/index.js';
 import { NO_PHASES } from './phaseMetrics.js';
@@ -124,6 +133,7 @@ export const LOBBY_DEFAULTS = Object.freeze({
   resyncMinGapMs: 1000,   // heavy resyncs (match state / result replay) per session at most this often on repeated hellos
   soloReconnectWindowMs: null, // a dropped solo run stays resumable this long (null = data singleReconnectTime, 24 h)
   matchmaking: null,           // queue admission/deadline options; defaults live in matchmaking.js
+  afkRemoveRounds: AFK_REMOVE_ROUNDS, // the match removes a human idle this many rounds in a row (Match opts; 0 = off)
 });
 
 /**
@@ -153,7 +163,8 @@ const noopLog = { info() {}, warn() {}, error() {}, debug() {} };
  *             connected: boolean, left: boolean, loadout?: Record<string, { skill: number, module: string|null }> | null,
  *             ops?: Readonly<Record<string, { potential: number, cultivate: number }>> | null,
  *             notOwned?: readonly string[] | null, diy?: Readonly<Record<string, DiyLoadout>> | null,
- *             skins?: Readonly<Record<string, string>> }} Seat
+ *             skins?: Readonly<Record<string, string>>, band?: string | null }} Seat
+ *   (`band`: AI seats only — the strategy room.setBotBand designated, null = the AI picks by itself)
  * @typedef {{ charId: string, skillIndex: number, uniEquipId: string|null }} DiyLoadout
  */
 
@@ -178,6 +189,27 @@ function opsCharIds(data) {
   let ids = OPS_IDS.get(data);
   if (!ids) { ids = cultivationCharIds(data.chess, data.backups); OPS_IDS.set(data, ids); }
   return ids;
+}
+
+/**
+ * The GameData a room's next match builds (Match: mode, difficulty and the expanded-room 鸭爵 switch), per data object —
+ * room.setBotBand checks a strategy with it exactly as the match's draft does (gd.bandAllowed).
+ */
+const ROOM_GD = new WeakMap();
+function roomGameData(data, room) {
+  const modeId = modeIdFor(room.mode, room.difficulty);
+  // Match.disableDuckLord: expanded co-op rooms only (experimentalOptions keeps the flag only there)
+  const noDuckLord = room.mode !== 'solo' && room.experimental.disableDuckLord === true;
+  let byMode = ROOM_GD.get(data);
+  if (!byMode) { byMode = new Map(); ROOM_GD.set(data, byMode); }
+  const key = `${modeId}|${noDuckLord}`;
+  let gd = byMode.get(key);
+  if (!gd) {
+    gd = new GameData(data, modeId);
+    gd.disableDuckLord = noDuckLord;
+    byMode.set(key, gd);
+  }
+  return gd;
 }
 
 /** Deep-frozen copy of checked 自选 picks (shared by the session, the seat and the match's PlayerState). */
@@ -274,7 +306,9 @@ export class Room {
       experimental: { ...this.experimental },
       revival: this.revivalState(),
       seats: this.seats.map((s) => (s
-        ? { seat: s.seat, playerId: s.playerId, name: s.name, isBot: s.isBot, ready: s.ready, connected: s.connected && !s.left, revivalVote: s.isBot ? null : s.revivalVote ?? null }
+        ? { seat: s.seat, playerId: s.playerId, name: s.name, isBot: s.isBot, ready: s.ready, connected: s.connected && !s.left, revivalVote: s.isBot ? null : s.revivalVote ?? null,
+          // an AI seat's designated strategy (room.setBotBand; null = it picks by itself)
+          ...(s.isBot ? { band: s.band ?? null } : {}) }
         : null)),
       spectators: this.spectators.map((s) => ({ playerId: s.playerId, name: s.name, connected: s.connected })),
     };
@@ -508,6 +542,7 @@ export class Lobby {
       case 'queue.accept': return this.queue.accept(session, msg);
       case 'room.setDifficulty': return this.setDifficulty(session, msg);
       case 'room.setAiPicksLast': return this.setAiPicksLast(session, msg);
+      case 'room.setBotBand': return this.setBotBand(session, msg);
       case 'room.addBot': return this.addBot(session);
       case 'room.removeBot': return this.removeBot(session, msg);
       case 'room.kick': return this.kick(session, msg);
@@ -736,6 +771,7 @@ export class Lobby {
       while (room.seats.length < slots) room.seats.push(null);
       room.seats.length = slots;
       room.experimental = experimentalOptions(experimental);
+      this.dropUnofferedBotBands(room);
       for (const seat of room.activeHumans()) if (seat.playerId !== room.hostId) seat.ready = false;
       this.broadcastState(room);
     }
@@ -751,6 +787,7 @@ export class Lobby {
     this.dropReplay(room, session.playerId);
     if (room.difficulty !== difficulty) {
       room.difficulty = difficulty;
+      this.dropUnofferedBotBands(room);
       for (const s of room.seats) if (s && !s.isBot && s.playerId !== room.hostId) s.ready = false;
       this.broadcastState(room);
     }
@@ -774,6 +811,40 @@ export class Lobby {
     return OK;
   }
 
+  /**
+   * room.setBotBand {seat, bandId} (header): host-only, before the match, co-op rooms only — the strategy the AI seat
+   * takes in the strategy draft, or null for its own pick. One AI seat per strategy.
+   */
+  setBotBand(session, { seat, bandId = null }) {
+    const room = this.roomOf(session);
+    if (!room) return fail(ERR.NOT_IN_ROOM);
+    if (room.hostId !== session.playerId) return fail(ERR.NOT_HOST);
+    if (room.match) return fail(ERR.ROOM_STARTED);
+    if (this.roomQueued(room)) return fail(ERR.QUEUED);
+    if (room.mode === 'solo') return fail(ERR.BAD_TARGET, 'solo rooms have no AI teammates');
+    if (!room.admitsSeat(seat)) return fail(ERR.BAD_TARGET, 'seat outside room capacity');
+    const target = room.seats[seat];
+    if (!target || !target.isBot) return fail(ERR.BAD_TARGET, 'seat does not hold an AI');
+    if (bandId !== null) {
+      if (!roomGameData(this.safeData(), room).bandAllowed(bandId)) return fail(ERR.BAD_TARGET, 'strategy not offered in this mode');
+      if (room.seats.some((s) => s && s !== target && s.isBot && s.band === bandId)) return fail(ERR.BAD_TARGET, 'strategy designated to another AI');
+    }
+    this.dropReplay(room, session.playerId);
+    if ((target.band ?? null) !== bandId) {
+      target.band = bandId;
+      for (const s of room.seats) if (s && !s.isBot && s.playerId !== room.hostId) s.ready = false;
+      this.broadcastState(room);
+    }
+    return OK;
+  }
+
+  /** After a difficulty / experimental change: an AI seat's strategy the new rules no longer offer goes back to automatic. */
+  dropUnofferedBotBands(room) {
+    if (!room.seats.some((s) => s && s.isBot && s.band != null)) return;
+    const gd = roomGameData(this.safeData(), room);
+    for (const s of room.seats) if (s && s.isBot && s.band != null && !gd.bandAllowed(s.band)) s.band = null;
+  }
+
   addBot(session) {
     const room = this.roomOf(session);
     if (!room) return fail(ERR.NOT_IN_ROOM);
@@ -788,7 +859,7 @@ export class Lobby {
     const name = BOT_NAMES.find((n) => !used.has(n)) || `AI·${idx + 1}`;
     let playerId;
     do playerId = 'ai_' + randomBytes(4).toString('hex'); while (room.seatOf(playerId));
-    room.seats[idx] = { seat: idx, playerId, name, isBot: true, ready: true, connected: true, left: false };
+    room.seats[idx] = { seat: idx, playerId, name, isBot: true, ready: true, connected: true, left: false, band: null };
     this.broadcastState(room);
     return OK;
   }
@@ -1108,6 +1179,8 @@ export class Lobby {
       // 0.2.0 自选编队: the human's checked DIY picks (bots field no 自选 piece [ASSUMED])
       diy: s.isBot ? null : s.diy || null,
       skins: Object.freeze({ ...(s.isBot ? {} : s.skins || {}) }),
+      // room.setBotBand: an AI seat's designated strategy (absent when it picks by itself)
+      ...(s.isBot && s.band ? { band: s.band } : {}),
     }));
     // lastPublic / results: the latest m.public broadcast and the m.result frames (encoded), kept for the replay.
     const ctx = { live: true, ended: false, disposed: false, match: null, lastPublic: null, sharedResult: null, results: new Map() };
@@ -1145,6 +1218,7 @@ export class Lobby {
         combatPool: this.combatPool,
         trialPool: this.trialPool,
         snapshotHz: this.opts.snapshotHz,
+        afkRemoveRounds: this.opts.afkRemoveRounds,
         log: this.log,
         now: this.now,
         send: (playerId, msg) => dispatch((frame) => this.matchSend(room, ctx, playerId, frame), msg),
@@ -1158,6 +1232,11 @@ export class Lobby {
         onEnd: (summary) => {
           if (pending) { ctx.ended = true; return; } // synchronous failed/ended startup is not a match
           this.onMatchEnd(room, ctx, summary);
+        },
+        // the match removed a human (the AFK rule): its seat departs like a g.leave
+        onRemove: (playerId, removal) => {
+          if (pending || !ctx.live || room.matchCtx !== ctx) return;
+          this.matchRemoved(room, playerId, typeof removal?.reason === 'string' ? removal.reason : 'removed');
         },
       });
       ctx.match = match;
@@ -1446,6 +1525,21 @@ export class Lobby {
     if (room.hostId === playerId) this.migrateHost(room);
     if (room.activeHumans().length === 0) this.disposeRoom(room, 'empty');
     else this.broadcastState(room);
+  }
+
+  /**
+   * A match removed one of its humans (Match opts.onRemove: the AFK rule, reason 'afk' — it already sent the player
+   * m.removed): the seat departs exactly like a g.leave (removeMember → match.onLeave; freed when the match ends). A player
+   * removed while offline is told on its next resume: room.closed { reason }.
+   * @param {Room} room @param {string} playerId @param {string} reason
+   */
+  matchRemoved(room, playerId, reason) {
+    const seat = room.seatOf(playerId);
+    if (!seat || seat.isBot || seat.left || room.disposed) return;
+    const session = this.registry.byId(playerId);
+    const offline = !!session && session.roomCode === room.code && !session.connected;
+    this.removeMember(room, playerId);
+    if (offline) session.notice = reason;
   }
 
   /**

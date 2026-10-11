@@ -8,7 +8,8 @@
 // fake (true → test/match/fakeBattle.js as BattleClass), script (FakeBattle.script), registry, instant (virtual
 // scheduler runs battles synchronously; default true), timerScale, battleContent, botRehearsal (default 0),
 // botSliceMs (bot rehearsal slice budget; default: unbounded in virtual time), aiPicksLast (the room option
-// AI 队友最后选择: the drafts order every human seat before every AI seat).
+// AI 队友最后选择: the drafts order every human seat before every AI seat), afkRemoveRounds (the AFK rule; default 0
+// here — the suites script humans that only confirm and ready — production default 2: test/match/afk.test.js).
 // Combat mode: clientCombat (default false here: the legacy server-run mode most suites were written for; production
 // defaults to client-side combat, DESIGN §14). With clientCombat: true every human gets a scripted browser
 // (test/match/simClient.js SimClient: h.clients) unless clients: false; pace 'instant' | 'paced', perPlayer
@@ -80,6 +81,9 @@ export function makeMatch(o = {}) {
     experimental: o.experimental,
     headlessSliceMs: o.headlessSliceMs,
     aiPicksLast: o.aiPicksLast,
+    // the AFK rule (Match opts.afkRemoveRounds) is off unless a test asks for it: the suites' scripted humans only
+    // confirm and ready, which the rule would count as idle (test/match/afk.test.js covers it)
+    afkRemoveRounds: o.afkRemoveRounds ?? 0,
   });
   const m = h.m;
   if (m.clientCombat && o.clients !== false) {

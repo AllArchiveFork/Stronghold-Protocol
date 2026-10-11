@@ -40,7 +40,7 @@ const peekRid = (data, binary) => {
  * its allocation commit; this node requires all human game channels first.
  */
 export async function startGameNode({ host = '127.0.0.1', port = 0, nodeId, generation, build, key,
-  protocol = PROTOCOL_VERSION, data, combatPool, trialPool, MatchClass, onEnd, now = Date.now, log = noopLog,
+  protocol = PROTOCOL_VERSION, data, combatPool, trialPool, MatchClass, onEnd, onRemoved, afkRemoveRounds, now = Date.now, log = noopLog,
   prepareMs = 15_000, bindTimeoutMs = 5000, heartbeatMs = NET_DEFAULTS.heartbeatMs, sweepMs = 1000,
   shutdownMs = 1000, publicationMs = 20_000, ticketsAuthority, ticketIssuer = 'stronghold-cluster', ticketTtlMs = 30_000,
   futureSkewMs = 0, getLoadState, getLoadDetails, publicSlot = null, streamMarkers = false } = {}) {
@@ -59,7 +59,8 @@ export async function startGameNode({ host = '127.0.0.1', port = 0, nodeId, gene
   // Optional peer clock tolerance never relaxes expiry or any context field.
   const tickets = ticketsAuthority ?? createTicketAuthority({ key, issuer: ticketIssuer, now, ttlMs: ticketTtlMs, futureSkewMs });
   if (typeof tickets.verify !== 'function') throw new TypeError('invalid ticket authority');
-  const gameHost = new GameHost({ data, combatPool, trialPool, MatchClass, onEnd, now, log, prepareMs, terminalControl: streamMarkers });
+  // onRemoved / afkRemoveRounds: the AFK rule (GameHost._removed; the runtime tells the coordinator)
+  const gameHost = new GameHost({ data, combatPool, trialPool, MatchClass, onEnd, onRemoved, afkRemoveRounds, now, log, prepareMs, terminalControl: streamMarkers });
   const conns = new Map(), sockets = new Set(), publications = new Map();
   let stopped = false, heartbeatTimer, sweepTimer, closePromise;
   const report = operation => { try { log.error?.(`[game-node] ${operation} failed`); } catch {} };

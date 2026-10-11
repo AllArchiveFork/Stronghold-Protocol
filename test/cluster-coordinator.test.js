@@ -8,7 +8,7 @@ import { startCoordinator } from '../server/cluster/coordinator.js';
 import { startGameNode } from '../server/cluster/game-node.js';
 import { startIngress } from '../server/cluster/ingress.js';
 import { createRpcAuthenticator, createRpcClient } from '../server/cluster/rpc.js';
-import { sendEndReceipt } from '../server/cluster/receipts.js';
+import { sendEndReceipt, sendMemberRemoved } from '../server/cluster/receipts.js';
 import { MATCHMAKING_VERSION } from '../shared/constants.js';
 
 const ORIGIN = 'https://full-cluster-fixture.invalid';
@@ -61,6 +61,15 @@ async function fixture(t, options = {}) {
       if (message.t === 'g.watch') this.opts.sendEncoded(id, 'm.field', JSON.stringify({ t: 'm.field', fieldId: message.fieldId, marker: this.opts.roomCode }));
       return { ok: true };
     }
+    // the AFK rule's removal as MatchPlatform._removeIdle sends it
+    removeIdle(id) {
+      this.opts.send(id, { t: 'm.removed', reason: 'afk', rounds: 2 });
+      const notice = { t: 'm.notice', kind: 'afkRemoved', playerId: id, name: id, rounds: 2 };
+      for (const seat of this.opts.seats) if (!seat.isBot && seat.playerId !== id) this.opts.send(seat.playerId, notice);
+      for (const other of this.spectators) this.opts.send(other, notice);
+      this.opts.onRemove(id, { reason: 'afk', rounds: 2 });
+      this.onLeave(id);
+    }
     finish() {
       this.opts.broadcast({ t: 'm.public', phase: 'RESULT', marker: this.opts.roomCode });
       for (const id of [...this.opts.seats.filter(s => !s.isBot).map(s => s.playerId), ...this.spectators]) {
@@ -81,7 +90,9 @@ async function fixture(t, options = {}) {
       } } : transport;
       const ack = await sendEndReceipt({ client: event, nodeGeneration: config.generation, receipt });
       receiptAcks.push(ack);
-    } })));
+    },
+    // as server/cluster/game-runtime.js: the AFK rule's removal goes to the coordinator
+    onRemoved: removal => sendMemberRemoved({ client: events.get(config.nodeId), nodeGeneration: config.generation, removal }) })));
   const nodes = configs.map((config, i) => ({ ...config, url: games[i].url }));
   // options.link: both ingresses carry their sessions over authenticated multiplexed links (fresh test-only keys).
   const linkKeys = options.link ? [randomBytes(32), randomBytes(32)] : [];
@@ -330,6 +341,37 @@ function suite(link) {
     await observer.request('g.watch', { fieldId: other.players[0].playerId });
     assert.equal(observer.frames.slice(offset).some(frame => frame.marker === group.room.code), false);
     assert.equal(observer.frames.some(frame => frame.t === 'm.private'), false);
+  });
+
+  test('a node removes an idle player (the AFK rule): m.removed on its control path, m.notice to the rest, the seat departs like a leaver', async t => {
+    const f = await fixture(t, { link }), group = await f.match('Idle');
+    await f.coordinator.platform.contexts.get(group.owner.assignmentId).publication;
+    const idle = group.players[1], others = group.players.filter(player => player !== idle);
+    const observer = await f.join('IdleObs', 1);
+    await observer.request('room.spectate', { code: group.room.code });
+    await until(() => observer.frames.some(frame => frame.t === 'm.public' && frame.observer));
+    const match = f.matches.find(match => match.opts.roomCode === group.room.code), room = f.coordinator.lobby.getRoom(group.room.code);
+    match.removeIdle(idle.playerId);
+    await until(() => room.seatOf(idle.playerId).left && idle.frames.some(frame => frame.t === 'm.removed'));
+    assert.deepEqual(idle.frames.filter(frame => frame.t === 'm.removed'), [{ t: 'm.removed', reason: 'afk', rounds: 2 }]);
+    for (const other of [...others, observer]) {
+      await until(() => other.frames.some(frame => frame.t === 'm.notice'));
+      assert.deepEqual(other.frames.filter(frame => frame.t === 'm.notice'), [{ t: 'm.notice', kind: 'afkRemoved', playerId: idle.playerId, name: idle.playerId, rounds: 2 }]);
+    }
+    assert.equal(idle.frames.some(frame => frame.t === 'm.notice' || frame.t.startsWith('cluster.')), false);
+    const game = f.games.find(game => game.gameHost.get(group.owner.assignmentId));
+    assert.equal(game.gameHost.member(group.owner.assignmentId, idle.playerId), null);
+    await until(() => f.coordinator.platform.directory.bySession(idle.playerId) === null);
+    assert.equal(f.coordinator.platform.resume(group.owner.assignmentId, idle.playerId), false);
+    assert.equal(match.departures.filter(([method, id]) => method === 'leave' && id === idle.playerId).length, 1);
+    await assert.rejects(idle.request('g.ready', { ready: true }), { code: 'NOT_IN_ROOM' });
+    await assert.rejects(idle.request('room.leave'), { code: 'NOT_IN_ROOM' });
+    // like a quitter's seat, it is freed when the match ends; the others return to the room
+    match.finish();
+    await until(() => room.match === null && others.every(player => player.frames.some(frame => frame.t === 'room.state' && !frame.inMatch)));
+    assert.equal(room.seatOf(idle.playerId), null);
+    assert.equal(room.replay.frames.has(idle.playerId), false);
+    assert.equal(room.seats.filter(Boolean).length, 3);
   });
 
   test('lost departure reply retries idempotently: player left remains permanent and onLeave is not repeated', async t => {

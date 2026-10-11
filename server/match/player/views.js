@@ -51,6 +51,12 @@ export class PlayerViews {
     return out;
   }
 
+  /** Whether the AFK rule removes this seat at the end of its next prep without a substantive intent before it. */
+  afkWarned() {
+    const limit = this.m.afkRemoveRounds;
+    return limit > 1 && !this.isBot && !this.left && !this.botControlled && !this.afkActed && this.afkRounds >= limit - 1;
+  }
+
   privateView() {
     // `soldOut` (only when true): an unsold card whose stock another player has taken (economy.js outOfStock)
     const stock = (s) => (this.outOfStock(s) ? { soldOut: true } : {});
@@ -74,6 +80,8 @@ export class PlayerViews {
       bandId: this.bandId,
       ready: this.ready,
       canReady: this.alive && this.tempEmpty && !this.personalChoice && this.m.phase === PHASE.PREP,
+      // 挂机移出: one more idle prep removes this seat (Match _checkIdle) — until a substantive intent clears it
+      ...(this.afkWarned() ? { afkWarn: true } : {}),
       personalChoice: this.personalChoice ? {
         id: this.personalChoice.id,
         round: this.personalChoice.round,

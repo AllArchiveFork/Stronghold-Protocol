@@ -156,6 +156,9 @@ export class PlayerState {
     /** Authority-recorded diagnostic only; never consulted by the rescue rules or reset by round start. */
     this.revivalUnavailableReason = null;
     this.autoplay = false;
+    /** 挂机移出 (Match afkRemoveRounds): a substantive intent was accepted since the last prep end; the idle rounds in a row */
+    this.afkActed = false;
+    this.afkRounds = 0;
     this.alive = true;
     this.lp = 0;
     this.bandId = null;
@@ -164,6 +167,8 @@ export class PlayerState {
     this.ready = false;
     this.infoReady = this.isBot;
     this.lastEmoteAt = -Infinity;
+    /** the core bond the human announced it means to build (g.bondPlan, m.public players[].bondPlan; display only) */
+    this.bondPlan = null;
     /** operator loadout (DESIGN §16): frozen { [baseChessId]: { skill, module } }, {} = every chess on its defaults */
     this.loadout = Object.freeze({});
     // 0.2.2: the per-operator 潜能 / 练度 ({} = every operator 潜能 6, 精英2 Lv.60 — bots always)

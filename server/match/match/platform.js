@@ -1,13 +1,13 @@
 // server/match/match/platform.js — Match methods: the platform interface of the server/match/Match.js header
 // (server/lobby.js ⇄ Match) — start, handle (validation, error isolation, flush; the intents themselves: intents.js
 // _handle), setLoadout (INFO_CHECK only), onDisconnect / onReconnect and the full resync of one human, onLeave and 中途退出
-// = elimination (_quit), dispose.
+// = elimination (_quit), the AFK rule (挂机移出: _checkIdle at each prep end, _removeIdle), dispose.
 // Installed on Match.prototype by server/match/Match.js (a method container: never instantiated; `this` is the match).
 
 import { C2S } from '../../../shared/protocol.js';
 import { PHASE, ERR } from '../../../shared/constants.js';
 import { syntheticResult } from '../fields.js';
-import { FLOW_TICKER_PRIORITY, OK, fail } from './common.js';
+import { FLOW_TICKER_PRIORITY, OK, fail, AFK_ACTIONS } from './common.js';
 import { msg } from '../../../shared/i18n.js';
 
 const GAME_TYPES = new Set(Object.keys(C2S).filter((t) => Object.hasOwn(C2S, t) && (t.startsWith('g.') || t.startsWith('b.'))));
@@ -51,6 +51,8 @@ export class MatchPlatform {
       this.reportError(`handle ${msg.t}`, e);
       res = fail(ERR.INTERNAL);
     }
+    // the AFK rule counts accepted substantive intents only (a spectator's g.watch never is one)
+    if (!(res && res.error) && AFK_ACTIONS.has(msg.t)) ps.afkActed = true;
     try { this.flush(); } catch (e) { this.reportError('flush', e); }
     if (res && typeof res === 'object' && res.error) return res;
     return OK;
@@ -213,6 +215,50 @@ export class MatchPlatform {
     }
     if (phase === PHASE.SP_DRAFT && this.sp && this.spTurn() === ps.playerId) this.startSpTurn();
     else if (phase === PHASE.PREP) this.maybeEndPrep();
+  }
+
+  /**
+   * 挂机移出 (afkRemoveRounds, the header's leave policy): called as a PREP ends, before its battle / boss fight is built
+   * (MatchPrep.endPrep). Every alive human of a match that started with ≥ 2 humans (never solo or soloUntimed) is
+   * counted: an accepted AFK_ACTIONS intent since the previous check — or the AI playing the seat now (AI 托管) — resets
+   * its idle rounds, else they grow by one. A seat reaching afkRemoveRounds is removed (_removeIdle); may end the match.
+   * One round short of it, the seat is warned: a toast now and m.private afkWarn through its next prep (PlayerState).
+   */
+  _checkIdle() {
+    const limit = this.afkRemoveRounds;
+    if (!(limit > 0) || this.soloUntimed) return;
+    const humans = this.order.filter((p) => !p.isBot && !p.left && p.alive);
+    for (const ps of humans) {
+      ps.afkRounds = ps.afkActed || ps.botControlled ? 0 : ps.afkRounds + 1;
+      ps.afkActed = false;
+    }
+    for (const ps of humans) {
+      if (this.ended || this.disposed) return;
+      if (!ps.left && ps.afkRounds >= limit) this._removeIdle(ps);
+      else if (limit > 1 && ps.afkRounds === limit - 1) {
+        this.toast(ps, 'warn', msg('你本回合没有任何操作，下回合备战仍无操作将被移出对局'));
+        this.markPrivate(ps);
+      }
+    }
+  }
+
+  /**
+   * Remove an idle human exactly like a g.leave: the player is told first (m.removed — its client shows it and returns
+   * to the lobby), everyone else still in the match, spectator seats included, gets m.notice afkRemoved, then the
+   * platform detaches the seat (opts.onRemove: the lobby's removeMember, whose onLeave quits it here). A platform without
+   * the hook, or one that hears of it later (the cluster coordinator), leaves the quit to onLeave below.
+   */
+  _removeIdle(ps) {
+    const rounds = this.afkRemoveRounds;
+    this.log.info?.(`[match ${this.roomCode}] seat ${ps.seat} removed after ${ps.afkRounds} idle rounds (R${this.round})`);
+    this.sendTo(ps.playerId, { t: 'm.removed', reason: 'afk', rounds });
+    const notice = { t: 'm.notice', kind: 'afkRemoved', playerId: ps.playerId, name: ps.name, rounds };
+    for (const p of this.order) if (p !== ps && !p.isBot && !p.left) this.sendTo(p.playerId, notice);
+    for (const id of this.spectators.keys()) this.sendTo(id, notice);
+    if (typeof this.opts.onRemove === 'function') {
+      try { this.opts.onRemove(ps.playerId, { reason: 'afk', rounds }); } catch (e) { this.reportError('onRemove', e); }
+    }
+    if (!ps.left) this.onLeave(ps.playerId);
   }
 
   dispose() {

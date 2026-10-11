@@ -6,11 +6,11 @@ import { createHealthMetrics, serverLoadState, publicLoadDetails } from '../heal
 import { parseCombatWorkers, parseTrialWorkers } from '../index.js';
 import { startGameNode } from './game-node.js';
 import { createRpcAuthenticator, createRpcClient } from './rpc.js';
-import { sendEndReceipt } from './receipts.js';
+import { sendEndReceipt, sendMemberRemoved } from './receipts.js';
 
 const noopLog = { info() {}, warn() {}, error() {}, debug() {} };
 export async function startGameRuntime({ combatWorkers = 8, trialWorkers = 2, coordinatorUrl,
-  data, log = noopLog, onEnd, ...options } = {}) {
+  data, log = noopLog, onEnd, onRemoved, ...options } = {}) {
   const combatCount = parseCombatWorkers(combatWorkers), trialCount = combatCount ? parseTrialWorkers(trialWorkers) : 0;
   const gameData = data ?? getData({ log });
   let combatPool, trialPool, node, events, closing;
@@ -33,6 +33,11 @@ export async function startGameRuntime({ combatWorkers = 8, trialWorkers = 2, co
       onEnd: receipt => {
         if (onEnd) return onEnd(receipt);
         return sendEndReceipt({ client: events, nodeGeneration: options.generation, receipt });
+      },
+      // the AFK rule: the coordinator leaves the removed player's room seat (receipts.js member.removed)
+      onRemoved: removal => {
+        if (typeof onRemoved === 'function') return onRemoved(removal);
+        return events ? sendMemberRemoved({ client: events, nodeGeneration: options.generation, removal }) : undefined;
       } });
     metrics.start();
   } catch (e) {

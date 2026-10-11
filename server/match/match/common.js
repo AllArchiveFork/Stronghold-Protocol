@@ -30,6 +30,18 @@ export const DELAYS = Object.freeze({
  */
 export const BAND_TURN_SECONDS = 50;
 
+/**
+ * 挂机移出 (the owner's rule; Match opts.afkRemoveRounds, 0 = off): the rounds in a row without a substantive intent after
+ * which a human seat of a match that started with ≥ 2 humans is removed like a g.leave (MatchPlatform._checkIdle).
+ */
+export const AFK_REMOVE_ROUNDS = 2;
+/**
+ * The intents that count as playing for that rule — accepted ones only. g.ready, g.infoReady, g.emote, g.watch,
+ * g.unitStats, g.pause, g.art, g.bandFocus, g.autoplay, g.rerollVote, the battle reports and anything else do not.
+ */
+export const AFK_ACTIONS = new Set(['g.buy', 'g.sell', 'g.move', 'g.refresh', 'g.levelUp', 'g.freeze', 'g.equip', 'g.destroy',
+  'g.choice', 'g.reward', 'g.revive', 'g.band', 'g.bandSkip']);
+
 export const REVIVAL_COST = 10;
 export const REVIVAL_MIN_DONOR_LP = 11;
 export const REVIVAL_WINDOW_SECONDS = 15;

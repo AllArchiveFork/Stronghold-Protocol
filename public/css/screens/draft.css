@@ -137,3 +137,7 @@
 .minfo-dlg .brief-banned__grid .uthumb { --ut: max(.6rem, 34px); }
 .minfo-dlg .brief-banned__diy { font-size: max(.14rem, 12px); }
 .minfo-dlg .t-dim { font-size: max(.16rem, 10px); }
+
+/* 预选盟约 under the order list and in each row; 已指定给 AI 队友 reuses the 队友已选 look (.dband.is-taken) */
+.draft-order__plan { flex: none; }
+.dorder__plan { align-self: flex-start; margin-top: .02rem; }

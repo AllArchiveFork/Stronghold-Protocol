@@ -709,3 +709,8 @@
 .pauseov__plate h2 { font-size: calc(.5 * var(--t)); font-weight: 900; letter-spacing: .3em; color: #fff; text-shadow: 0 0 .2rem rgba(0, 0, 0, .8); }
 .pauseov__note { font-size: calc(.17 * var(--t)); color: var(--text-md); text-shadow: 0 1px 2px #000; }
 .pauseov__btns { display: flex; gap: .2rem; }
+
+/* 挂机移出 warning (ui/hud.js AfkWarning): the overtime banner's look in amber */
+.otwarn--afk { background: linear-gradient(90deg, rgba(120, 72, 6, .92), rgba(40, 24, 4, .88)); border-color: rgba(246, 163, 41, .75); color: #ffeccc; box-shadow: 0 0 .18rem rgba(246, 163, 41, .3); }
+.otwarn--afk .otwarn__icon { color: #f6a329; }
+.otwarn--afk .otwarn__tag { background: #c97b10; }

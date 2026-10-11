@@ -326,6 +326,19 @@ export function OvertimeWarning({ ot }) {
   </div>`;
 }
 
+/**
+ * 挂机移出 warning (server Match afkRemoveRounds; m.private afkWarn): the player made no substantive move last round, so
+ * one more idle prep removes them from the match. Shown through 机变 and 休整期 until any real action clears it.
+ */
+export function AfkWarning({ pub, priv }) {
+  if (!priv?.afkWarn || (pub?.phase !== PHASE.PREP && pub?.phase !== PHASE.SP_DRAFT)) return null;
+  return html`<div class="otwarn otwarn--afk" role="alert" data-state="afk">
+    <${Icon} name="warn" class="otwarn__icon" />
+    <span class="otwarn__tag">AFK</span>
+    <span class="otwarn__txt">${t('本回合仍无操作将被移出对局')}</span>
+  </div>`;
+}
+
 /** Two-bar pause glyph (the official battle pause button). */
 function PauseGlyph() {
   return html`<svg class="pausebtn__glyph" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4h4.5v16H6zm7.5 0H18v16h-4.5z" /></svg>`;
@@ -436,6 +449,7 @@ export function TopBar({ pub, priv, conn, hud, total, drawer, onExit, onDrawer, 
         ${pause && (pause.show || pause.paused) ? html`<${PauseButton} paused=${!!pause.paused} busy=${pause.busy} onToggle=${pause.onToggle} />` : null}
       </div>
       <${OvertimeWarning} ot=${ot} />
+      <${AfkWarning} pub=${pub} priv=${priv} />
       ${showReady ? html`<${ReadyToggle} priv=${priv} onToggle=${onReady} busy=${readyBusy} readyCount=${readyCount} total=${playerCount} />` : null}
     </div>
     <${UniteBudgetNote} pub=${pub} />
