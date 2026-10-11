@@ -208,8 +208,8 @@ A `choice:<effectId>` registry handler overrides the default application (§2.4)
 * `g.autoplay { on }` ("AI 托管"): the bot plays the seat (drafts, buying, placement, an open 教鞭 choice, ready) until turned off.
 * `onLeave` (quit / reconnect window expired): 中途退出 counts as elimination (research 00-INDEX §3, 01 §9, 06 §7 /
   §10.3): every copy the seat holds returns to the shared pool at once; the seat leaves the round loop and the Final
-  Assault pairing (re-planned when it quits before the boss fight; default co-op HP is bloodPoint × alive / 4 at each
-  boss start, DESIGN §20.10; a quit during the fight never resizes the current pool); its
+  Assault pairing (re-planned when it quits before the boss fight) and the boss pool (bloodPoint per player alive when
+  the fight starts — a departed seat no longer counts, DESIGN §25.13.4); its
   running normal battle is force-ended; a pending band pick
   becomes the default band, a 机变 turn passes on and an open 教鞭 choice goes with the seat (`eliminate`). Status `left`, LP 0, rounds passed = the rounds it had survived.
   When no human is left at all the match ends immediately (`reason: 'abandoned'`); when only eliminated spectators are

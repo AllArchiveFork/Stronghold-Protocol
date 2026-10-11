@@ -3642,10 +3642,9 @@ function buildConfig(ctx, waves, stages, bands, chess, items) {
       lastRound, bossRound, hiddenRound,
       rounds, spRounds: roundNums.filter((r) => rounds[r].isSpPrepare),
       combatTimeLimit, enemyScale,
-      // Stardust's approved pool profile; training keeps the explicit fixed-pool opt-out.
-      bossHpScale: type === 'SINGLE'
-        ? { bloodPointKey: DIFF_KEYS[m.modeDifficulty] || null, solo: 0.25, soloAssumed: true, unaffectedByEnemyScale: true }
-        : { bloodPointKey: DIFF_KEYS[m.modeDifficulty] || null, coop: 1, aliveScaling: type === 'MULTI', aliveFull: 4, aliveAssumed: true, unaffectedByEnemyScale: true },
+      // the pool rule's numbers live in the global bossHpScale below (one place restores the fixed pool); a key set here
+      // would override it for this mode (match/gamedata.js bossPoolShareOf)
+      bossHpScale: { bloodPointKey: DIFF_KEYS[m.modeDifficulty] || null, unaffectedByEnemyScale: true },
       upgradePrices: levels.slice(0, -1).map((l) => shopLv[l].initialUpgradePrice),
       maxShopLevel: levels.length ? levels[levels.length - 1] : 6,
       shopSlots: Object.fromEntries(levels.map((l) => [l, { chess: shopLv[l].charChessCount, item: shopLv[l].itemCount }])),
@@ -3715,8 +3714,8 @@ function buildConfig(ctx, waves, stages, bands, chess, items) {
     // DESIGN §25.13.4: the owner's decision of 2026-10-06 adopts PR #209 by @qingjingshenghuo — bloodPoint is one player's
     // share; it replaces the fixed pool of 「保持固定血量」 (perPlayer false + solo 0.25 restore it)
     bossHpScale: {
-      formula: 'co-op: bloodPoint[difficulty] × coop × min(alive players at each Final Assault / Hidden Core start, aliveFull) / aliveFull (aliveScaling true by default; includes AI, excludes spectators; fixed for the fight; one pool for every field); aliveScaling false: bloodPoint[difficulty] × coop; solo: bloodPoint[difficulty] × solo (0.25 = one player of four) [ASSUMED]; alive / 4 proportion [ASSUMED]',
-      perPlayer: false, coop: 1, solo: 0.25, soloAssumed: true, aliveScaling: true, aliveFull: 4, aliveAssumed: true, unaffectedByEnemyScale: true,
+      formula: 'one pool for every boss field ("所有人将一起对敌方领袖造成伤害"; the mirrored copies of a pair field share it, "两侧的敌方领袖共享生命值（敌方领袖的总生命值不变）") = bloodPoint[difficulty] × share. perPlayer true (the owner\'s decision of 2026-10-06, PR #209): co-op share = coop × the players alive when the fight starts (bots and AI 托管 seats count, eliminated and departed seats do not), at most aliveFull; solo share = solo (1). perPlayer false (the fixed pool of 0.1.x, 「保持固定血量」): co-op share = coop whatever the count (× alive / aliveFull with aliveScaling, the alive / 4 proportion [ASSUMED]: 巴哈姆特 12294); solo was 0.25 [ASSUMED]',
+      perPlayer: true, coop: 1, solo: 1, aliveFull: 4, aliveScaling: false, aliveAssumed: true, unaffectedByEnemyScale: true,
     },
     hiddenCore: { single: 350, multi: 1200, minTeamLpExclusive: 1, difficulties: ['NORMAL', 'HARD', 'ABYSS'], checkedAfterRound: 14 },
     dp: { init: 10, perSec: 1, max: 99 },

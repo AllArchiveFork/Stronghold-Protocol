@@ -123,7 +123,7 @@ Top level: `{ season, seasonName, modes, economy, lpCapPerRound, bossOvertimeAft
 |---|---|---|
 | `lpCapPerRound` | `10` | max LP lost per player per normal round |
 | `bossOvertimeAfter`, `bossOvertimeDrainPerSec` | `150`, `1` | official `bossTurnHpReduceTime`: from 150 **real** s of a boss round the merged team LP loses 1 per whole real second (`gamedata.js bossOvertimeDue`; first point at 151 s) |
-| `bossHpScale` | `{"formula":"co-op: bloodPoint[difficulty] × coop × min(alive, aliveFull) / aliveFull …","perPlayer":false,"coop":1,"solo":0.25,"soloAssumed":true,"aliveScaling":true,"aliveFull":4,"aliveAssumed":true,…}` | active Stardust fork override of upstream 0.2.0; explicit mode-level false takes precedence |
+| `bossHpScale` | `{"formula":"one pool for every boss field …","perPlayer":true,"coop":1,"solo":1,"aliveFull":4,"aliveScaling":false,"aliveAssumed":true,…}` | the leader pool (one for every boss field) = `bosses[id].bloodPoint[difficulty]` × share: `perPlayer` true (the owner's decision of 2026-10-06, adopting PR #209 — it replaces the fixed pool of 「保持固定血量」) — co-op share = `coop` × the players alive when the fight starts (bots and AI 托管 seats count, eliminated and departed seats do not; at most `aliveFull`), solo share = `solo` (1). `perPlayer: false` with `solo: 0.25` restores the fixed pool of 0.1.x (co-op × `coop` whatever the count; `aliveScaling: true` would make it × alive / `aliveFull`, the proportion [ASSUMED, flagged `aliveAssumed`]). `GameData.bossPoolHp(bossId, aliveCount)` / `bossPoolShare` implement it (DESIGN §20.10, §25.13.4) |
 | `hiddenCore` | `{"single":350,"multi":1200,"minTeamLpExclusive":1,"difficulties":["NORMAL","HARD","ABYSS"],"checkedAfterRound":14}` | Σ activated layers must be **>** threshold and LP **>** 1 |
 | `dp` | `{"init":10,"perSec":1,"max":99}` | |
 | `unite` | `{"maxHelpers":2,"helperOrder":"unitsOnField>activeBond>undownedUnits; pair: unitsOnField>activeBond>activeLayers>undownedUnits, first = right field (PRTS 帮助)","layerGainsEnabled":false,"templates":{"1":"act1autochess_escaped_single","2":"act1autochess_escaped_multi"},…}` | 联防; `helperOrder` documents the rule `server/match/unite.js helperOrder` implements (research 08 §5; ties → seat) |
@@ -572,11 +572,12 @@ Glyph legend (`rows`):
 15. 炎佑 name in the enemy DB is `"炎佑"` with literal ASCII quotes.
 16. Research-only fields (null without `docs/research`): stage `name`, item `category/kind/family/implFormula/
     requiresBondId/rangeGrid/flavor`, bond `spec`, E2 art availability (falls back to "char has an E2 phase").
-17. [ASSUMED] content (flagged in data): 机变 family schedule and server pools, the solo leader pool factor
-    (`bossHpScale.solo` 0.25), title criteria, income cap 12, per-turn band-draft timer 30 s (`timers.bandTurn`, the
-    step's only countdown — user playtest #4), the shop-only item list (`SHOP_EXCLUDED_ITEMS`, from play), the alive / 4
-    proportion of co-op alive scaling (`bossHpScale.aliveAssumed`; enabled by user approval on 2026-10-05). The special-enemy
-    generator, the co-op leader pool (`bloodPoint`, one pool for every field) and the 联防 timing are official.
+17. [ASSUMED] content (flagged in data): 机变 family schedule and server pools, title criteria, income cap 12, per-turn
+    band-draft timer 30 s (`timers.bandTurn`, the step's only countdown — user playtest #4), the shop-only item list
+    (`SHOP_EXCLUDED_ITEMS`, from play), the alive / 4 proportion of the fixed pool's optional alive scaling
+    (`bossHpScale.aliveAssumed`; `aliveScaling` off). The special-enemy generator, the leader table (`bloodPoint`, one
+    pool for every field) and the 联防 timing are official; the pool's × players alive is the owner's decision of
+    2026-10-06 (PR #209: players' observation, no official text).
 18. **Module parts flagged `isToken`** (伺夜, 浊心斯卡蒂, 缪尔赛思, 耀骑士临光 golden) upgrade the summon only; they are
     applied to `tokens.json` variants, never to the operator's talents/trait.
 19. **Undefined enemy-database fields** (`m_defined:false`): a zero `m_value` means "never set" and falls back to the
@@ -736,11 +737,3 @@ the DIY stock (per player in the match, `PlayerState.diyStock`: `config.economy.
 field), 助战 borrows (`borrowCount` 20), and a player's potential / 练度 per operator (the 干员调配 settings sent with
 `room.loadout`; the forms are built at full potential and carry the lower ranks, §2.3; 练度 = effects.json
 `aceffect_char_1…4`).
-
-## Stardust 0.2.0 integration note
-
-The active fork retains its approved co-op `bloodPoint × alive / 4` and solo ×0.25
-leader pool (`perPlayer: false`, `aliveScaling: true`, `aliveFull: 4`). Upstream
-0.2.0 defaults to co-op ×alive and solo ×1; its history and counterfactual rule
-remain documented, not presented as this deployment's default. See
-[DESIGN.md — Stardust fork overrides](DESIGN.md#stardust-fork-overrides).

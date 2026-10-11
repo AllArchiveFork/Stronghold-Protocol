@@ -203,7 +203,7 @@ test('only experimental >4-alive Boss HP and strict hidden threshold scale; defa
     for (const count of [1, 2, 3, 4, 5, 6, 7, 9, 20]) {
       const plain = bossPoolHp(gd, 'boss_1', count);
       const enlarged = bossPoolHp(gd, 'boss_1', count, { experimental: true });
-      assert.equal(enlarged, !gd.isSolo && count > 4 ? Math.round(gd.boss('boss_1').bloodPoint.NORMAL * count / 4) : plain);
+      assert.equal(enlarged, !gd.isSolo && count > 4 ? gd.boss('boss_1').bloodPoint.NORMAL * count : plain);
       const threshold = gd.isSolo ? gd.hiddenCore.single : gd.hiddenCore.multi * (count > 4 ? count / 4 : 1);
       assert.equal(hiddenEligible(gd, { layerSum: threshold, teamLp: 2, aliveCount: count, experimental: true }), false);
       assert.equal(hiddenEligible(gd, { layerSum: threshold + 1, teamLp: 2, aliveCount: count, experimental: true }), true);

@@ -40,11 +40,11 @@ normative lines it rewrote).
 ## Stardust fork overrides
 
 The histories above describe upstream decisions; they are not permission to discard the fork's approved behavior.
-This fork retains the user-approved 2026-10-05 leader pool: co-op `bloodPoint × alive / 4`, solo `bloodPoint × 0.25`,
-sampled at each boss start without resizing during a fight. This is an intentional difference from upstream 0.2.0's
-`bloodPoint × alive` / solo ×1 default: `perPlayer: false`, `aliveScaling: true`, `aliveFull: 4`, `solo: 0.25`.
-The arithmetic implementation still supports both rules; [DATA.md](DATA.md), [META.md](META.md) and
-[BALANCE.md](BALANCE.md) describe the active fork configuration. No other enemy-stat tuning is introduced.
+Since 2026-10-12 the leader pool follows upstream (§25.13.4): `bloodPoint × alive` in co-op and solo ×1. The fork's
+earlier quarter pool (co-op `bloodPoint × alive / 4`, solo ×0.25, approved 2026-10-05) left every leader at a quarter
+of upstream's HP after the 0.2.0 merge and was dropped on player feedback. Only the opt-in room with more than four
+seats goes past `aliveFull`: the full team's share × alive / 4, i.e. one `bloodPoint` per player. No other enemy-stat
+tuning is introduced.
 
 Normal server combat retains committed layer gains and dispatches milestone rewards live. Per-round cumulative
 watermarks reconcile Worker updates and final settlement once; 联防 carries those layers without adding them again.

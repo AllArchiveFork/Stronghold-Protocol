@@ -238,10 +238,10 @@ for (const hidden of [false, true]) {
     assertFullResults(worker);
     assert.deepEqual(worker, inline);
     assert.equal(worker.state.boss.hp, 0);
-    assert.equal(worker.state.boss.maxHp, 200);
+    assert.equal(worker.state.boss.maxHp, 800, 'bloodPoint 200 × the four players alive');
     assert.ok(worker.state.teamLp > 0);
     const credited = worker.state.players.reduce((sum, p) => sum + p.stats.bossDamage, 0);
-    assert.ok(Math.abs(credited - 200) < 1e-7, 'shared pool damage is credited once, not once per mirrored field');
+    assert.ok(Math.abs(credited - 800) < 1e-7, 'shared pool damage is credited once, not once per mirrored field');
     await until(() => pair.every((h) => h.m.ended), 'victory reaches RESULT');
     const summaries = pair.map((h) => {
       assert.equal(h.ended.length, 1);

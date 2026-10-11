@@ -73,9 +73,11 @@ export function bossPoolHp(gd, bossId, aliveCount, { experimental = false } = {}
   if (base == null) base = 500000;
   const tune = typeof gd.bossHpMul === 'function' ? gd.bossHpMul(bossId) : 1;
   const enlarged = experimental && !gd.isSolo && Number.isInteger(aliveCount) && aliveCount > 4 && aliveCount <= MAX_PLAYER_CAPACITY;
-  // Only the opt-in >4-seat fight extends this fork's alive/4 rule; normal config/solo scaling are untouched.
-  const share = enlarged ? aliveCount / 4 : typeof gd.bossPoolShare === 'function' ? gd.bossPoolShare(aliveCount)
-    : bossPoolShareOf(gd.mode && gd.mode.bossHpScale, gd.config && gd.config.bossHpScale, !!gd.isSolo, aliveCount);
+  const shareOf = (n) => (typeof gd.bossPoolShare === 'function' ? gd.bossPoolShare(n)
+    : bossPoolShareOf(gd.mode && gd.mode.bossHpScale, gd.config && gd.config.bossHpScale, !!gd.isSolo, n));
+  // Only the opt-in >4-seat fight goes past the configured four: the full team's share grows by alive / 4 (one
+  // bloodPoint per player under the per-player rule); normal config and solo scaling are untouched.
+  const share = enlarged ? shareOf(4) * aliveCount / 4 : shareOf(aliveCount);
   return Math.max(1, Math.round(base * share * tune));
 }
 

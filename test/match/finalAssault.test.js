@@ -12,6 +12,15 @@ import { DATA, makeMatch, checkInvariants } from './harness.js';
 
 const bossFields = () => FakeBattle.instances.filter((b) => b.kind === 'boss' || b.kind === 'hidden');
 
+test('the opt-in >4-seat room extends the per-player pool: one bloodPoint per alive player past four', () => {
+  const gd = new GameData(DATA, 'mode_multi_hard');
+  const base = DATA.bosses.boss_1.bloodPoint.HARD;
+  for (const n of [5, 8, 20]) assert.equal(bossPoolHp(gd, 'boss_1', n, { experimental: true }), base * n, `${n} seats`);
+  assert.equal(bossPoolHp(gd, 'boss_1', 4, { experimental: true }), base * 4, 'four seats: the ordinary rule');
+  assert.equal(bossPoolHp(gd, 'boss_1', 8), base * 4, 'without the experiment the count stays capped at aliveFull');
+  assert.equal(bossPoolHp(new GameData(DATA, 'mode_single_hard'), 'boss_1', 1, { experimental: true }), base, 'solo untouched');
+});
+
 test('pairing by seat: (1,2), (3,4); an odd player alone', () => {
   const p = (seat) => ({ seat, playerId: `s${seat}` });
   assert.deepEqual(pairPlayers([p(0)]).map((g) => g.map((x) => x.seat)), [[0]]);
@@ -20,39 +29,41 @@ test('pairing by seat: (1,2), (3,4); an odd player alone', () => {
   assert.deepEqual(pairPlayers([p(3), p(1), p(0), p(2)]).map((g) => g.map((x) => x.seat)), [[0, 1], [2, 3]]);
 });
 
-test('configured default co-op pool × alive / 4: missing / invalid count means full, counts above four are capped', () => {
-  const gd = new GameData(DATA, 'mode_multi_hard');
-  for (const n of [1, 2, 3, 4]) {
-    assert.equal(bossPoolHp(gd, 'boss_1', n), 1800000 * n / 4, `${n} alive`);
-    assert.equal(gd.bossPoolHp('boss_1', n), bossPoolHp(gd, 'boss_1', n), 'GameData agrees');
+test('boss pool = bloodPoint[difficulty] × the players alive at the fight\'s start (solo × 1) × tuning; config restores the fixed pool; shared and never negative', () => {
+  // DESIGN §25.13.4: the owner's decision of 2026-10-06 adopts PR #209 by @qingjingshenghuo (bloodPoint is one player's
+  // share) and replaces the fixed pool of 「保持固定血量」 — config bossHpScale (perPlayer false, solo 0.25) restores it.
+  // Research numbers (data/tuning.json left out).
+  const { tuning, ...RAW } = DATA; // eslint-disable-line no-unused-vars
+  const gd = new GameData(RAW, 'mode_multi_hard');
+  for (const n of [1, 2, 3, 4]) assert.equal(bossPoolHp(gd, 'boss_1', n), 1800000 * n, `${n} alive`);
+  assert.equal(bossPoolHp(gd, 'boss_1'), 1800000 * 4, 'no count given: a full team');
+  assert.equal(bossPoolHp(gd, 'boss_1', 9), 1800000 * 4, 'at most aliveFull (4) players');
+  assert.equal(gd.bossPoolHp('boss_1', 2), bossPoolHp(gd, 'boss_1', 2), 'GameData agrees');
+  assert.equal(bossPoolHp(new GameData(RAW, 'mode_single_abyss'), 'boss_5', 1), 3000000, 'solo: the table value');
+  assert.equal(bossPoolHp(new GameData(RAW, 'mode_single_funny'), 'boss_2', 1), 225000);
+  // the flip back: the fixed pool of 0.1.x (perPlayer false; solo 0.25), and its optional × alive / 4 (aliveScaling)
+  const withScale = (over) => ({ ...RAW, config: { ...RAW.config, bossHpScale: { ...RAW.config.bossHpScale, ...over } } });
+  const fixed = withScale({ perPlayer: false, solo: 0.25 });
+  for (const n of [4, 3, 2, 1, undefined, 9]) assert.equal(bossPoolHp(new GameData(fixed, 'mode_multi_hard'), 'boss_1', n), 1800000, `fixed pool, ${n} alive`);
+  assert.equal(bossPoolHp(new GameData(fixed, 'mode_single_abyss'), 'boss_5', 1), 750000);
+  assert.equal(bossPoolHp(new GameData(fixed, 'mode_single_funny'), 'boss_2', 1), 56250);
+  const scaled = new GameData(withScale({ perPlayer: false, aliveScaling: true }), 'mode_multi_hard');
+  assert.equal(bossPoolHp(scaled, 'boss_1', 4), 1800000);
+  assert.equal(bossPoolHp(scaled, 'boss_1', 3), 1350000);
+  assert.equal(bossPoolHp(scaled, 'boss_1', 2), 900000);
+  assert.equal(bossPoolHp(scaled, 'boss_1', 1), 450000);
+  assert.equal(bossPoolHp(scaled, 'boss_1'), 1800000, 'no count given: a full team');
+  assert.equal(bossPoolHp(scaled, 'boss_1', 9), 1800000, 'never above the data value');
+  // a mode's own entry overrides the global one
+  const perMode = { ...RAW, config: { ...RAW.config, modes: { ...RAW.config.modes, mode_multi_hard: { ...RAW.config.modes.mode_multi_hard, bossHpScale: { ...RAW.config.modes.mode_multi_hard.bossHpScale, perPlayer: false } } } } };
+  assert.equal(bossPoolHp(new GameData(perMode, 'mode_multi_hard'), 'boss_1', 3), 1800000, 'the mode entry first');
+  assert.equal(bossPoolHp(new GameData(perMode, 'mode_multi_abyss'), 'boss_1', 3), 3600000 * 3, 'other modes keep the global rule');
+  // the balance layer multiplies the pool (docs/BALANCE.md)
+  for (const modeId of ['mode_single_funny', 'mode_multi_hard']) {
+    const tuned = new GameData(DATA, modeId);
+    const raw = new GameData(RAW, modeId);
+    assert.equal(bossPoolHp(tuned, 'boss_2', 4), Math.max(1, Math.round(bossPoolHp(raw, 'boss_2', 4) * tuned.bossHpMul('boss_2'))));
   }
-  for (const n of [undefined, null, 0, -1, NaN, Infinity, 9]) {
-    assert.equal(bossPoolHp(gd, 'boss_1', n), 1800000, `${n}: full pool compatibility`);
-  }
-  assert.equal(bossPoolHp(new GameData(DATA, 'mode_single_abyss'), 'boss_5', 1), 750000);
-  assert.equal(bossPoolHp(new GameData(DATA, 'mode_single_funny'), 'boss_2', 1), 56250);
-});
-
-test('explicit aliveScaling false compatibility and mode-over-global precedence', () => {
-  const modeId = 'mode_multi_hard';
-  const view = (global, mode) => new GameData({ ...DATA, config: { ...DATA.config,
-    bossHpScale: { ...DATA.config.bossHpScale, aliveScaling: global },
-    modes: { ...DATA.config.modes, [modeId]: { ...DATA.config.modes[modeId],
-      bossHpScale: { ...DATA.config.modes[modeId].bossHpScale, aliveScaling: mode } } },
-  } }, modeId);
-  for (const gd of [view(true, false), view(false, false), view(false, undefined)]) {
-    for (const n of [1, 2, 3, 4]) {
-      assert.equal(gd.bossPoolShare(n), 1);
-      assert.equal(bossPoolHp(gd, 'boss_1', n), 1800000, `${n} alive: explicit opt-out keeps full HP`);
-      assert.equal(gd.bossPoolHp('boss_1', n), 1800000);
-    }
-  }
-  for (const gd of [view(true, undefined), view(false, true)]) {
-    assert.equal(bossPoolHp(gd, 'boss_1', 2), 900000, 'global fallback / explicit mode true');
-  }
-});
-
-test('one shared boss pool credits only actual damage and never becomes negative', () => {
   const pool = new SharedBossPool(100);
   assert.equal(pool.damage('a', 60), 60);
   assert.equal(pool.damage('b', 60), 40);
@@ -75,7 +86,7 @@ for (const n of [1, 2, 3, 4]) {
     assert.deepEqual(fields.map((f) => f.fieldId), Math.ceil(n / 2) === 2 ? ['b1', 'b2'] : ['b1']);
     const pool = fields[0].sharedBoss;
     assert.ok(fields.every((f) => f.sharedBoss === pool), 'one pool for every boss field');
-    assert.equal(pool.maxHp, Math.round(DATA.bosses[m.bossId].bloodPoint.FUNNY * n / 4), 'configured default scales the new pool');
+    assert.equal(pool.maxHp, Math.round(DATA.bosses[m.bossId].bloodPoint.FUNNY * n), 'one bloodPoint per player alive (DESIGN §25.13.4)');
     assert.equal(pool.maxHp, bossPoolHp(m.gd, m.bossId, n));
     for (const f of fields) {
       assert.deepEqual(f.opts.rect, GEO.BOSS_RECT);
@@ -121,7 +132,7 @@ test('Final Assault counts living AI participants, not room spectators or elimin
   assert.equal(m.spectators.size, 3);
   assert.deepEqual(m.alivePlayers().map((p) => p.playerId), ['p_0', 'ai_0']);
   h.drive(() => m.phase === PHASE.FINAL_ASSAULT);
-  assert.equal(m.bossPool.maxHp, Math.round(DATA.bosses[m.bossId].bloodPoint.FUNNY / 2));
+  assert.equal(m.bossPool.maxHp, DATA.bosses[m.bossId].bloodPoint.FUNNY * 2);
   assert.deepEqual(m.fields.map((f) => f.players), [['p_0', 'ai_0']]);
   checkInvariants(m);
   assert.deepEqual(h.logs.error, []);
@@ -153,7 +164,7 @@ for (const rescued of [false, true]) {
     assert.equal(target.pendingDeath, false, 'revival settlement finalized before the boss');
     assert.equal(target.alive, rescued);
     assert.equal(m.alivePlayers().length, n);
-    assert.equal(m.bossPool.maxHp, Math.round(DATA.bosses[m.bossId].bloodPoint.NORMAL * n / 4));
+    assert.equal(m.bossPool.maxHp, DATA.bosses[m.bossId].bloodPoint.NORMAL * n);
     assert.equal(m.fields.flatMap((f) => f.players).includes(target.playerId), rescued);
     checkInvariants(m);
     assert.deepEqual(h.logs.error, []);
@@ -168,7 +179,7 @@ test('Hidden Core samples new living-seat count after the ordinary boss, not its
   for (const p of m.order) { p.bondCountBonus.yanShip = 3; p.layers.yanShip = 401; p.recompute(); }
   h.drive(() => m.phase === PHASE.FINAL_ASSAULT);
   const ordinary = m.bossPool;
-  assert.equal(ordinary.maxHp, Math.round(DATA.bosses[m.bossId].bloodPoint.NORMAL * 3 / 4));
+  assert.equal(ordinary.maxHp, DATA.bosses[m.bossId].bloodPoint.NORMAL * 3);
   h.drive(() => m.phase === PHASE.PREP && m.round === 15);
   assert.equal(m.bossPool, null, 'ordinary pool released before hidden prep');
   m.onLeave('p_2');
@@ -176,7 +187,7 @@ test('Hidden Core samples new living-seat count after the ordinary boss, not its
   h.drive(() => m.phase === PHASE.HIDDEN_CORE);
   assert.equal(m.alivePlayers().length, 2);
   assert.notEqual(m.bossPool, ordinary);
-  assert.equal(m.bossPool.maxHp, Math.round(DATA.bosses[m.hiddenBossId].bloodPoint.NORMAL / 2));
+  assert.equal(m.bossPool.maxHp, DATA.bosses[m.hiddenBossId].bloodPoint.NORMAL * 2);
   assert.equal(m.teamLp, lp, 'merged LP carries over; HP sampling is independent');
   assert.deepEqual(m.fields.map((f) => f.players), [['p_0', 'p_1']]);
   checkInvariants(m);
@@ -189,7 +200,7 @@ test('a departure during Final Assault never dynamically resizes the current sha
   const m = h.m; t.after(() => m.dispose());
   h.start().toPrep(14);
   h.drive(() => m.phase === PHASE.FINAL_ASSAULT);
-  const pool = m.bossPool, max = DATA.bosses[m.bossId].bloodPoint.FUNNY;
+  const pool = m.bossPool, max = DATA.bosses[m.bossId].bloodPoint.FUNNY * 4;
   assert.equal(pool.maxHp, max);
   h.sched.advance(1000);
   const hp = pool.hp;

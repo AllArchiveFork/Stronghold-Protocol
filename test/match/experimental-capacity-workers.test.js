@@ -85,13 +85,13 @@ async function bossFixture(t, count, { hidden = false, smallPool = false, speed 
   m.bossId = smallPool ? 'boss_1' : 'boss_3'; m.hiddenBossId = 'boss_8'; m.hiddenLayerSum = 0;
   const id = hidden ? m.hiddenBossId : m.bossId;
   if (smallPool) m.gd.raw = { ...m.gd.raw, bosses: { ...m.gd.raw.bosses,
-    [id]: { ...m.gd.boss(id), bloodPoint: { NORMAL: 40000 } } } };
+    [id]: { ...m.gd.boss(id), bloodPoint: { NORMAL: 10000 } } } }; // × the alive players: 50000 for five
   for (const ps of m.order) {
     ps.lp = 40; ps.bandId = 'band_bldsk'; ps.invalidateDeployMap(); ps.recompute();
     if (hidden) ps.lpAtFinal = ps.lp;
   }
   if (hidden) { m.hiddenReached = true; m.teamLp = count * 40; }
-  return { m, pool, errors, ended, expected: Math.round(m.gd.boss(id).bloodPoint.NORMAL * count / 4) };
+  return { m, pool, errors, ended, expected: m.gd.boss(id).bloodPoint.NORMAL * count }; // one bloodPoint per alive player
 }
 
 for (const hidden of [false, true]) for (const count of [5, 7, 20]) {

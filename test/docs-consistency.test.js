@@ -594,11 +594,8 @@ test('playtest6b follow-up (DESIGN §20.10–§20.13): leader HP, 直接乘算, 
   assert.match(s209, /`shared\/constants\.js BOND_LAYER_CAP = 0`/);
   assert.match(s209, /`shared\/constants\.js BOSS_HIT_LIMIT = 0`/);
   assert.match(s209, /Settled by the user \("保持固定血量"\)[^\n]*aliveScaling` is \*\*false\*\*[^\n]*Replaced on 2026-10-06 by the owner's decision[^\n]*§25\.13\.4/);
-  // The upstream record stays historical; this fork deliberately retains its approved quarter-pool rule.
-  assert.equal(DATA.config.bossHpScale.perPlayer, false, 'Stardust explicitly keeps its approved Boss rule');
-  assert.equal(DATA.config.bossHpScale.aliveScaling, true, 'co-op samples alive / 4 at each boss start');
-  assert.equal(DATA.config.bossHpScale.solo, 0.25, 'solo retains the approved quarter-pool factor');
-  assert.match(doc('docs/DESIGN.md'), /intentional difference from upstream 0\.2\.0/);
+  assert.equal(DATA.config.bossHpScale.perPlayer, true, 'the owner adopted the per-player pool (2026-10-06)');
+  assert.equal(DATA.config.bossHpScale.aliveScaling, false, 'the fixed pool\'s optional × alive / 4 stays off');
   assert.equal(SIM_CONST.DIRECT_BONUS_STACKING, 'add');
   assert.match(s209, /DIRECT_BONUS_STACKING = 'multiply'/);
   // the normative lines
