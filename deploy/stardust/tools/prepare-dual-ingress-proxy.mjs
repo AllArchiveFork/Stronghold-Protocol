@@ -21,6 +21,8 @@ const paths = ['/ws', '/_release/v012-alliance-20261004/ws'];
 const TLS_LISTEN_BACKLOGS = [4096];
 const SUMMARY_FIELDS = ['activated', 'build', 'composeSha256', 'coordinatorPort', 'coreBundle', 'coreComposeSha256', 'gameNodes',
   'hostManagerLeases', 'imageId', 'ingress', 'manifestSha256', 'prepared', 'profile', 'project', 'sourceKind', 'version'];
+// Present only when cluster-local-stack.py ran with --online-limit-dir (the cap directory it mounts into the coordinator).
+const OPTIONAL_SUMMARY_FIELDS = ['onlineLimitDir'];
 const sha = text => createHash('sha256').update(text).digest('hex');
 const service = i => i === 0 ? 'ingress' : `ingress-${String(i + 1).padStart(2, '0')}`;
 const exactKeys = (value, keys) => !!value && typeof value === 'object' && !Array.isArray(value)
@@ -72,7 +74,9 @@ function parseStackSummary(text, local) {
   if (typeof text !== 'string' || !text || Buffer.byteLength(text) > 64 * 1024) throw new Error('Local topology requires the stack summary');
   let value;
   try { value = JSON.parse(text); } catch { throw new Error('Invalid local stack summary'); }
-  if (!exactKeys(value, SUMMARY_FIELDS) || text !== JSON.stringify(sortedJson(value), null, 2) + '\n'
+  const optional = value && typeof value === 'object' ? OPTIONAL_SUMMARY_FIELDS.filter(key => Object.hasOwn(value, key)) : [];
+  if (!exactKeys(value, [...SUMMARY_FIELDS, ...optional].sort()) || text !== JSON.stringify(sortedJson(value), null, 2) + '\n'
+    || (optional.includes('onlineLimitDir') && (typeof value.onlineLimitDir !== 'string' || !value.onlineLimitDir.startsWith('/')))
     || value.version !== 1 || value.profile !== 'formal' || value.project !== local.project || value.prepared !== true
     || value.activated !== false || value.hostManagerLeases !== false || value.coordinatorPort !== local.coordinatorPort
     || ![16, 32].includes(value.gameNodes) || !['commit', 'tree'].includes(value.sourceKind)

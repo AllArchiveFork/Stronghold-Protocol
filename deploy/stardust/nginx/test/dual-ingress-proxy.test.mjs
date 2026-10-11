@@ -210,6 +210,16 @@ test('local topology is Formal-only and the stack summary must be the exact fixe
   }
 });
 
+test('the online-cap directory from --online-limit-dir is accepted only as an absolute path and changes nothing else', () => {
+  const capped = stackSummary(32, 16, value => ({ ...value, onlineLimitDir: '/opt/ark-cluster-formal/limits' }));
+  assert.ok(capped.includes('  "onlineLimitDir": "/opt/ark-cluster-formal/limits",\n  "prepared": true,'), 'sorted where Python puts it');
+  const plain = local(stackSummary(32, 16), { tlsListenBacklog: 4096 }), withCap = local(capped, { tlsListenBacklog: 4096 });
+  assert.equal(withCap.vhost, plain.vhost);
+  assert.notEqual(withCap.manifest.stackSummary.sha256, plain.manifest.stackSummary.sha256);
+  for (const dir of ['limits', '', 5, null, ['/x']]) assert.throws(() => local(stackSummary(32, 16, value => ({ ...value, onlineLimitDir: dir }))), /Unexpected local stack summary/);
+  assert.throws(() => local(stackSummary(32, 16, value => ({ ...value, onlineLimitDirs: '/x' }))), /Unexpected local stack summary/);
+});
+
 test('backend retargets compare-and-replace one known server and keep its parameters', () => {
   const summary = stackSummary(16, 2);
   const handEdited = wgFormal.replace('server 10.253.79.2:35400;', 'server 127.0.0.1:35400;').replace('server 172.30.246.2:3000;', 'server 172.30.245.31:3000;');
