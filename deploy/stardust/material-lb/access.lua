@@ -36,7 +36,8 @@ local function valid_data(value)
     if type(value) ~= "table" or value.schemaVersion ~= 2 or value.release ~= "v013-hangzhou-20261006-1f742992"
         or value.fallbackBase ~= "https://ark-asset.hanabi-ai.cn:25442/releases/v013-hangzhou-20261006-1f742992"
         or value.modelscopeBase ~= "https://modelscope.cn/datasets/Stardust/arknight-assets/resolve/34fa98b056c7554b8dbea7a4e18e78b6c6445fbb/releases/v013-modelscope-20261006-1f742992-174200/"
-        or type(value.paths) ~= "table" or value.openiWeight ~= 40 or value.modelscopeWeight ~= 60 or value.ningxiaWeight ~= 0 then return false end
+        or type(value.paths) ~= "table" or value.openiWeight ~= __MATERIAL_LB_OPENI_WEIGHT__
+        or value.modelscopeWeight ~= __MATERIAL_LB_MODELSCOPE_WEIGHT__ or value.ningxiaWeight ~= 0 then return false end
     local fields = { schemaVersion = true, release = true, fallbackBase = true, modelscopeBase = true,
         modelscopeBases = true, paths = true, openiWeight = true, modelscopeWeight = true, ningxiaWeight = true }
     for field in pairs(value) do if not fields[field] then return false end end
@@ -124,9 +125,27 @@ local request_id = ngx.var.request_id or ""
 if #request_id ~= 32 or not request_id:match("^[%da-fA-F]+$") then return ngx.exit(500) end
 local number = tonumber(request_id:sub(1, 8), 16)
 if not number then return ngx.exit(500) end
--- Uniform 32-bit request IDs: rounded 60% boundary differs by less than 1 / 2^32.
-if model_target ~= false and number < 2576980378 then
+-- Uniform 32-bit request IDs: the rounded ModelScope-share boundary differs by less than 1 / 2^32 (100%: every GET).
+if model_target ~= false and number < __MATERIAL_LB_MODELSCOPE_BOUNDARY__ then
     ngx.ctx.material_lb_selected = "modelscope"
+    -- Optional signed profile (mssign.lua): one redirect straight to the CDN; otherwise the public resolve URL.
+    local signer_file = __MATERIAL_LB_SIGNER__
+    local signer = signer_file and package.loaded[signer_file]
+    if signer_file and signer == nil then
+        local ok, module = pcall(dofile, signer_file)
+        signer = ok and type(module) == "table" and module or false
+        package.loaded[signer_file] = signer
+    end
+    if signer then
+        local ok, location, ts = pcall(signer.location, model_target)
+        if ok and location then
+            ngx.ctx.material_lb_ms_location = location
+            ngx.ctx.material_lb_ms_max_age = signer.max_age(ts)
+            return ngx.redirect(location, 302)
+        end
+        -- Not signed yet (cold, cooling down): browsers ask again soon instead of keeping this a day.
+        ngx.ctx.material_lb_ms_direct = true
+    end
     return ngx.redirect(model_target, 302)
 end
 ngx.ctx.material_lb_selected = "openi"

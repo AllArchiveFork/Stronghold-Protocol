@@ -142,9 +142,16 @@ local entry = request_path and data.entries[request_path]
 if not entry then return end
 local location = header["Location"]
 if type(location) ~= "string" or #location > 8192 or location:find("[%s%z\1-\31\127-\159#]") then return end
--- This is the stable, public, immutable-revision URL; no CDN auth_key is stored or interpreted.
+-- A CDN redirect signed by mssign.lua (access phase): cached only until well before its signature ends.
+local signed_age = ngx.ctx.material_lb_ms_max_age
+if query == nil and entry.modelscope and signed_age and location == ngx.ctx.material_lb_ms_location then
+    header["Cache-Control"] = signed_age >= 1 and ("public, max-age=" .. signed_age) or "no-store"
+    return
+end
+-- This is the stable, public, immutable-revision URL; no CDN auth_key is stored or interpreted. A signed profile
+-- that could not sign this request yet keeps it briefly, so the browser asks again for the direct CDN redirect.
 if query == nil and entry.modelscope and location == entry.modelscope then
-    header["Cache-Control"] = "public, max-age=60"
+    header["Cache-Control"] = ngx.ctx.material_lb_ms_direct and "public, max-age=60" or "public, max-age=86400"
     return
 end
 local authority, raw_path, tail = location:match("^https://([^/]+)(/[^?#]*)(.*)$")

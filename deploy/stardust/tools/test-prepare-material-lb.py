@@ -406,6 +406,64 @@ location / {{ return 404; }}
                     self.assertIs(json.loads(denied.stdout)['prepared'], False)
                     self.assertFalse((root / ('rejected-' + str(index))).exists())
 
+    def test_default_profile_has_no_signer(self):
+        files = TOOL.render(*fixture(), CONTAINER)
+        self.assertIn(b'local signer_file = nil\n', files['access.lua'])
+        self.assertNotIn('mssign.lua', files)
+        self.assertIn(b'"public, max-age=86400"', files['header.lua'])
+
+    def test_full_modelscope_share_and_signed_profile(self):
+        openi, models, options = exception_fixture(multiple_prefixes=True)
+        files = TOOL.render(openi, models, CONTAINER, modelscope_weight=100, signed_ttl=720, **options)
+        self.assertEqual(set(files), {'routes.json', 'header-data.json', 'access.lua', 'header.lua', 'mssign.lua'})
+        routes = json.loads(files['routes.json'])
+        self.assertEqual((routes['modelscopeWeight'], routes['openiWeight'], routes['ningxiaWeight']), (100, 0, 0))
+        access, signer = files['access.lua'], files['mssign.lua']
+        self.assertIn(b'if model_target ~= false and number < 4294967296 then', access)
+        self.assertIn(b'value.openiWeight ~= 0\n', access)
+        self.assertIn(('local signer_file = "' + CONTAINER + '/mssign.lua"').encode(), access)
+        for body in files.values():
+            self.assertNotIn(b'__MATERIAL_LB_', body)
+        self.assertIn(b'local TTL = 720 ', signer)
+        self.assertIn(('local REVISION = "' + options['model_revision'] + '"').encode(), signer)
+        self.assertIn(b'local NAMESPACE, REPOSITORY = "Stardust", "arknight-assets"', signer)
+        self.assertIn(b'ngx.HTTP_HEAD', signer)
+        self.assertIn(b'material_lb_ms_max_age', files['header.lua'])
+        self.assertIn(b'ngx.ctx.material_lb_ms_direct and "public, max-age=60"', files['header.lua'])
+        # The 60/40 profile stays byte-identical to the unsigned default except for the signer line.
+        sixty = TOOL.render(openi, models, CONTAINER, signed_ttl=720, **options)
+        self.assertIn(b'number < 2576980378', sixty['access.lua'])
+        self.assertEqual(sixty['access.lua'].replace(('"' + CONTAINER + '/mssign.lua"').encode(), b'nil'),
+                         TOOL.render(openi, models, CONTAINER, **options)['access.lua'])
+
+    def test_modelscope_weight_and_signed_ttl_bounds(self):
+        for options in ({'modelscope_weight': 0}, {'modelscope_weight': 50}, {'modelscope_weight': 99},
+                        {'modelscope_weight': '100'}, {'modelscope_weight': True}, {'modelscope_weight': 100.0},
+                        {'signed_ttl': 599}, {'signed_ttl': 3601}, {'signed_ttl': 720.0}, {'signed_ttl': '720'},
+                        {'signed_ttl': True}, {'signed_ttl': 0}):
+            with self.subTest(options=options):
+                with self.assertRaises(ValueError): TOOL.render(*fixture(), CONTAINER, **options)
+
+    def test_cli_modelscope_weight_and_signed_ttl(self):
+        openi, models = fixture()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            oi, ms = root / 'openi.json', root / 'models.json'
+            oi.write_text(json.dumps(openi))
+            ms.write_text(json.dumps(models))
+            common = [sys.executable, '-I', str(Path(TOOL.__file__)), '--openi-manifest', str(oi),
+                      '--modelscope-manifest', str(ms), '--container-dir', CONTAINER]
+            accepted = subprocess.run(common + ['--modelscope-weight', '100', '--signed-ttl', '720', '--out', str(root / 'signed')],
+                                      capture_output=True, text=True, check=False)
+            self.assertEqual(accepted.returncode, 0, accepted.stdout + accepted.stderr)
+            self.assertIn('mssign.lua', json.loads(accepted.stdout)['filesSha256'])
+            self.assertEqual(json.loads((root / 'signed' / 'routes.json').read_text())['modelscopeWeight'], 100)
+            for index, flags in enumerate((['--modelscope-weight', '50'], ['--signed-ttl', '30'], ['--signed-ttl', 'x'])):
+                denied = subprocess.run(common + flags + ['--out', str(root / ('rejected-' + str(index)))], capture_output=True, text=True, check=False)
+                with self.subTest(flags=flags):
+                    self.assertNotEqual(denied.returncode, 0)
+                    self.assertFalse((root / ('rejected-' + str(index))).exists())
+
     def test_entry_count_remains_bounded_at_next_release_limit(self):
         self.assertEqual(TOOL.MAX_ENTRIES, 100000)
         for count in (0, TOOL.MAX_ENTRIES + 1):

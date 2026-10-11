@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Prepare a matched 60/40 material profile without activating it; C1 remains the default."""
+"""Prepare a matched material profile without activating it; C1 remains the default.
+
+ModelScope share 60 (default, 60/40 with OpenI) or 100; optional --signed-ttl adds mssign.lua (signed CDN redirects).
+"""
 
 import argparse
 import hashlib
@@ -27,6 +30,8 @@ OPENI_ONLY_ALLOWLIST = frozenset({'/assets/skins/char_340_shwaz_snow_1/illustrat
 MAX_MODEL_PREFIXES = 8
 MAX_OPENI_MIRRORS = 3
 MAX_ENTRIES = 100000
+MODELSCOPE_WEIGHTS = (60, 100)
+SIGNED_TTL_RANGE = (600, 3600)
 OPENI_MANIFEST_KEYS = {'schemaVersion', 'release', 'fallbackBase', 'dataset', 'apiOrigin',
                        'ossOrigin', 'ossPathPrefix', 'entries', 'mirrorReleases'}
 MODEL_MANIFEST_KEYS = {'schemaVersion', 'release', 'fallbackBase', 'repo', 'revision', 'prefix',
@@ -90,7 +95,7 @@ def entries(manifest, models, *, release=RELEASE, model_prefix=MODEL_PREFIX, mod
 
 
 def render(openi, models, container_dir, *, release=RELEASE, model_revision=MODEL_REVISION, model_prefix=MODEL_PREFIX,
-           model_prefixes=None, openi_only_paths=()):
+           model_prefixes=None, openi_only_paths=(), modelscope_weight=60, signed_ttl=None):
     require(isinstance(openi, dict) and isinstance(models, dict), 'manifests must be objects')
     require(set(openi) <= OPENI_MANIFEST_KEYS and set(models) <= MODEL_MANIFEST_KEYS, 'unknown manifest fields')
     require(isinstance(release, str) and RELEASE_ID.fullmatch(release), 'invalid release pin')
@@ -104,6 +109,9 @@ def render(openi, models, container_dir, *, release=RELEASE, model_revision=MODE
     require(isinstance(openi_only_paths, (list, tuple)) and len(openi_only_paths) <= 1 and
             all(isinstance(path, str) and path in OPENI_ONLY_ALLOWLIST for path in openi_only_paths) and
             len(set(openi_only_paths)) == len(openi_only_paths), 'invalid OpenI-only exception')
+    require(type(modelscope_weight) is int and modelscope_weight in MODELSCOPE_WEIGHTS, 'invalid ModelScope weight')
+    require(signed_ttl is None or (type(signed_ttl) is int and
+            SIGNED_TTL_RANGE[0] <= signed_ttl <= SIGNED_TTL_RANGE[1]), 'invalid signed TTL')
     require(models.get('prefixes', [model_prefix]) == list(prefixes), 'ModelScope prefix declarations differ')
     require(models.get('openiOnlyPaths', []) == list(openi_only_paths), 'OpenI-only declarations differ')
     fallback = FALLBACK_ORIGIN + '/releases/' + release
@@ -137,7 +145,7 @@ def render(openi, models, container_dir, *, release=RELEASE, model_revision=MODE
     require(all(any(url.startswith(base) for base in model_bases) for url in urls.values()), 'invalid ModelScope target')
     paths = {path: False if path in exceptions else urls[path] for path in oi}
     data = {'schemaVersion': 2, 'release': release, 'fallbackBase': fallback, 'modelscopeBase': model_base,
-            'openiWeight': 40, 'modelscopeWeight': 60, 'ningxiaWeight': 0, 'paths': paths}
+            'openiWeight': 100 - modelscope_weight, 'modelscopeWeight': modelscope_weight, 'ningxiaWeight': 0, 'paths': paths}
     if len(model_bases) > 1:
         data['modelscopeBases'] = model_bases
     q = lambda value: json.dumps(value, ensure_ascii=True)
@@ -153,6 +161,10 @@ def render(openi, models, container_dir, *, release=RELEASE, model_revision=MODE
     access = access.replace('"ark_material_lb_20261006_model60_v3"', q(access_key))
     access = access.replace('__MATERIAL_LB_MODELSCOPE_BASES__', lua_bases).replace(
         '__MATERIAL_LB_OPENI_ONLY__', lua_exceptions).replace('__MATERIAL_LB_MAX_ENTRIES__', str(MAX_ENTRIES))
+    access = access.replace('__MATERIAL_LB_OPENI_WEIGHT__', str(100 - modelscope_weight)).replace(
+        '__MATERIAL_LB_MODELSCOPE_WEIGHT__', str(modelscope_weight)).replace(
+        '__MATERIAL_LB_MODELSCOPE_BOUNDARY__', str(round(modelscope_weight * 2 ** 32 / 100)))
+    access = access.replace('__MATERIAL_LB_SIGNER__', q(container_dir + '/mssign.lua') if signed_ttl else 'nil')
     key = 'ark_material_lb_header_data_' + container_dir[len(CONTAINER_PREFIX):].replace('-', '_')
     header = (TEMPLATES / 'header.lua').read_text().replace('__MATERIAL_LB_KEY__', key).replace(
         '__MATERIAL_LB_HEADER_DATA__', container_dir + '/header-data.json')
@@ -162,9 +174,15 @@ def render(openi, models, container_dir, *, release=RELEASE, model_revision=MODE
     header = header.replace('__MATERIAL_LB_OSS_PATH_PREFIX__', q(prefix)).replace(
         '__MATERIAL_LB_MIRRORS__', '{' + ', '.join('[' + q(mirror) + '] = true'
             for mirror in openi.get('mirrorReleases', [release])) + '}')
-    return {'routes.json': (json.dumps(data, separators=(',', ':')) + '\n').encode(),
-            'access.lua': access.encode(), 'header.lua': header.encode(),
-            'header-data.json': (json.dumps(header_data, separators=(',', ':')) + '\n').encode()}
+    files = {'routes.json': (json.dumps(data, separators=(',', ':')) + '\n').encode(),
+             'access.lua': access.encode(), 'header.lua': header.encode(),
+             'header-data.json': (json.dumps(header_data, separators=(',', ':')) + '\n').encode()}
+    if signed_ttl:
+        namespace, repository = MODEL_REPO.split('/')
+        files['mssign.lua'] = (TEMPLATES / 'mssign.lua').read_text().replace(
+            '__MATERIAL_LB_SIGNED_REVISION__', model_revision).replace('__MATERIAL_LB_SIGNED_TTL__', str(signed_ttl)).replace(
+            '__MATERIAL_LB_SIGNED_NAMESPACE__', namespace).replace('__MATERIAL_LB_SIGNED_REPOSITORY__', repository).encode()
+    return files
 
 
 def write_output(files, output):
@@ -194,6 +212,10 @@ def main():
                         help='complete immutable prefix whitelist, primary first; must match manifest prefixes')
     parser.add_argument('--openi-only-path', action='append', default=[], dest='openi_only_paths',
                         help='explicit authorized single alias; must match manifest openiOnlyPaths')
+    parser.add_argument('--modelscope-weight', type=int, default=60, choices=MODELSCOPE_WEIGHTS,
+                        help='percentage of ordinary GETs sent to ModelScope (rest: OpenI)')
+    parser.add_argument('--signed-ttl', type=int,
+                        help='add mssign.lua: signed CDN redirects, signature validity lower bound in seconds')
     args = parser.parse_args()
     try:
         pins = (args.release, args.modelscope_revision, args.modelscope_prefix)
@@ -202,7 +224,8 @@ def main():
         openi = json.loads(args.openi_manifest.read_text())
         models = json.loads(args.modelscope_manifest.read_text())
         files = render(openi, models, args.container_dir, model_prefixes=args.model_prefixes,
-                       openi_only_paths=args.openi_only_paths, **profile)
+                       openi_only_paths=args.openi_only_paths, modelscope_weight=args.modelscope_weight,
+                       signed_ttl=args.signed_ttl, **profile)
         hashes = write_output(files, args.out)
         print(json.dumps({'prepared': True, 'activated': False, 'out': str(args.out), 'filesSha256': hashes}))
     except (OSError, ValueError, TypeError, KeyError):

@@ -1,9 +1,9 @@
 # 公开素材多源分发
 
-本文说明公开素材分发的实现与安全合同，不记录具体部署坐标或上线状态。以下60/40是版本化profile的选择规则，不是某环境的流量或验收声明。实际release、数据集、revision、前缀、挂载摘要及取证保存在Git外的私有发布记录；见[记录边界](releases/README.md)。
+本文说明公开素材分发的实现与安全合同，不记录具体部署坐标或上线状态。以下默认60/40（`--modelscope-weight 100` 为全部普通GET走ModelScope）及可选签名重定向是版本化profile的选择规则，不是某环境的流量或验收声明。实际release、数据集、revision、前缀、挂载摘要及取证保存在Git外的私有发布记录；见[记录边界](releases/README.md)。
 
 ## 离线工具的安全合同
-- `prepare-material-lb.py` 输出固定小型 `access.lua`／`header.lua` 和 `routes.json`／`header-data.json`；**不再把全量库存编译为 Lua 表**。大型 Lua 表可能触发 LuaJIT 常量上限，`nginx -t` 不能证明运行时filter可执行。必须用实际全量尺寸执行 JSON 解码、缓存和 HTTP filter。
+- `prepare-material-lb.py` 输出固定小型 `access.lua`／`header.lua` 和 `routes.json`／`header-data.json`（`--signed-ttl` 时另加 `mssign.lua`）；**不再把全量库存编译为 Lua 表**。大型 Lua 表可能触发 LuaJIT 常量上限，`nginx -t` 不能证明运行时filter可执行。必须用实际全量尺寸执行 JSON 解码、缓存和 HTTP filter。
 - 默认单前缀、无例外及原 60/40 行为保留；新版本要同时指定 release、40hex revision、primary prefix；公开材料消费者上限为100000 aliases／64MiB输入，OpenI最多三个明确审核、固定且去重的mirror目录，保持单／双目录兼容并拒绝第四个；本次只增加已有两目录之外的固定0.2.3增量目录，不提供自动发现或任意host/root/path。ModelScope现有上限仍为八个明确批准的prefix。多前缀以重复 `--modelscope-allowed-prefix` 明示，清单 `prefixes` 必须同序、去重且 primary 在首位；所有 URL 均绑定同一个 revision 和固定公开 repo/origin。
 - `--openi-only-path` 仅允许 `/assets/skins/char_340_shwaz_snow_1/illustration.png` 这一精确批准的素材例外，且必须与 MS 清单 `openiOnlyPaths` 一致、存在于 OI 库存。MS alias 集合必须正好为 OI 集合减该例外；普通条目的 bytes／SHA／MIME 逐项一致。未知根字段、额外缺项、其他例外或未认可前缀均拒绝。
 - 例外在 routes 中保留为 `false`，只允许该已明示路径直接进入 OI；未知路径的 `nil` 仍拒绝。例外的 header entry 不包含 ModelScope target，因此伪造 MS Location 不能得到公开缓存。JSON 只读取／解码一次，错误数据也缓存为拒绝，避免重复解析大文件。
@@ -62,10 +62,20 @@ OpenI目标只接受原Signature V2字段与固定HTTP wrapper `sp_request=cors|
 
 本地 opt-in真实 OpenResty 验证：设置 `MATERIAL_OPENRESTY_RUNTIME` 指向已有可用的隔离runtime（包含 `ld-linux-x86-64.so.2`、`openresty/nginx/sbin/nginx`、配套libraries和cjson），执行 `python3 -I deploy/stardust/tools/test-prepare-material-lb.py`。该测试只启动localhost、使用synthetic清单/签名并检查重定向，不跟随 Location 或联系provider；未提供runtime时明确SKIP这一项。浏览器入口与边界见 [ASSETS.md](../../docs/ASSETS.md#browser-public-material-failover)。
 
+## ModelScope 签名重定向（可选 `--signed-ttl`）
+
+`modelscope.cn` 的公开 resolve 地址只走 HTTP/1.1，每次返回带新 `auth_key` 的不可缓存 302。浏览器对同一域名最多 6 条连接，同屏上百个图标会在这一跳排队，触发客户端 8 秒超时后整批切到 OpenI。`--signed-ttl <秒>` 在 profile 中加入 [material-lb/mssign.lua](material-lb/mssign.lua)：入口 OpenResty 对每个对象用内部 HEAD 子请求解析一次，把 CDN 签名地址存在共享内存，浏览器只跟随一次 302 直达 HTTP/2 CDN。
+
+- 只接受 `https://cdn-lfs*.modelscope.cn/prod/lfs-objects/…`、同一 repo／revision、固定查询字段且时间戳与本机相差不超过 120 秒的 type-A `auth_key`。其他回答、出错、冷却或锁等待超时一律回到原公开 resolve 302，与未启用相同。
+- `--signed-ttl` 是实测签名有效期的下限（600–3600 秒），不是 provider 承诺。剩余不足 300 秒时由一个请求重签，不足 120 秒不再下发；浏览器缓存签名 302 至多 300 秒，并在签名到期前至少 60 秒结束。尚未签到的回退 302 只缓存 60 秒；未启用签名的 profile 仍缓存 86400 秒。
+- 不限速：同一对象同一时间只解析一次（`resty.lock`）。上游 403／429／HTML 挑战页冷却 60 秒，连接失败／5xx 冷却 10 秒；200（非 LFS 对象）或 404 使该对象 10 分钟内直接回退。
+- 安装时把 [mssign-http.conf](material-lb/mssign-http.conf) 放进 http 上下文，把 [mssign-server.conf](material-lb/mssign-server.conf) 放进运行素材 `access.lua` 的 server。子请求不转发客户端头、Cookie 或正文，并校验证书；签名地址只在共享内存，不写日志、不落盘。共享内存在平滑 reload 后保留，冷重启后清空，首批对象各需解析一次。
+
 ## 版本化实现与离线准备
 
-- [material-lb/access.lua](material-lb/access.lua)：精确alias白名单、raw target验证、HEAD/OPTIONS、60:40选择；GET使用request_id前32随机bits，边界2576980378，精度误差小于1/2³²。
-- [material-lb/header.lua](material-lb/header.lua)：精确重定向目标校验、签名寿命限制、公开短缓存及CORS/Vary；未知信息fail-closed到no-store。
+- [material-lb/access.lua](material-lb/access.lua)：精确alias白名单、raw target验证、HEAD/OPTIONS、ModelScope份额选择（默认60:40，边界2576980378；100%为4294967296）；GET使用request_id前32随机bits，精度误差小于1/2³²；签名profile先取 `mssign.lua` 的CDN重定向。
+- [material-lb/mssign.lua](material-lb/mssign.lua)、[mssign-http.conf](material-lb/mssign-http.conf)、[mssign-server.conf](material-lb/mssign-server.conf)：可选签名重定向的模板与入口配置片段。
+- [material-lb/header.lua](material-lb/header.lua)：精确重定向目标校验、签名寿命限制、公开缓存（稳定ModelScope地址86400秒、签名CDN地址按剩余寿命）及CORS/Vary；未知信息fail-closed到no-store。
 - [tools/prepare-material-lb.py](tools/prepare-material-lb.py)：离线生成批准profile的routes、header data及loader替换；不联网、不上传、不接触远端、不reload或激活。
 - [tools/test-prepare-material-lb.py](tools/test-prepare-material-lb.py)：本地准备器/模板验证入口，不代替实际目标OpenResty与真实浏览器验收。
 
@@ -79,6 +89,7 @@ python3 -I deploy/stardust/tools/prepare-material-lb.py \
   --openi-manifest "$VERIFIED_OPENI_MANIFEST" \
   --modelscope-manifest "$VERIFIED_PINNED_MODELSCOPE_MANIFEST" \
   --container-dir /www/sites/game.example.com/material-lb/EXAMPLE_IMMUTABLE_PROFILE \
+  --modelscope-weight 100 --signed-ttl "$MEASURED_SIGNATURE_SECONDS" \
   --out "$NEW_OFFLINE_STAGE"
 ```
 
