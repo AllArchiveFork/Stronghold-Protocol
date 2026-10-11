@@ -85,31 +85,20 @@ test('shipped announcement data validates; optional board is mounted from the lo
   assert.match(board, /ariaLabel=\$\{t\('大厅公告板'\)\} trapFocus=\$\{true\}/);
 });
 
-test('today folds in 0.2.4 and phone fixes, removes yesterday and retains the introduction', () => {
+test('today is one short apology with the maintenance and phone fixes, and the introduction is retained', () => {
   const entries = parseAnnouncements(JSON.parse(source('../../data/announcements.json')));
   assert.equal(entries.length, 2);
   assert.equal(entries[0].title, '10 月 11 日更新与维护致歉');
   assert.equal(entries[0].date, '2026-10-11');
   assert.equal(entries[1].title, '欢迎游玩卫戍协议！卫来！');
   assert.equal(entries[1].date, '2026-10-06');
-  assert.ok(entries.every(entry => entry.date !== '2026-10-10'));
   const today = entries[0].paragraphs.join('\n');
-  for (const feature of ['非常抱歉', '大厅延迟', '加载缓慢', '连接中断', '0.2.2、0.2.3 与 0.2.4',
-    '放大战斗商店中的干员卡片', '左右滑动', '手机大厅在线人数', '横屏与竖屏', '支持折叠', '收进「更多」',
-    '统一放在「设置」', '两项偏好分别保存', '等待人数', '包含自己或本队', '全员确认', '减少动画',
-    '二十名真人', '完整干员配置', '开战属性与实时生命值', '压缩处理', '每秒 10 次同步',
-    '已结束战场的重复快照', '单个公开素材加载失败后的备用来源重试', '/healthz', '本次更新中断了旧房间与对局',
-    '克莱门莎', '黍、乌尔比安的新模组', '潜能 1–6', '四档文字大小', '本机统计', '历史结算回看',
-    '恢复已关闭窗口的对局', '每人 50 秒', '4／8／12／16／20', '每四人共享一卡池', '271 套时装战斗模型',
-    '一份完整预设', '兼容旧的单项配置', '回退中文', '不改变技能、模组或战斗属性',
-    '全队共享的数量上限', '购买时复检', '装备选项耗尽', '哈洛德', '涤火杰西卡', '香槟炸弹',
-    '带 AI 队友', '固定 300 游戏秒', '两场各 150 秒', '单场为 300 秒', '至少 11 生命时支付 10 点救援',
-    '每局最多获救一次', '原有干员、装备和经济保持']) assert.ok(today.includes(feature), feature);
-  assert.match(today, /服务器扩容与接入迁移已完成，正式服务现已恢复/);
+  for (const phrase of ['非常抱歉', '对局卡顿', '加载缓慢', '连接中断', '正式服务现已恢复', '对战集群扩充到 32 组',
+    '请刷新页面重新进入', '局内表情', '误判为加载失败', '向左或向右展开', '全屏按钮移到大厅顶栏', '0.2.4']) assert.ok(today.includes(phrase), phrase);
   assert.doesNotMatch(today, /保证不卡顿|带宽无限|固定比例下降|会话重置.*已修复|正在进行服务器扩容|不[^。；]{0,100}，也不/);
   assert.match(entries[1].paragraphs.join('\n'), /纯公益.*非官方/);
   assert.match(entries[1].paragraphs.join('\n'), /github\.com\/sganggs\/Stronghold-Protocol/);
-  assert.ok(entries.flatMap(entry => entry.paragraphs).join('\n').length < 2500, 'the consolidated notice remains bounded');
+  assert.ok(entries.flatMap(entry => entry.paragraphs).join('\n').length < 800, 'the notice stays short');
 });
 
 test('announcements omit contacts and infrastructure; the lobby owns the copyable group number', () => {
