@@ -277,6 +277,24 @@ function DifficultyCard({ roomMode, difficulty, selected, onSelect, disabled = f
   </button>`;
 }
 
+/** The 更多 menu's CSS width (lobby.css .lobby-tools__menu), used while it is still closed and cannot be measured. */
+const TOOLS_MENU_WIDTH = 180;
+
+/**
+ * Which edge the 更多 menu hangs from: 'end' (aligned with the button's right edge, opening leftward) while that stays
+ * on screen, else 'start' (from the button's left edge, opening rightward — portrait phones put the button on the
+ * left); when neither fits, the side with more room.
+ * @param {{ left: number, right: number } | null | undefined} anchor the summary's bounding rect
+ * @param {number} menuWidth @param {number} viewportWidth @param {number} [margin]
+ * @returns {'start'|'end'}
+ */
+export function toolsMenuSide(anchor, menuWidth, viewportWidth, margin = 8) {
+  if (!anchor || !(menuWidth > 0) || !(viewportWidth > 0)) return 'end';
+  if (anchor.right - menuWidth >= margin) return 'end';
+  if (anchor.left + menuWidth <= viewportWidth - margin) return 'start';
+  return anchor.right >= viewportWidth - anchor.left ? 'end' : 'start';
+}
+
 // Mounted on demand. Keep optional announcement I/O here, outside the shared in-match UI data contract.
 function LobbyAnnouncements({ snapshot, onClose }) {
   useData('announcements');
@@ -307,6 +325,20 @@ export function LobbyScreen() {
   const [busy, setBusy] = useState(null);
   const [overlay, setOverlay] = useState(null);
   const [loadOpen, setLoadOpen] = useState(false);
+  const toolsRef = useRef(null);
+  const [toolsSide, setToolsSide] = useState('end');
+  // measured on the tap (before the menu shows, so it never paints on the wrong side), on toggle and on resize
+  const placeTools = (opening = false) => {
+    const el = toolsRef.current;
+    if (!el || !(opening || el.open)) return;
+    const menu = el.querySelector('.lobby-tools__menu');
+    setToolsSide(toolsMenuSide(el.querySelector('summary')?.getBoundingClientRect(), menu?.offsetWidth || TOOLS_MENU_WIDTH, globalThis.innerWidth || 0));
+  };
+  useEffect(() => {
+    const onResize = () => placeTools();
+    globalThis.addEventListener?.('resize', onResize);
+    return () => globalThis.removeEventListener?.('resize', onResize);
+  }, []);
   const [announcements, setAnnouncements] = useState({ value: null, revision: null });
   const noticeStatus = data.status('announcements'), noticeValue = data.get('announcements');
   const [recent] = useState(recentRooms);
@@ -399,16 +431,17 @@ export function LobbyScreen() {
         <${PingPill} ms=${conn.ping} online=${online} status=${conn.status} loadState=${conn.loadState ?? 'unknown'} loadDetails=${conn.loadDetails}
           clusterLoad=${conn.clusterLoad} loadOpen=${loadOpen} onLoadClick=${() => setLoadOpen(true)} />
         <${OnlinePlayers} />
+        <${FullscreenButton} class="lobby-fullscreen" showUnavailable=${true} />
       </div>
       <div class="topbar__center">
         <${MicroLabel} tone="mint">SIMULATION PROTOCOL SELECT<//>
         <h1 class="topbar__title">${t('选择模拟协议')}</h1>
       </div>
       <div class="topbar__right">
-        <details class="lobby-tools" onKeyDown=${(e) => { if (e.key === 'Escape' && !e.target.closest('.modal')) e.currentTarget.open = false; }}>
-          <summary aria-label=${t('更多')}><${Icon} name="dots" />${t('更多')}</summary>
+        <details ref=${toolsRef} class=${toolsSide === 'start' ? 'lobby-tools lobby-tools--start' : 'lobby-tools'} onToggle=${() => placeTools()}
+            onKeyDown=${(e) => { if (e.key === 'Escape' && !e.target.closest('.modal')) e.currentTarget.open = false; }}>
+          <summary aria-label=${t('更多')} onClick=${() => placeTools(true)}><${Icon} name="dots" />${t('更多')}</summary>
           <div class="lobby-tools__menu">
-            <${FullscreenButton} class="lobby-fullscreen" showUnavailable=${true} />
             <${Button} class="lobby-announcements" variant="secondary" size="sm" icon="info" aria-haspopup="dialog"
               onClick=${() => setOverlay('announcements')}>${t('公告')}<//>
             <${Button} variant="secondary" size="sm" icon="chart" class="stats-entry" onClick=${openStats} title=${t('统计数据')} aria-label=${t('统计数据')}>${t('统计')}<//>

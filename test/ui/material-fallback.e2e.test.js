@@ -86,11 +86,25 @@ test('browser survives two-redirect CDN failures with bounded public-material Op
       paint('/assets/test/browser-healthy.png'); await wait(() => loaded === 2);
       await new Promise(resolve => setTimeout(resolve, 150));
       const latestSrc = root.querySelector('img').getAttribute('src');
+      // A lazy image whose observer reports it in view only after its load event (a busy phone entering a match)
+      // must not start a timer that later swaps the displayed image to OpenI.
+      const NativeObserver = globalThis.IntersectionObserver;
+      globalThis.IntersectionObserver = class extends NativeObserver {
+        constructor(callback, options) { super((entries, observer) => setTimeout(() => callback(entries, observer), 300), options); }
+      };
+      render(null, root);
+      render(h(MaterialImage, { src: '/assets/test/browser-healthy-lazy.png', loading: 'lazy', timeoutMs: 80, onLoad: () => loaded++, onError: () => failed++ }), root);
+      await wait(() => loaded === 3);
+      await new Promise(resolve => setTimeout(resolve, 600));
+      const lazySrc = root.querySelector('img').getAttribute('src');
+      globalThis.IntersectionObserver = NativeObserver;
       const json = await fetchMaterial('/assets/test/browser-cors.json', res => res.json());
       render(null, root); root.remove();
-      return { loaded, failed, timeoutSrc, latestSrc, json };
+      return { loaded, failed, timeoutSrc, latestSrc, lazySrc, json };
     });
-    assert.deepEqual(report.dom, { loaded: 2, failed: 1, timeoutSrc: '/assets/test/browser-timeout.png?sp_source=openi', latestSrc: '/assets/test/browser-healthy.png', json: { fixture: true } });
+    assert.deepEqual(report.dom, { loaded: 3, failed: 1, timeoutSrc: '/assets/test/browser-timeout.png?sp_source=openi', latestSrc: '/assets/test/browser-healthy.png',
+      lazySrc: '/assets/test/browser-healthy-lazy.png', json: { fixture: true } });
+    assert.equal(report.forced.includes('/assets/test/browser-healthy-lazy.png'), false, 'a lazy image that already loaded is not swapped to OpenI');
     assert.equal(report.forced.includes('/assets/test/browser-stale.png'), false, 'old source timer is cancelled');
     assert.equal(report.forced.includes('/assets/test/browser-healthy.png'), false, 'healthy image is not duplicated');
     assert.equal(report.forced.filter(path => path.includes('both-fail')).length, 1, 'both failures cannot loop');

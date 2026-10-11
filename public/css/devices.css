@@ -204,11 +204,14 @@ html:not(.sp-in-match) .toast-host { margin-top: var(--sa-t); }
   .lobby-screen .online-players { display: inline-flex; position: absolute; top: 100%; left: 16px; min-height: 40px; font-size: 12px; gap: 4px; }
   .lobby-screen .online-players .icon { width: 16px; height: 16px; }
   .lobby-screen .topbar .btn, .lobby-tools > summary { min-height: 44px; }
+  .lobby-screen .lobby-fullscreen { width: 44px; height: 44px; }
   .lobby-body { padding-block: 6px; }
   .gm .team { top: max(2.6rem, 104px); bottom: 88px; width: min(340px, calc(100vw - 32px)); max-height: calc(100% - 192px); padding: 4px; gap: 4px; }
   .gm .team.is-folded { bottom: auto; width: 164px; }
   .team .team__players { min-height: 0; overflow-y: auto; overflow-x: hidden; pointer-events: auto; touch-action: pan-y; overscroll-behavior: contain; }
   .gm .team:not(.team--expanded) .team__row { min-height: 56px; gap: 10px; padding: 4px; background: rgba(10, 18, 15, .9); }
+  /* the rows fill the clipping scroller here: a teammate's emote sits inside its row, not beside it */
+  .gm .team:not(.team--expanded) .team__bubble { left: auto; right: 4px; }
   .gm .team .team__btn { min-width: 44px; min-height: 44px; }
   .gm .team .team__name { font-size: max(calc(.16 * var(--t)), 14px); max-width: 100%; }
   .gm .team .lp--sm { font-size: 14px; }

@@ -252,8 +252,12 @@
 .lobby-tools > summary::-webkit-details-marker { display: none; }
 .lobby-tools > summary .icon { width: 16px; height: 16px; }
 .lobby-tools__menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 20; display: flex; flex-direction: column; gap: 6px; width: 180px; padding: 8px; background: var(--bg-1); border: 1px solid var(--line-2); box-shadow: 0 6px 20px rgba(0, 0, 0, .4); }
-.lobby-tools__menu .btn, .lobby-tools__menu .fsbtn { width: 100%; min-height: 44px; justify-content: flex-start; font-size: 14px; }
+.lobby-tools__menu .btn { width: 100%; min-height: 44px; justify-content: flex-start; font-size: 14px; }
 .lobby-tools:not([open]) .lobby-tools__menu { display: none; }
+/* opened rightward from the button's left edge when the right-aligned menu would leave the screen (lobby.js toolsMenuSide) */
+.lobby-tools--start .lobby-tools__menu { left: 0; right: auto; }
+/* inside 更多 a row has room for its name (stats.css hides the 统计 label beside its icon on narrow top bars) */
+.lobby-tools__menu .stats-entry .btn__icon + .btn__label { position: static; width: auto; height: auto; margin: 0; overflow: visible; clip: auto; }
 .lobby-screen .me-chip__name { max-width: 1.5rem; }
 .lobby-screen .join-row .field { min-width: 0; }
 .lobby-protocol-help { margin-left: auto; height: .36rem; font-size: calc(.14 * var(--t)); }

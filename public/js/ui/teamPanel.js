@@ -17,6 +17,8 @@
 // local 联防 replica's count while it is on screen (`uniteLocal`: the battle runner's state().uniteLeft, the same battle
 // the player watches, so the number moves with the kills on screen), else m.public players[].uniteLeft (the authority's
 // report, ~1 Hz).
+// A folded roster (phones, and rosters of more than four) keeps the emotes visible: the newest senders' avatars with
+// their bubbles stand under the header (`team__emotes`), since the rows that carry the bubbles are not rendered then.
 
 import { useEffect, useRef, useState } from '../../vendor/hooks.module.js';
 import { PHASE } from '../../../shared/constants.js';
@@ -35,6 +37,22 @@ const cx = (...p) => p.flat().filter(Boolean).join(' ');
 
 /** Official status glyphs (ui/battle) per m.public players[].status; CSS glyph fallback. */
 const STATUS_SPRITE = { ready: 'icon_ready', deciding: 'icon_waiting', done: 'icon_complete', dead: 'icon_dead' };
+
+/** How many senders a folded roster shows under its header. */
+export const FOLDED_EMOTES = 4;
+
+/**
+ * The emotes a folded roster shows: the newest sender first, at most `limit`, only seats still in m.public.
+ * @param {Map<string,{id:string,seq:number,at?:number}>|null|undefined} bubbles activeBubbles(...)
+ * @param {any[]} players sortedPlayers(pub)
+ * @returns {Array<{ player: any, bubble: { id: string, seq: number, at?: number } }>}
+ */
+export function foldedEmotes(bubbles, players, limit = FOLDED_EMOTES) {
+  if (!(bubbles instanceof Map) || !bubbles.size) return [];
+  const byId = new Map((players || []).map(p => [p?.playerId, p]));
+  return [...bubbles].filter(([pid]) => byId.has(pid)).sort((a, b) => b[1].seq - a[1].seq).slice(0, limit)
+    .map(([pid, bubble]) => ({ player: byId.get(pid), bubble }));
+}
 
 /**
  * A row's LP tower: the settled LP and the pending loss of the round's battle (0 outside COMBAT / UNITE). The own row
@@ -197,6 +215,11 @@ export function TeamPanel({ pub, myId, watching, bubbles, onWatch, compact = fal
       </button>
     </div>
     <div ref=${noticeRef} class="team__notice"><${RevivalNotice} pub=${pub} /></div>
+    ${rosterOpen ? null : html`<div class="team__emotes">${foldedEmotes(bubbles, players).map(({ player: p, bubble }) => html`<div key=${p.playerId}
+        class="team__emote" title=${p.name || t('博士')}>
+      <${PlayerAvatar} player=${p} size="sm" self=${p.playerId === myId} />
+      <${EmoteBubble} key=${bubble.seq} id=${bubble.id} at=${bubble.at} class="team__emote-bubble" />
+    </div>`)}</div>`}
     <div class="team__players" id="team-roster" hidden=${!rosterOpen}>${players.map((p) => {
       const self = p.playerId === myId;
       const status = p.pendingDeath ? 'rescue' : p.alive === false ? 'dead' : p.status;
