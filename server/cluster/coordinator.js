@@ -1,38 +1,56 @@
 // Opt-in assembly: one global Lobby and a separate authenticated terminal-event
 // listener. High-frequency game data goes directly from nodes to ingress sockets.
+// /healthz `performance.phases` carries this process's per-phase timings (server/phaseMetrics.js).
 import http from 'node:http';
 import { startServer } from '../index.js';
-import { sendSession } from '../net.js';
+import { sendSession, sendSessionEncoded } from '../net.js';
+import { createPhaseMetrics } from '../phaseMetrics.js';
 import { PROTOCOL_VERSION } from '../../shared/constants.js';
 import { ClusterLobby } from './lobby.js';
 import { RemoteGamePlatform } from './platform.js';
 import { createRpcAuthenticator, createRpcHandler } from './rpc.js';
 import { createReceiptSink } from './receipts.js';
 
+/**
+ * With `receiptWorker` (opt-in, off by default), receipts at least this large are verified/parsed by one receipt
+ * Worker instead of the coordinator main thread. Off keeps the coordinator at zero WorkerThreads, the contract the
+ * managed core profile's thread check enforces (deploy/stardust/tools/cluster-host-manager.py); the single parse and
+ * the spliced terminal frames apply either way.
+ */
+export const RECEIPT_OFF_THREAD_BYTES = 128 * 1024;
+
+/** room.closed reason for a match its game node can no longer run (public/js/main.js CLOSE_REASON). */
+export const closeReasonFor = reason => (reason === 'NODE_RESTARTED' ? 'node-restarted' : 'node-unavailable');
+
 export async function startCoordinator({ nodes, build, protocol = PROTOCOL_VERSION, privateHost = '127.0.0.1', privatePort = 0,
-  heartbeatMs = 1500, ...options } = {}) {
+  heartbeatMs = 1500, nodeLostMs = 15_000, receiptWorker = false, ...options } = {}) {
   if (!Number.isSafeInteger(privatePort) || privatePort < 0 || privatePort > 65535 || typeof privateHost !== 'string' || !privateHost
-    || !Number.isSafeInteger(heartbeatMs) || heartbeatMs < 100 || heartbeatMs > 30_000) throw new TypeError('invalid coordinator listener');
+    || !Number.isSafeInteger(heartbeatMs) || heartbeatMs < 100 || heartbeatMs > 30_000 || typeof receiptWorker !== 'boolean') throw new TypeError('invalid coordinator listener');
   let app, sink, privateServer, timer, stopped = false, closing;
   const privateSockets = new Set(), handlers = new Map();
-  const platform = new RemoteGamePlatform({ nodes, build, protocol, requireStreamMarkers: true,
-    loadTtlMs: Math.max(5000, Math.min(30_000, heartbeatMs * 3)),
-    sendControl: (playerId, message) => app ? sendSession(app.registry.byId(playerId), message) : false,
-    onPublished: assignmentId => sink?.flush(assignmentId),
-    onUnavailable: info => {
-      // Losing the node is not victory/defeat and cannot manufacture a result.
-      // Drop only this assignment's room, leaving all other nodes/rooms intact.
-      const room = app?.lobby.getRoom(info.roomCode);
-      const plan = app?.lobby.assignments.get(info.assignmentId);
-      if (plan && room === plan.room) app.lobby.disposeRoom(room, 'node-unavailable');
-    } });
+  const phases = createPhaseMetrics();
+  let platform;
+  try {
+    platform = new RemoteGamePlatform({ nodes, build, protocol, requireStreamMarkers: true, nodeLostMs, metrics: phases,
+      loadTtlMs: Math.max(5000, Math.min(30_000, heartbeatMs * 3)),
+      sendControl: (playerId, message) => app ? sendSession(app.registry.byId(playerId), message) : false,
+      sendControlEncoded: (playerId, type, frame) => app ? sendSessionEncoded(app.registry.byId(playerId), type, frame) : false,
+      onPublished: assignmentId => sink?.flush(assignmentId),
+      onUnavailable: info => {
+        // Losing the node is not victory/defeat and cannot manufacture a result.
+        // Drop only this assignment's room, leaving all other nodes/rooms intact.
+        const room = app?.lobby.getRoom(info.roomCode);
+        const plan = app?.lobby.assignments.get(info.assignmentId);
+        if (plan && room === plan.room) app.lobby.disposeRoom(room, closeReasonFor(info.reason));
+      } });
+  } catch (e) { phases.dispose(); throw e; }
   try {
     await platform.refresh();
     app = await startServer({ ...options, host: options.host ?? '127.0.0.1', combatWorkers: 0, trialWorkers: 0,
-      snapshotHz: options.snapshotHz ?? 10, wsCompression: 'off', allowAsyncHandlers: true,
+      snapshotHz: options.snapshotHz ?? 10, wsCompression: 'off', allowAsyncHandlers: true, phaseMetrics: phases,
       getClusterLoad: () => platform.publicLoad(),
       lobbyFactory: params => new ClusterLobby({ ...params, platform }) });
-    sink = createReceiptSink({ platform, lobby: app.lobby });
+    sink = createReceiptSink({ platform, lobby: app.lobby, offThreadBytes: receiptWorker ? RECEIPT_OFF_THREAD_BYTES : 0, metrics: phases });
     for (const node of nodes) handlers.set(node.nodeId, createRpcHandler({
       authority: createRpcAuthenticator({ key: node.key, scope: node.nodeId }), operations: sink.opsForNode(node.nodeId) }));
     privateServer = http.createServer((req, res) => {
@@ -59,7 +77,7 @@ export async function startCoordinator({ nodes, build, protocol = PROTOCOL_VERSI
     timer.unref?.();
   } catch (e) {
     clearInterval(timer); sink?.close();
-    await app?.close(); await platform.close();
+    await app?.close(); await platform.close(); phases.dispose();
     if (privateServer) { for (const socket of privateSockets) socket.destroy(); await new Promise(resolve => privateServer.close(resolve)); }
     throw e;
   }
@@ -87,6 +105,7 @@ export async function startCoordinator({ nodes, build, protocol = PROTOCOL_VERSI
       await app.close(); await platform.close();
       for (const socket of privateSockets) socket.destroy();
       await new Promise(resolve => privateServer.close(resolve));
+      phases.dispose();
     })();
     return closing;
   };

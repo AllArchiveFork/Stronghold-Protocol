@@ -108,14 +108,14 @@ for (const family of ['bounty', 'tactic', 'supply', 'shop']) test(`${family}: le
 
 test('room, draft and readable in-game lists keep every seat in bounded scrollers', () => {
   assert.match(source('../../public/css/screens/room.css'), /\.seats\.seats--expanded \{[^}]*overflow-y: auto/);
-  assert.match(source('../../public/css/screens/game.css'), /\.team\.team--expanded \{[^}]*bottom:[^}]*overflow: visible/);
-  assert.match(source('../../public/css/screens/game.css'), /\.team--expanded \.team__players \{[^}]*grid-auto-flow: column[^}]*overflow-y: auto/);
+  const team = source('../../public/css/screens/team.css');
+  assert.match(team, /\.team\.team--list\.is-open \{[^}]*bottom: var\(--team-bottom\)/);
+  assert.match(team, /\.team--list \.team__players \{[^}]*grid-auto-flow: column[^}]*overflow-y: auto/);
   assert.match(source('../../public/js/ui/teamPanel.js'), /aria-controls="team-roster"/);
-  assert.match(source('../../public/css/screens/game.css'), /\.team--expanded \.team__btn \{[^}]*min-width: 44px; min-height: 44px/);
-  assert.match(source('../../public/css/screens/game.css'), /\.team--expanded \.team__bubble \{[^}]*left: auto; right: 0/);
+  assert.match(team, /\.team--list \.team__btn \{[^}]*min-width: 44px; min-height: 44px/);
   assert.match(source('../../public/css/screens/draft.css'), /\.draft-order__players \{[^}]*overflow-y: auto/);
   assert.match(source('../../public/css/screens/game-panels.css'), /\.spov--expanded \.spov__grid \{[^}]*overflow-y: auto/);
-  assert.match(source('../../public/js/ui/teamPanel.js'), /const expanded = players\.length > 4/);
+  assert.match(source('../../public/js/ui/teamLayout.js'), /return !phone && \(Number\(count\) \|\| 0\) <= 4 \? 'classic' : 'list'/);
   assert.match(source('../../public/js/ui/teamPanel.js'), /id=\$\{bubble\.id\} at=\$\{bubble\.at\}/);
   assert.match(source('../../public/js/ui/choiceOverlay.js'), /\(sp\.cards\.length > 6 \|\| order\.length > 4\) && 'spov--expanded'/);
 });

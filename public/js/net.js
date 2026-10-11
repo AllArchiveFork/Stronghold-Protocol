@@ -90,6 +90,17 @@ export class NetError extends Error {
  * @param {() => number} [rand]
  * @returns {number} milliseconds
  */
+/**
+ * The online cap's refusal (ERR SERVER_FULL, server/onlineLimit.js serverFullDetail): the numbers to show and the
+ * server's retry interval (20 s when the detail is missing or malformed).
+ * @param {string | null | undefined} detail @returns {{ online: number|null, limit: number|null, retryMs: number }}
+ */
+export function serverFull(detail) {
+  const read = (key) => { const m = new RegExp(`(?:^|\\s)${key}=(\\d{1,9})(?:\\s|$)`).exec(typeof detail === 'string' ? detail : ''); return m ? Number(m[1]) : null; };
+  const retry = read('retry');
+  return { online: read('online'), limit: read('limit'), retryMs: retry != null && retry >= 1000 && retry <= 300_000 ? retry : 20_000 };
+}
+
 export function backoffDelay(attempt, rand = Math.random) {
   const n = Math.max(0, Math.min(30, Math.floor(Number(attempt) || 0)));
   const raw = Math.min(BACKOFF.max, BACKOFF.base * BACKOFF.factor ** n);
@@ -216,7 +227,7 @@ export class Net {
   snapshot() {
     return {
       status: this.status, attempt: this.attempt, retryAt: this.retryAt, ping: this.ping, loadState: this.loadState, loadDetails: this.loadDetails, clusterLoad: this.clusterLoad,
-      lastError: this.lastError ? { code: this.lastError.code, text: this.lastError.message } : null,
+      lastError: this.lastError ? { code: this.lastError.code, text: this.lastError.message, ...(this.lastError.code === 'SERVER_FULL' ? { detail: this.lastError.detail } : null) } : null,
       playerId: this.playerId,
     };
   }
@@ -346,9 +357,10 @@ export class Net {
     this._scheduleReconnect();
   }
 
-  _scheduleReconnect() {
+  /** @param {number} [delayMs] a fixed wait (SERVER_FULL) instead of the exponential backoff */
+  _scheduleReconnect(delayMs) {
     if (this._manualClose) return;
-    const delay = backoffDelay(this.attempt, this.random);
+    const delay = Number.isFinite(delayMs) && delayMs > 0 ? delayMs : backoffDelay(this.attempt, this.random);
     this.attempt += 1;
     this.retryAt = this.now() + delay;
     this._clearTimer('_reconnectTimer', 'clearTimeout');
@@ -434,6 +446,17 @@ export class Net {
     this._helloRid = null;
     this.lastError = new NetError(msg.code, msg.msg, msg.detail);
     if (msg.code === 'NAME_REJECTED') this.name = null; // wait for an explicit corrected name, not endless rejected reconnects
+    if (msg.code === 'SERVER_FULL') {
+      // the online cap: leave this socket and try again after the server's interval (±25 %), no exponential backoff;
+      // lastError stays for the banner until a welcome
+      const ws = this.ws;
+      this._teardownSocket();
+      try { ws?.close(1000, 'server full'); } catch { /* ignore */ }
+      this._failPending('OFFLINE', true);
+      this._emit('helloError', this.lastError);
+      this._scheduleReconnect(Math.round(serverFull(msg.detail).retryMs * (0.75 + this.random() * 0.5)));
+      return;
+    }
     this._setStatus('connected');
     // Queued requests can't be sent without a session.
     this._failPending('OFFLINE', true);

@@ -78,8 +78,9 @@ export async function loadClusterConfig(file) {
     return { ...runtime, key };
   }
   if (config.role === 'coordinator') {
-    if (!exact(config, ['role', 'build', 'host', 'port', 'privateHost', 'privatePort', 'nodes'], ['heartbeatMs', 'snapshotHz'])
+    if (!exact(config, ['role', 'build', 'host', 'port', 'privateHost', 'privatePort', 'nodes'], ['heartbeatMs', 'snapshotHz', 'receiptWorker'])
       || !bindHost(config.privateHost) || !port(config.privatePort)
+      || config.receiptWorker !== undefined && typeof config.receiptWorker !== 'boolean'
       || config.snapshotHz !== undefined && ![5, 10, 20].includes(config.snapshotHz)
       || config.heartbeatMs !== undefined && (!Number.isInteger(config.heartbeatMs) || config.heartbeatMs < 100 || config.heartbeatMs > 30000)) fail('INVALID_CONFIG');
     checkNodes(config.nodes, true);

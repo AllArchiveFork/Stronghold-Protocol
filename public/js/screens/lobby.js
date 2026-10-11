@@ -10,6 +10,10 @@
 // plays 战场#01, 险境 draws one of 8, 绝境 / 终极 one of 7 (m01 excluded).
 // Texts go through t() (docs/I18N.md); the module-level tables hold msgids (N_) translated where they are shown, the
 // config.json mode texts come localized from data.js.
+// Layout (css/screens/lobby.css): one top bar row (返回 · title · 继续对局 / 干员调配 / 设置 / 玩法说明 / ⛶ / 更多 / the
+// avatar, the one 统计数据 entry), a status strip (connection, online count, feedback group), then the steps in reading
+// order — 01 模拟方式, 02 模拟难度, 03 出发 (the choice summed up + 创建 / 匹配), 04 加入同盟, tips. Two columns on
+// desktops and landscape phones, one column on portrait phones with 出发 kept at the bottom edge while scrolling.
 
 import { ResumeMatchButton } from '../ui/resumeMatch.js';
 import { useEffect, useRef, useState } from '../../vendor/hooks.module.js';
@@ -18,7 +22,7 @@ import { html, Button, Icon, MicroLabel, Modal, Panel, TextField, PingPill, Avat
 import { AnnouncementBoard, announcementRevision, announcementDismissed, dismissAnnouncement } from '../ui/announcements.js';
 import { ServerStatusModal } from '../ui/serverStatus.js';
 import { LobbyFeedback } from '../ui/lobbyFeedback.js';
-import { FullscreenButton } from '../ui/device.js';
+import { FullscreenButton, reducedMotion } from '../ui/device.js';
 import { toast, toastError } from '../ui/toasts.js';
 import { GuideButton } from '../ui/guide.js';
 import { openStats } from './stats.js';
@@ -225,12 +229,16 @@ function TipsPanel() {
     : fallback;
   const list = tips.length ? tips : fallback;
   const [idx, setIdx] = useState(() => Math.floor(Math.random() * list.length));
+  // the rotation waits while the tip is pointed at or focused, and stays off with reduced motion (the arrows still turn it)
+  const [held, setHeld] = useState(false);
   useEffect(() => {
+    if (held || reducedMotion()) return undefined;
     const id = setInterval(() => setIdx((i) => i + 1), TIP_ROTATE_MS);
     return () => clearInterval(id);
-  }, []);
+  }, [held]);
   const i = ((idx % list.length) + list.length) % list.length;
-  return html`<div class="tips brackets">
+  return html`<div class="tips brackets" onPointerEnter=${() => setHeld(true)} onPointerLeave=${() => setHeld(false)}
+      onFocusIn=${() => setHeld(true)} onFocusOut=${() => setHeld(false)}>
     <div class="tips__head">
       <${Icon} name="info" />
       <span>${t('作战提示')}</span>
@@ -336,9 +344,13 @@ export function LobbyScreen() {
   };
   useEffect(() => {
     const onResize = () => placeTools();
+    // 更多 closes on a press outside it (a <details> stays open otherwise), on a choice (closeTools) and on Esc
+    const onPress = (e) => { const el = toolsRef.current; if (el?.open && !el.contains(e.target)) el.open = false; };
     globalThis.addEventListener?.('resize', onResize);
-    return () => globalThis.removeEventListener?.('resize', onResize);
+    globalThis.document?.addEventListener('pointerdown', onPress, true);
+    return () => { globalThis.removeEventListener?.('resize', onResize); globalThis.document?.removeEventListener('pointerdown', onPress, true); };
   }, []);
+  const closeTools = () => { if (toolsRef.current) toolsRef.current.open = false; };
   const [announcements, setAnnouncements] = useState({ value: null, revision: null });
   const noticeStatus = data.status('announcements'), noticeValue = data.get('announcements');
   const [recent] = useState(recentRooms);
@@ -373,6 +385,7 @@ export function LobbyScreen() {
     if (online && !queued && !busy && !pendingJoin && overlay == null && announcements.revision && !announcementDismissed(announcements.revision)) setOverlay('announcements');
   }, [online, queued, busy, pendingJoin, overlay, announcements.revision]);
   const closeAnnouncements = () => { dismissAnnouncement(announcements.revision); setOverlay(null); };
+  const unread = !!announcements.revision && !announcementDismissed(announcements.revision);
 
   const pickMode = (m) => { setRoomMode(m); savePref('lobby.mode', m); };
   const pickDifficulty = (d) => { setDifficulty(d); savePref('lobby.difficulty', d); };
@@ -424,34 +437,31 @@ export function LobbyScreen() {
   const selectedMode = MODE_CARDS.find(c => c.id === (matching ? 'match' : roomMode));
   const selectedInfo = difficultyInfo(matching ? 'coop' : roomMode, queued ? queue.difficulty : difficulty);
 
+  const shownDifficulty = queued ? queue.difficulty : difficulty;
   return html`<div class="screen lobby-screen">
     <header class="topbar">
       <div class="topbar__left">
-        <${Button} variant="ghost" size="sm" icon="chevronLeft" onClick=${backToTitle} title=${t('返回标题')}>${t('返回')}<//>
-        <${PingPill} ms=${conn.ping} online=${online} status=${conn.status} loadState=${conn.loadState ?? 'unknown'} loadDetails=${conn.loadDetails}
-          clusterLoad=${conn.clusterLoad} loadOpen=${loadOpen} onLoadClick=${() => setLoadOpen(true)} />
-        <${OnlinePlayers} />
-        <${FullscreenButton} class="lobby-fullscreen" showUnavailable=${true} />
+        <${Button} variant="ghost" size="sm" icon="chevronLeft" class="lobby-back" onClick=${backToTitle} title=${t('返回标题')} aria-label=${t('返回标题')}>${t('返回')}<//>
       </div>
       <div class="topbar__center">
         <${MicroLabel} tone="mint">SIMULATION PROTOCOL SELECT<//>
         <h1 class="topbar__title">${t('选择模拟协议')}</h1>
       </div>
       <div class="topbar__right">
+        <${ResumeMatchButton} />
+        <${LoadoutButton} from="lobby" size="sm" class="lobby-loadout" label=${t('干员调配')} />
+        <${SettingsButton} class="lobby-settings" variant="secondary" label=${t('设置')} />
+        <${GuideButton} class="lobby-guide" variant="secondary" label=${t('玩法说明')} />
+        <${FullscreenButton} class="lobby-fullscreen" showUnavailable=${true} />
         <details ref=${toolsRef} class=${toolsSide === 'start' ? 'lobby-tools lobby-tools--start' : 'lobby-tools'} onToggle=${() => placeTools()}
             onKeyDown=${(e) => { if (e.key === 'Escape' && !e.target.closest('.modal')) e.currentTarget.open = false; }}>
-          <summary aria-label=${t('更多')} onClick=${() => placeTools(true)}><${Icon} name="dots" />${t('更多')}</summary>
-          <div class="lobby-tools__menu">
+          <summary aria-label=${unread ? `${t('更多')} · ${t('有未读公告')}` : t('更多')} onClick=${() => placeTools(true)}><${Icon} name="dots" /><span class="lobby-tools__label">${t('更多')}</span>${unread ? html`<i class="lobby-dot" aria-hidden="true"></i>` : null}</summary>
+          <div class="lobby-tools__menu" onClick=${(e) => { if (e.target.closest('button')) closeTools(); }}>
             <${Button} class="lobby-announcements" variant="secondary" size="sm" icon="info" aria-haspopup="dialog"
-              onClick=${() => setOverlay('announcements')}>${t('公告')}<//>
-            <${Button} variant="secondary" size="sm" icon="chart" class="stats-entry" onClick=${openStats} title=${t('统计数据')} aria-label=${t('统计数据')}>${t('统计')}<//>
+              onClick=${() => setOverlay('announcements')}>${t('公告')}${unread ? html`<i class="lobby-dot" aria-label=${t('有未读公告')}></i>` : null}<//>
             <${PwaInstallButton} class="lobby-pwa" />
           </div>
         </details>
-        <${ResumeMatchButton} />
-        <${SettingsButton} class="lobby-settings" variant="secondary" label=${t('设置')} />
-        <${GuideButton} class="lobby-guide" variant="secondary" label=${t('玩法说明')} />
-        <${LoadoutButton} from="lobby" size="sm" class="lobby-loadout" label=${t('干员调配')} />
         <button type="button" class="me-chip me-chip--btn stats-entry" onClick=${openStats} title=${t('统计数据')} aria-label=${t('统计数据')}>
           <${AvatarFrame} size="sm" name=${me.name} seat=${0} self=${true} />
           <span class="me-chip__text">
@@ -463,56 +473,78 @@ export function LobbyScreen() {
       </div>
     </header>
 
-    <aside class="lobby-contact"><${LobbyFeedback} /></aside>
+    <div class="lobby-status">
+      <${PingPill} ms=${conn.ping} online=${online} status=${conn.status} loadState=${conn.loadState ?? 'unknown'} loadDetails=${conn.loadDetails}
+        clusterLoad=${conn.clusterLoad} loadOpen=${loadOpen} onLoadClick=${() => setLoadOpen(true)} />
+      <${OnlinePlayers} />
+      <aside class="lobby-contact"><${LobbyFeedback} /></aside>
+    </div>
     <div class="lobby-body screen__scroll">
-      <section class="lobby-left">
-        <div class="section-label"><span class="section-label__idx num">01</span>${t('模拟方式')}<${MicroLabel}>MODE<//>
-          <${Button} variant="ghost" size="sm" class="lobby-protocol-help" aria-haspopup="dialog"
-            onClick=${() => setOverlay('protocol')}>${t('完整说明')}<//>
-        </div>
-        <div class="mode-cards">
-          ${MODE_CARDS.map((c) => html`<${ModeCard} key=${c.id} card=${c} selected=${(matching ? 'match' : roomMode) === c.id} onSelect=${pickMode} disabled=${queued || !!busy} />`)}
-        </div>
-
-        <div class="section-label"><span class="section-label__idx num">03</span>${t('加入同盟')}<${MicroLabel}>JOIN WITH ALLIANCE KEY<//></div>
-        <${Panel} class="join-panel" tone="amber">
-          <div class="join-row">
-            <${TextField} size="code" icon="key" value=${code} placeholder=${t('输入同盟密钥 / 粘贴邀请链接')}
-              transform=${normalizeCode} onInput=${(v) => setCode(normalizeCode(v))} onEnter=${() => join()} />
-            <${Button} variant="amber" size="lg" icon="users" loading=${busy === 'join'} disabled=${!codeOk || !online || queued || !!busy} onClick=${() => join()}>${t('加入同盟')}<//>
-            <${Tooltip} text=${MAX_SPECTATORS > 0 ? t('以观战者身份进入：不占博士席位，只能观看（每个同盟最多 {MAX_SPECTATORS} 名，模拟进行中也可进入）', { MAX_SPECTATORS }) : t('以观战者身份进入：不占博士席位，只能观看（观战席不设人数上限），模拟进行中也可进入')}>
-              <${Button} variant="secondary" size="lg" icon="eye" class="join-spectate" loading=${busy === 'spectate'} disabled=${!codeOk || !online || queued || !!busy} onClick=${spectate}>${t('观战')}<//>
-            <//>
+      <div class="lobby-left">
+        <section class="lobby-step lobby-step--mode">
+          <div class="section-label"><span class="section-label__idx num">01</span>${t('模拟方式')}<${MicroLabel}>MODE<//>
+            <${Button} variant="ghost" size="sm" class="lobby-protocol-help" aria-haspopup="dialog"
+              onClick=${() => setOverlay('protocol')}>${t('完整说明')}<//>
           </div>
-          <p class="t-lo">${t('开局后仍可使用原同盟密钥观战。')}</p>
-          <div class="join-foot">
-            ${recent.length ? html`<span class="t-lo">${t('最近的同盟')}</span>
-              ${recent.map((c) => html`<button key=${c} type="button" class="code-chip num" title=${t('填入密钥（不会直接加入）')}
-                onClick=${() => setCode(c)}>${c}</button>`)}`
-              : html`<span class="t-dim">${t('向同伴索取 {ROOM_CODE_LEN} 位同盟密钥，或直接打开邀请链接', { ROOM_CODE_LEN })}</span>`}
+          <div class="mode-cards">
+            ${MODE_CARDS.map((c) => html`<${ModeCard} key=${c.id} card=${c} selected=${(matching ? 'match' : roomMode) === c.id} onSelect=${pickMode} disabled=${queued || !!busy} />`)}
           </div>
-        <//>
-        <${TipsPanel} />
-      </section>
+        </section>
+        <section class="lobby-step lobby-step--difficulty">
+          <div class="section-label"><span class="section-label__idx num">02</span>${t('模拟难度')}<${MicroLabel}>DIFFICULTY<//></div>
+          <div class="diff-list" hidden=${queued}>
+            ${DIFFICULTIES.map((d) => html`<${DifficultyCard} key=${d} roomMode=${matching ? 'coop' : roomMode} difficulty=${d} selected=${shownDifficulty === d} onSelect=${pickDifficulty} disabled=${queued || !!busy} />`)}
+          </div>
+          ${queued ? html`<p class="lobby-locked t-lo">${t(DIFFICULTY_NAMES[shownDifficulty])} · ${t('同盟集结')}</p>` : null}
+        </section>
+      </div>
 
-      <section class="lobby-right">
-        <div class="section-label"><span class="section-label__idx num">02</span>${queued ? t('同盟集结') : t('模拟难度')}<${MicroLabel}>${queued ? 'MATCHMAKING' : 'DIFFICULTY'}<//></div>
-        <div class="diff-list" hidden=${queued}>
-          ${DIFFICULTIES.map((d) => html`<${DifficultyCard} key=${d} roomMode=${matching ? 'coop' : roomMode} difficulty=${d} selected=${(queued ? queue.difficulty : difficulty) === d} onSelect=${pickDifficulty} disabled=${queued || !!busy} />`)}
-        </div>
-        ${matching ? html`<${MatchmakingPanel} queue=${queue} difficulty=${difficulty} online=${online} joining=${busy === 'create'} onJoin=${create} compact=${true} />` : html`<div class="create-box">
-          <${Tooltip} block=${true} text=${online ? null : t('正在连接服务器…')}>
-            <${Button} variant="primary" size="xl" block=${true} iconRight="chevrons" loading=${busy === 'create'} disabled=${!online} onClick=${create}>
-              ${roomMode === 'solo' ? t('开始独立模拟') : t('创建同盟')}
-            <//>
+      <div class="lobby-right">
+        <section class="lobby-step lobby-step--go">
+          <div class="section-label"><span class="section-label__idx num">03</span>${queued ? t('同盟集结') : t('出发')}<${MicroLabel}>${queued ? 'MATCHMAKING' : 'DEPLOY'}<//></div>
+          <div class="lobby-go" style=${`--d-color:${DIFFICULTY_COLORS[shownDifficulty]}`}>
+            <p class="lobby-go__summary">
+              <${Icon} name=${selectedMode.icon} /><b>${t(selectedMode.name)}</b>
+              <span class="lobby-go__diff">${t(DIFFICULTY_NAMES[shownDifficulty])}</span>
+              <span class="num">${selectedInfo.rounds}</span> ${tc('rounds', '回合')}${selectedInfo.hidden ? html`<span class="lobby-go__hidden">${t('+ 隐秘核心')}</span>` : null}
+            </p>
+            ${matching ? html`<${MatchmakingPanel} queue=${queue} difficulty=${difficulty} online=${online} joining=${busy === 'create'} onJoin=${create} compact=${true} />` : html`<div class="create-box">
+              <${Tooltip} block=${true} text=${online ? null : t('正在连接服务器…')}>
+                <${Button} variant="primary" size="xl" block=${true} iconRight="chevrons" loading=${busy === 'create'} disabled=${!online} onClick=${create}>
+                  ${roomMode === 'solo' ? t('开始独立模拟') : t('创建同盟')}
+                <//>
+              <//>
+              <div class="create-box__hint">
+                ${online
+                  ? html`<span>${roomMode === 'solo' ? t('创建后即可开始模拟') : t('创建后可邀请好友或添加 AI 队友')}</span>`
+                  : html`<${Spinner} size="sm" label="CONNECTING" />`}
+              </div>
+            </div>`}
+          </div>
+        </section>
+
+        <section class="lobby-step lobby-step--join">
+          <div class="section-label"><span class="section-label__idx num">04</span>${t('加入同盟')}<${MicroLabel}>JOIN WITH ALLIANCE KEY<//></div>
+          <${Panel} class="join-panel" tone="amber">
+            <div class="join-row">
+              <${TextField} size="code" icon="key" value=${code} placeholder=${t('输入同盟密钥 / 粘贴邀请链接')}
+                transform=${normalizeCode} onInput=${(v) => setCode(normalizeCode(v))} onEnter=${() => join()} />
+              <${Button} variant="amber" size="lg" icon="users" loading=${busy === 'join'} disabled=${!codeOk || !online || queued || !!busy} onClick=${() => join()}>${t('加入同盟')}<//>
+              <${Tooltip} text=${MAX_SPECTATORS > 0 ? t('以观战者身份进入：不占博士席位，只能观看（每个同盟最多 {MAX_SPECTATORS} 名，模拟进行中也可进入）', { MAX_SPECTATORS }) : t('以观战者身份进入：不占博士席位，只能观看（观战席不设人数上限），模拟进行中也可进入')}>
+                <${Button} variant="secondary" size="lg" icon="eye" class="join-spectate" loading=${busy === 'spectate'} disabled=${!codeOk || !online || queued || !!busy} onClick=${spectate}>${t('观战')}<//>
+              <//>
+            </div>
+            <div class="join-foot">
+              ${recent.length ? html`<span class="t-lo">${t('最近的同盟')}</span>
+                ${recent.map((c) => html`<button key=${c} type="button" class="code-chip num" title=${t('填入密钥（不会直接加入）')}
+                  onClick=${() => setCode(c)}>${c}</button>`)}`
+                : html`<span class="t-dim">${t('向同伴索取 {ROOM_CODE_LEN} 位同盟密钥，或直接打开邀请链接', { ROOM_CODE_LEN })}</span>`}
+              <span class="join-foot__note t-dim">${t('开局后仍可使用原同盟密钥观战。')}</span>
+            </div>
           <//>
-          <div class="create-box__hint">
-            ${online
-              ? html`<span>${roomMode === 'solo' ? t('创建后即可开始模拟') : t('创建后可邀请好友或添加 AI 队友')}</span>`
-              : html`<${Spinner} size="sm" label="CONNECTING" />`}
-          </div>
-        </div>`}
-      </section>
+        </section>
+        <${TipsPanel} />
+      </div>
     </div>
     <${ServerStatusModal} open=${loadOpen} online=${online} state=${conn.loadState} details=${conn.loadDetails} clusterLoad=${conn.clusterLoad} onClose=${() => setLoadOpen(false)} />
     ${overlay === 'announcements' ? html`<${LobbyAnnouncements} snapshot=${announcements} onClose=${closeAnnouncements} />` : null}

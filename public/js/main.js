@@ -209,6 +209,8 @@ const CLOSE_REASON = {
   // 'timeout' = this player was removed after staying disconnected past the lobby grace (server/lobby.js)
   host_left: N_('创建者已离开，同盟已解散'), timeout: N_('由于长时间断开连接，你已离开同盟'), empty: N_('同盟已解散'),
   kicked: N_('你已被移出同盟'), ended: N_('模拟已结束'), expired: N_('同盟已过期'), shutdown: N_('服务器维护中，同盟已关闭'),
+  // the match's game node restarted / stopped answering, so its match cannot continue (server/cluster/coordinator.js closeReasonFor)
+  'node-restarted': N_('对局服务器已重启，本局模拟已中断'), 'node-unavailable': N_('对局服务器连接中断，本局模拟已结束'),
 };
 
 function wireNet() {
@@ -233,6 +235,7 @@ function wireNet() {
       identity.setEntered(false);
       store.set({ session: { entered: false } }); // retain room/token: correcting a legacy name must not abandon its game
     }
+    if (err.code === 'SERVER_FULL') return; // the connection banner shows it and counts down to the automatic retry
     toastError(err);
   });
   net.on('replaced', () => toast(t('该身份已在其他页面登录，本页已断开'), 'warn', { ttl: 6000 }));

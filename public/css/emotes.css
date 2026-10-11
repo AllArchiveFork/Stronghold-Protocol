@@ -128,8 +128,7 @@
 }
 .ebubble.has-sprite { background: var(--ebubble-bg) center / 100% 100% no-repeat; }
 .ebubble.has-sprite::before, .ebubble.has-sprite::after { content: none; }
-/* in the team panel the bubble is anchored beside the row (placement: screens/game.css .team__bubble) */
-.ebubble.team__bubble { position: absolute; }
+/* in the team panel the bubble is anchored beside its row: screens/team.css .team .team__bubble */
 .ebubble__icon { position: absolute; left: calc(.26 * var(--ebubble-unit, 1rem)); top: calc(.12 * var(--ebubble-unit, 1rem)); width: calc(.68 * var(--ebubble-unit, 1rem)); height: calc(.70 * var(--ebubble-unit, 1rem)); display: grid; place-items: center; }
 .ebubble .eart { width: 100%; height: 100%; }
 

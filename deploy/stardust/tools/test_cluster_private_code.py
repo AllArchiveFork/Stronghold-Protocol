@@ -268,5 +268,114 @@ class PrivateCodeTests(unittest.TestCase):
                     fixture.doCleanups()
 
 
+class RuntimeStaticTests(unittest.TestCase):
+    """Opt-in --runtime-static: /shared/, /sim/ and /data/ aliases beside the default /js/ /css/ code."""
+
+    def setUp(self):
+        self.base = PrivateCodeTests()
+        self.base.setUp()
+        self.addCleanup(self.base.doCleanups)
+        b = self.base
+        # The default fixture's out-of-scope files under the new roots are replaced by a real runtime inventory.
+        (b.source / 'data/private.json').unlink()
+        for path, body in [('shared/constants.js', b'export const SHARED = 1;\n'),
+                           ('server/sim/Battle.js', b'export class Battle {}\n'),
+                           ('server/sim/battle/step.js', b'export const step = 1;\n'),
+                           ('server/sim/nodeData.js', b'export const nodeOnly = true;\n'),
+                           ('server/sim/content/kits/README.md', b'# kits\n'),
+                           ('data/chess.json', b'{"chess":[' + b'1,' * 400 + b'1]}\n'),
+                           ('data/i18n/en.json', b'{"en":true}\n')]:
+            file = b.source / path
+            file.parent.mkdir(parents=True, exist_ok=True)
+            file.write_bytes(body)
+            file.chmod(0o644)
+            b.value['files'].append({'path': path, 'bytes': len(body), 'sha256': code.sha(body), 'mode': '0o644'})
+        (b.source / 'data/local-assets.json').write_bytes(b'{"generated":"index"}')  # ignored by Git, never aliased
+        b.value['files'].sort(key=lambda row: row['path'])
+        b.refresh()
+
+    def test_default_output_is_unchanged_and_runtime_is_recorded_only_when_opted_in(self):
+        b = self.base
+        default = code.prepare(b.source, b.manifest, b.digest, b.build, b.output)
+        self.assertNotIn('runtimeStatic', default)
+        self.assertEqual([row['path'] for row in default['files']], ['css/screens/game.css', 'css/theme.css', 'js/main.js', 'js/ui/panel.js'])
+        runtime = b.root / 'runtime'
+        value = code.prepare(b.source, b.manifest, b.digest, b.build, runtime, runtime=True)
+        self.assertIs(value['runtimeStatic'], True)
+        self.assertEqual(sorted(row['path'] for row in value['files']), sorted([
+            'css/screens/game.css', 'css/theme.css', 'js/main.js', 'js/ui/panel.js',
+            'shared/constants.js', 'sim/Battle.js', 'sim/battle/step.js', 'data/chess.json', 'data/i18n/en.json']))
+        for row in value['files']:
+            self.assertEqual((runtime / ('localcode/cluster-' + b.build) / row['path']).read_bytes(), (b.source / row['sourcePath']).read_bytes())
+        self.assertFalse((runtime / ('localcode/cluster-' + b.build) / 'sim/nodeData.js').exists())
+        self.assertFalse((runtime / ('localcode/cluster-' + b.build) / 'data/local-assets.json').exists())
+        self.assertEqual(code.verify(runtime, b.manifest, b.digest, b.build), value)
+        self.assertEqual(code.verify(runtime, b.manifest, b.digest, b.build, runtime=True), value)
+        with self.assertRaises(code.Refused): code.verify(runtime, b.manifest, b.digest, b.build, runtime=False)
+        with self.assertRaises(code.Refused): code.verify(b.output, b.manifest, b.digest, b.build, runtime=True)
+        self.assertEqual(code.verify(b.output, b.manifest, b.digest, b.build), default)
+
+    def test_runtime_include_gates_every_alias_and_falls_back_to_the_same_coordinator(self):
+        b = self.base
+        value = code.prepare(b.source, b.manifest, b.digest, b.build, b.output, runtime=True, topology='local')
+        include = (b.output / value['nginx'][0]['path']).read_text()
+        self.assertEqual(include.count('location = /'), 9)
+        self.assertEqual(include.count('auth_request /_gate/check;'), 9 + 6)
+        self.assertEqual(include.count('error_page 404 = @ark_beta_cluster_code;'), 9)
+        for prefix in ('/js/', '/css/', '/shared/', '/sim/', '/data/'):
+            self.assertIn('location ^~ ' + prefix + ' {', include)
+        self.assertEqual(include.count('proxy_pass http://172.30.242.2:3000;'), 6)
+        self.assertEqual(include.count('proxy_pass '), 6)
+        self.assertIn('location = /sim/battle/step.js {', include)
+        self.assertIn('location = /data/i18n/en.json {', include)
+        self.assertNotIn('nodeData', include)
+        self.assertNotIn('local-assets', include)
+        self.assertNotIn('README', include)
+        self.assertEqual(include.count('default_type application/json;'), 2)
+        self.assertEqual(include.count('gzip on;'), 5)
+        self.assertEqual(include.count('add_header Cache-Control "private, no-store" always;'), 9 + 6)
+        self.assertNotIn('Access-Control-Allow-Origin "', include)
+        self.assertNotIn('auth_request off', include)
+
+    def test_runtime_inventory_drift_links_and_missing_roots_are_refused(self):
+        for case in ('extra-sim', 'extra-data-dir', 'bytes', 'link', 'missing-shared', 'ignored-link'):
+            with self.subTest(case=case):
+                fixture = RuntimeStaticTests()
+                fixture.setUp()
+                try:
+                    b = fixture.base
+                    if case == 'extra-sim': (b.source / 'server/sim/unlisted.js').write_bytes(b'unlisted')
+                    if case == 'extra-data-dir': (b.source / 'data/cache').mkdir()
+                    if case == 'bytes': (b.source / 'data/chess.json').write_bytes(b'{"forged":1}\n')
+                    if case == 'link':
+                        target = b.root / 'outside.js'; target.write_bytes(b'export const SHARED = 1;\n')
+                        (b.source / 'shared/constants.js').unlink(); (b.source / 'shared/constants.js').symlink_to(target)
+                    if case == 'ignored-link':
+                        (b.source / 'data/local-assets.json').unlink(); (b.source / 'data/local-assets.json').symlink_to(b.root / 'outside.json')
+                    if case == 'missing-shared':
+                        b.value['files'] = [row for row in b.value['files'] if not row['path'].startswith('shared/')]
+                        (b.source / 'shared/constants.js').unlink(); b.refresh()
+                    with self.assertRaises((code.Refused, OSError)):
+                        code.prepare(b.source, b.manifest, b.digest, b.build, b.output, runtime=True)
+                    self.assertFalse(b.output.exists())
+                    if case in ('extra-sim', 'extra-data-dir', 'ignored-link'):
+                        # The default code-only stage never looks at these roots.
+                        code.prepare(b.source, b.manifest, b.digest, b.build, b.root / 'default')
+                finally:
+                    fixture.doCleanups()
+
+    def test_runtime_metadata_flag_cannot_be_forged(self):
+        b = self.base
+        value = code.prepare(b.source, b.manifest, b.digest, b.build, b.output, runtime=True)
+        file = b.output / 'release-manifest.json'
+        for forged in (False, 'true', 1):
+            changed = deepcopy(value); changed['runtimeStatic'] = forged
+            file.write_bytes(code.canonical(changed))
+            with self.assertRaises(code.Refused): code.verify(b.output, b.manifest, b.digest, b.build)
+        changed = deepcopy(value); changed.pop('runtimeStatic')
+        file.write_bytes(code.canonical(changed))
+        with self.assertRaises(code.Refused): code.verify(b.output, b.manifest, b.digest, b.build)
+
+
 if __name__ == '__main__':
     unittest.main()

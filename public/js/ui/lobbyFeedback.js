@@ -16,5 +16,5 @@ export function LobbyFeedback() {
   return html`<${Button} class="lobby-feedback num selectable" variant="secondary" size="sm" icon="copy"
     title=${t('反馈 QQ 群：{group}，点击复制群号', { group: FEEDBACK_GROUP })}
     aria-label=${t('反馈 QQ 群：{group}，点击复制群号', { group: FEEDBACK_GROUP })}
-    onClick=${() => copyFeedbackGroup()}>${FEEDBACK_GROUP}<//>`;
+    onClick=${() => copyFeedbackGroup()}><span class="lobby-feedback__label">${t('反馈群')}</span>${FEEDBACK_GROUP}<//>`;
 }

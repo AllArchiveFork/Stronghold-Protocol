@@ -2,9 +2,9 @@
 """Compose a NEW WG-less co-located stack from a verified core bundle; no SSH, Docker or activation.
 
 The coordinator, the bundle's fixed 16 or 32 games and N local ingress share the core bridge on one host.
-The node count comes only from the verified core policy. Core keys and runtime files are reused untouched;
-ingress dial the bridge directly and nothing is published on the WG address. The root host manager does
-not cover this stack (no leases, priority or CAS), see LOCAL-STACK.md.
+The node count and per-game worker pools come only from the verified core policy. Core keys and runtime
+files are reused untouched; ingress dial the bridge directly and nothing is published on the WG address.
+The root host manager does not cover this stack (no leases, priority or CAS), see LOCAL-STACK.md.
 """
 import argparse
 import hashlib
@@ -41,8 +41,19 @@ def local_ingress_service(instance, profile, game_nodes):
     return 'ingress' if instance == 1 else 'ingress-' + format(instance, '02d')
 
 
-def compose(core_bundle, out, *, profile='beta', ingress_instances=1):
+# The coordinator's hot-reloadable online cap (server/onlineLimit.js): the host DIRECTORY is mounted read-only (an
+# editor's or mv's replacement keeps working) and the file inside it may be absent (= no cap).
+ONLINE_LIMIT_MOUNT = '/run/limits'
+ONLINE_LIMIT_FILE = ONLINE_LIMIT_MOUNT + '/online-limit.json'
+
+
+def compose(core_bundle, out, *, profile='beta', ingress_instances=1, online_limit_dir=None):
     p = profiles.get_profile(profile)
+    if online_limit_dir is not None:
+        online_limit_dir = protected(online_limit_dir, profile)
+        st = online_limit_dir.stat()
+        require(online_limit_dir.is_dir() and st.st_uid == os.geteuid() and not st.st_mode & 0o022,
+                'online limit directory must exist, be a directory, owned and not group/world writable')
     # The exact per-inventory bound is checked once the verified core policy fixes the node count.
     require(type(ingress_instances) is int and ingress_instances >= 1, 'invalid fixed ingress instance count')
     core_bundle, out = protected(core_bundle, profile), protected(out, profile, missing=True)
@@ -63,6 +74,18 @@ def compose(core_bundle, out, *, profile='beta', ingress_instances=1):
     require(set(core['services']) == set(expected)
             and all(core['services'][name]['networks']['default']['ipv4_address'] == ip for name, ip in expected.items()),
             'core bundle inventory changed')
+    # The generator's per-game pools (cluster-deploy --combat-workers/--trial-workers): every game's
+    # Compose environment and runtime must carry the targets' pair; the coordinator runs none.
+    workers = deploy.game_workers(policy.get('targets'))
+    require(workers is not None and workers != (0, 0), 'invalid per-game worker counts')
+    for name, value in core['services'].items():
+        env, game = value.get('environment'), name != 'coordinator'
+        require(isinstance(env, dict) and (env.get('SP_COMBAT_WORKERS'), env.get('SP_TRIAL_WORKERS'))
+                == (tuple(map(str, workers)) if game else ('0', '0')), 'core bundle worker environment changed')
+        if game:
+            runtime = json.loads((core_bundle / 'runtime' / name / 'runtime.json').read_bytes())
+            pair = (runtime.get('combatWorkers'), runtime.get('trialWorkers')) if isinstance(runtime, dict) else (None, None)
+            require(deploy.valid_workers(*pair) and pair == workers, 'core bundle worker runtime changed')
     project, services = local_project(profile), {}
     for name, value in core['services'].items():
         value = json.loads(json.dumps(value))
@@ -72,6 +95,9 @@ def compose(core_bundle, out, *, profile='beta', ingress_instances=1):
         require(value['ports'] and all(port.startswith('127.0.0.1:') for port in value['ports']), 'non-loopback publication refused')
         # No root manager restarts these roles, so Docker restores them after a crash or host boot.
         value['restart'] = 'unless-stopped'
+        if name == 'coordinator' and online_limit_dir is not None:
+            value['volumes'] = [*value['volumes'], str(online_limit_dir) + ':' + ONLINE_LIMIT_MOUNT + ':ro']
+            value['environment'] = {**value['environment'], 'SP_ONLINE_LIMIT_FILE': ONLINE_LIMIT_FILE}
         services[name] = value
     deploy.mkdir_new(out)
     deploy.mkdir_new(out / 'runtime')
@@ -98,7 +124,8 @@ def compose(core_bundle, out, *, profile='beta', ingress_instances=1):
                'coreBundle': str(core_bundle), 'coreComposeSha256': policy['compose_sha256'],
                'composeSha256': hashlib.sha256(compose_bytes).hexdigest(), 'imageId': policy['image_id'],
                'build': policy['build'], 'sourceKind': policy['source_kind'], 'manifestSha256': policy['manifest_sha256'],
-               'gameNodes': nodes, 'ingress': ingress, 'coordinatorPort': p.coordinator_port, 'hostManagerLeases': False}
+               'gameNodes': nodes, 'ingress': ingress, 'coordinatorPort': p.coordinator_port, 'hostManagerLeases': False,
+               **({'onlineLimitDir': str(online_limit_dir)} if online_limit_dir is not None else {})}
     deploy.write_new(out / 'stack-summary.json', deploy.canonical(summary), mode=0o600, gid=0)
     return summary
 
@@ -110,10 +137,13 @@ def main():
     parser.add_argument('--out', required=True)
     # 1..8 behind sixteen nodes (Beta 1..2); Formal 32-node stacks accept 1..16.
     parser.add_argument('--ingress-instances', type=int, default=1, choices=range(1, 17))
+    # optional: mount this host directory for the coordinator's online cap (online-limit.json inside, may be absent)
+    parser.add_argument('--online-limit-dir')
     args = parser.parse_args()
     try:
         require(os.geteuid() == 0, 'host root required for protected stack generation')
-        summary = compose(args.core_bundle, args.out, profile=args.profile, ingress_instances=args.ingress_instances)
+        summary = compose(args.core_bundle, args.out, profile=args.profile, ingress_instances=args.ingress_instances,
+                          online_limit_dir=args.online_limit_dir)
         print(json.dumps({'event': 'cluster-local-stack-prepared', 'project': summary['project'],
                           'ingress': len(summary['ingress']), 'activated': False}))
         return 0

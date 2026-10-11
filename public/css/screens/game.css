@@ -161,10 +161,6 @@
 .misstag__icon .icon { width: .16rem; height: .16rem; }
 .misstag__n { font-size: .2rem; }
 .misstag.is-clear .misstag__n { color: var(--mint-400); }
-.team__line .misstag { height: .21rem; min-width: .68rem; padding-right: .08rem; }
-.team__line .misstag.has-art { width: .68rem; }
-.team__line .misstag__n { font-size: .16rem; }
-.team__line .misstag__icon { font-size: .13rem; }
 .capsule--combat { --cap: var(--orange-hi); }
 .capsule--boss { --cap: var(--orange-hi); min-width: 4.2rem; }
 .bossbar { position: relative; flex: 1; min-width: 2.2rem; height: .2rem; background: rgba(0, 0, 0, .6); border: 1px solid rgba(255, 122, 51, .5); overflow: hidden; }
@@ -308,96 +304,6 @@
   position: static; margin-top: .02rem; font-size: .11rem; font-weight: 500; color: var(--text-dim); white-space: nowrap;
   background: rgba(8, 11, 10, .85); border: 1px dashed rgba(255, 255, 255, .25);
 }
-
-/* ---- team panel ------------------------------------------------------------------------------------------- */
-.team { position: absolute; left: .22rem; top: 2.36rem; display: flex; flex-direction: column; gap: .14rem; pointer-events: none; }
-.team__row { position: relative; display: flex; align-items: center; gap: .1rem; pointer-events: auto; }
-.team__notice:empty { display: none; }
-.team__players { display: flex; flex-direction: column; gap: .14rem; }
-/* Readable multiplayer rows keep all seats reachable in their own bounded scroller. */
-.team__header { flex: none; pointer-events: auto; }
-.team .team__players[hidden] { display: none; }
-.team__toggle { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 44px; padding: 6px 10px; color: var(--mint-400); background: rgba(10, 18, 15, .94); border: 1px solid var(--mint-700); font-size: max(calc(.16 * var(--t)), 14px); }
-.team__toggle .icon { width: 18px; height: 18px; }
-.team__toggle .icon:last-child { margin-left: auto; transform: rotate(-90deg); }
-.team.is-folded .team__toggle .icon:last-child { transform: rotate(90deg); }
-.team.team--expanded { bottom: 2.14rem; width: min(520px, 32vw); max-width: calc(100vw - 32px); padding: 4px; gap: 4px; overflow: visible; pointer-events: none; }
-.team--expanded .team__players { display: grid; grid-auto-flow: column; grid-template-columns: repeat(var(--team-columns, 1), minmax(0, 1fr)); grid-template-rows: repeat(var(--team-rows, 1), minmax(var(--team-row, 48px), max-content)); gap: var(--team-gap, 4px); min-height: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; touch-action: pan-y; padding: 4px; pointer-events: auto; }
-.team--expanded .team__row { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 8px; padding: 4px; min-width: 0; align-items: start; background: rgba(10, 18, 15, .85); border: 1px solid var(--line); }
-.team--expanded .team__btn { width: 44px; height: 44px; min-width: 44px; min-height: 44px; display: grid; place-items: center; }
-.team--expanded .pavatar { width: var(--team-avatar, 36px); height: var(--team-avatar, 36px); --pa: var(--team-avatar, 36px); }
-.team--expanded .team__info { flex-direction: column; align-items: flex-start; padding: 0; gap: 3px; min-width: 0; }
-.team--expanded .team__name { max-width: 100%; min-width: 0; font-size: max(calc(.16 * var(--t)), 14px); white-space: normal; overflow-wrap: anywhere; }
-.team--expanded .team__line { gap: 6px; flex-wrap: wrap; }
-.team--expanded .lp--sm { font-size: max(calc(.15 * var(--t)), 14px); gap: 3px; }
-.team--expanded .lp__pend { font-size: 12px; }
-.team--expanded .misstag__n, .team--expanded .misstag__icon { font-size: 12px; }
-.team--expanded .team__status, .team--expanded .team__status.has-sprite .lsprite { width: 18px; height: 18px; }
-.team--expanded .team__status .icon, .team--expanded .team__eye .icon { width: 16px; height: 16px; }
-.team--expanded .team__seat { font-size: 11px; left: -2px; top: -2px; padding: 0 2px; }
-.team--expanded .team__ai { font-size: 10px; padding: 0 2px; }
-.team--expanded .team__you { width: 16px; height: 16px; right: -2px; top: -2px; }
-.team--expanded .team__you .icon { width: 12px; height: 12px; }
-.team--expanded .team-rescue-action--compact { flex: none; margin: 0; max-width: 100%; }
-.team.team--expanded .team-rescue-action--compact .btn { min-height: 44px; min-width: 44px; padding: 8px; }
-.team-rescue-action--compact .btn__icon { width: 18px; height: 18px; }
-.team--expanded .team__ob, .team--expanded .team__back { position: static; margin: 4px 0 0; min-height: 44px; max-width: 100%; white-space: normal; font-size: 14px; }
-.team.is-folded { bottom: auto; width: max(148px, 2.4rem); }
-.team--expanded .team__bubble { position: static; grid-column: 1 / -1; max-width: 100%; }
-.team--expanded .team-rescue { font-size: 11px; max-width: none; padding: 4px; }
-.team--expanded .team-rescue > small { font-size: 10px; }
-.team__btn {
-  position: relative; padding: 0; background: none; border: 0;
-  transition: transform var(--t-fast);
-}
-.team__btn:hover { transform: translateX(.03rem); }
-.team__seat {
-  position: absolute; left: -.02rem; top: -.04rem; font-size: .11rem; padding: 0 .04rem; line-height: 1.3;
-  background: rgba(8, 11, 10, .9); color: var(--text-lo); border: 1px solid var(--line-2);
-}
-.team__ai { position: absolute; right: -.04rem; bottom: -.04rem; font-family: var(--font-num); font-size: .11rem; font-weight: 700; padding: 0 .04rem; background: #a9c3d8; color: #0b1520; }
-.team__you { position: absolute; right: -.08rem; top: -.08rem; width: .22rem; height: .22rem; display: grid; place-items: center; background: var(--mint-500); color: var(--text-on-mint); clip-path: polygon(25% 3%, 75% 3%, 100% 50%, 75% 97%, 25% 97%, 0 50%); }
-.team__you .icon { width: .14rem; height: .14rem; }
-.team__info { display: flex; flex-direction: column; gap: .02rem; min-width: 0; padding: .04rem .12rem .04rem .06rem; background: linear-gradient(90deg, rgba(8, 11, 10, .82), rgba(8, 11, 10, 0)); }
-.team__name { font-size: .15rem; font-weight: 500; color: var(--text-md); max-width: 1.5rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-shadow: 0 1px 2px #000; }
-.team__line { display: flex; align-items: center; gap: .1rem; }
-.team__status { width: .26rem; height: .26rem; display: grid; place-items: center; border: 1px solid currentColor; background: rgba(0, 0, 0, .5); }
-.team__status .icon { width: .18rem; height: .18rem; }
-.team__status .lsprite { width: .2rem; height: .2rem; object-fit: contain; }
-.team__status.has-sprite { border-color: transparent; background: none; animation: none; }
-.team__status.has-sprite .lsprite { width: .26rem; height: .26rem; }
-.team__status.is-lo { color: var(--text-lo); }
-.team__status.is-mint { color: var(--mint-400); }
-.team__status.is-gold { color: var(--gold); animation: blink 1.2s steps(2) infinite; }
-.team__status.is-orange { color: var(--orange-hi); }
-.team__status.is-red, .team__status.is-offline { color: var(--red-premium); }
-.team__eye { color: var(--amber); display: grid; }
-.team__eye .icon { width: .2rem; height: .2rem; }
-.team__row.is-self .pavatar { box-shadow: 0 0 0 2px var(--mint-500), 0 0 .18rem rgba(23, 249, 183, .35); }
-.team__row.is-watched .pavatar { box-shadow: 0 0 0 2px var(--amber), 0 0 .18rem rgba(246, 163, 41, .45); }
-.team__row.is-dead .team__name { color: var(--text-dim); text-decoration: line-through; }
-/* 最终攻势 / 隐秘核心: the viewer's pair framed in the official green from the round's start (item 51) — the official
-   ui/battle bg_team_border (a white frame with its glow) tinted through a mask; a plain green ring without the local art.
-   It replaces the own row's mint ring; a watched row keeps its amber one inside the frame. */
-.team__frame {
-  position: absolute; inset: -.07rem; pointer-events: none; z-index: 1;
-  background: var(--mint-500); -webkit-mask: var(--frame) center / 100% 100% no-repeat; mask: var(--frame) center / 100% 100% no-repeat;
-}
-.team__frame--plain { inset: -.04rem; background: none; -webkit-mask: none; mask: none; border: 2px solid var(--mint-500); box-shadow: 0 0 .14rem rgba(78, 216, 175, .65); }
-.team__row.is-self.is-team .pavatar { box-shadow: none; }
-.team__bubble { position: absolute; left: calc(100% + .06rem); top: 50%; transform: translateY(-50%); width: max-content; max-width: 3.2rem; }
-.team--expanded .team__bubble { left: auto; right: 0; transform: translateY(-50%); }
-/* a folded roster: the newest senders' emotes under the header (its rows, which carry .team__bubble, are not rendered) */
-.team__emotes { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 2px; --ebubble-unit: max(.5rem, 40px); }
-.team__emotes:empty { display: none; }
-.team__emote { display: flex; align-items: center; }
-.team__emote .pavatar { --pa: max(.42rem, 32px); }
-/* 前往查看 / 返回战场 (research 09 §3.1: tapping a teammate's avatar expands a mint button under it) */
-.team__row.is-open .pavatar { box-shadow: 0 0 0 2px var(--mint-400), 0 0 .2rem rgba(23, 249, 183, .45); }
-.team__row.is-open .team__info { background: linear-gradient(90deg, rgba(13, 44, 36, .92), rgba(8, 11, 10, 0)); }
-.team__ob, .team__back { align-self: flex-start; margin-top: .04rem; min-width: 1.1rem; animation: pop-in var(--t-fast) var(--ease-out); }
-.team__ob .btn__label, .team__back .btn__label { letter-spacing: .12em; }
-.team__back { border-color: rgba(255, 255, 255, .7); color: #fff; }
 
 /* player avatar (band icon / glyph) */
 .pavatar {
@@ -764,9 +670,6 @@
 @media (max-aspect-ratio: 16/10) {
   .gm__bonds { right: 4.6rem; }
 }
-@media (max-height: 560px) and (orientation: landscape) {
-  .team.team--expanded { top: 1.9rem; bottom: 1.4rem; }
-}
 @media (max-width: 600px) and (orientation: portrait) {
   .gm--expanded .gtop { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "connection clock" "phase phase"; padding-inline: 16px; gap: .18rem; }
   .gm--expanded .gtop__left { grid-area: connection; min-width: 0; }
@@ -774,12 +677,10 @@
   .gm--expanded .gtop__right { grid-area: clock; }
   .gm--expanded .ticker { top: 2.7rem; max-width: calc(100% - 32px); }
   .gm--expanded .gm__bonds { top: 3.2rem; right: .3rem; }
-  .gm--expanded .team--expanded { top: 4.1rem; bottom: 2.3rem; }
   .gm--expanded.gm--unite-budget .gtop { grid-template-areas: "connection clock" "phase phase" "budget budget"; }
   .gm--expanded .gtop__budget { grid-area: budget; }
   .gm--expanded.gm--unite-budget .ticker { top: 3.7rem; }
   .gm--expanded.gm--unite-budget .gm__bonds { top: 4.2rem; }
-  .gm--expanded.gm--unite-budget .team--expanded { top: 5.1rem; bottom: 2.3rem; }
 }
 
 /* fallback view: enemy preview pen (setCamera('pen')) */

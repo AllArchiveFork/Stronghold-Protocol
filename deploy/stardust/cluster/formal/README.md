@@ -54,7 +54,7 @@ python3 -I /opt/ark-cluster-formal/tools/cluster-deploy.py \
 
 Formal edge显式`--ingress-instances 1..8`生成固定数量的独立target；Beta仍只接受1或2。每个实例保持全部game节点（16，或32）的相同路由，profile固定IP/loopback端口按序分配，不能用共享进程代次或伪造CID代替逐个核验。
 
-每game8combat+2trial、control/ingress0，capacity/maxRooms0、server/off、10Hz、压缩on。容器UID1000/read-only/cap-drop ALL/no-new-privileges/PIDs128，没有CPU/memory hardcap、CAP_SYS_NICE或whole-Node nice。root host先reset-on-fork再仅Main=-20，其他线程必须nice0/SCHED_OTHER。
+每game默认8combat+2trial（按bundle target，全部game相同）、control/ingress0，capacity/maxRooms0、server/off、10Hz、压缩on。容器UID1000/read-only/cap-drop ALL/no-new-privileges/PIDs128，没有CPU/memory hardcap、CAP_SYS_NICE或whole-Node nice。root host先reset-on-fork再仅Main=-20，其他线程必须nice0/SCHED_OTHER。
 
 ## Formal WG exact schema
 

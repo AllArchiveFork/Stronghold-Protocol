@@ -85,7 +85,7 @@ test('shipped announcement data validates; optional board is mounted from the lo
   assert.match(board, /ariaLabel=\$\{t\('大厅公告板'\)\} trapFocus=\$\{true\}/);
 });
 
-test('today is one short apology with the maintenance and phone fixes, and the introduction is retained', () => {
+test('today is one short apology with the maintenance, the interface changes and the fixes, and the introduction is retained', () => {
   const entries = parseAnnouncements(JSON.parse(source('../../data/announcements.json')));
   assert.equal(entries.length, 2);
   assert.equal(entries[0].title, '10 月 11 日更新与维护致歉');
@@ -93,8 +93,8 @@ test('today is one short apology with the maintenance and phone fixes, and the i
   assert.equal(entries[1].title, '欢迎游玩卫戍协议！卫来！');
   assert.equal(entries[1].date, '2026-10-06');
   const today = entries[0].paragraphs.join('\n');
-  for (const phrase of ['非常抱歉', '对局卡顿', '加载缓慢', '连接中断', '正式服务现已恢复', '对战集群扩充到 32 组',
-    '请刷新页面重新进入', '局内表情', '误判为加载失败', '向左或向右展开', '全屏按钮移到大厅顶栏', '0.2.4']) assert.ok(today.includes(phrase), phrase);
+  for (const phrase of ['非常抱歉', '对局卡顿', '加载缓慢', '连接中断', '对战集群扩充到 32 组', '不再卡在对局中',
+    '请刷新页面重新进入', '按卡池分组', '弹幕', '#488', '误判为加载失败']) assert.ok(today.includes(phrase), phrase);
   assert.doesNotMatch(today, /保证不卡顿|带宽无限|固定比例下降|会话重置.*已修复|正在进行服务器扩容|不[^。；]{0,100}，也不/);
   assert.match(entries[1].paragraphs.join('\n'), /纯公益.*非官方/);
   assert.match(entries[1].paragraphs.join('\n'), /github\.com\/sganggs\/Stronghold-Protocol/);

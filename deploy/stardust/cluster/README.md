@@ -6,7 +6,7 @@
 
 ## 固定profile与全局池
 
-- 每个profile使用一个coordinator和固定数量的完整对战进程：Formal为16或32个（`--game-nodes 32`），Beta为16个；每game为**8combat+2trial**。coordinator和ingress不创建战斗/试算Worker。
+- 每个profile使用一个coordinator和固定数量的完整对战进程：Formal为16或32个（`--game-nodes 32`），Beta为16个；每game默认**8combat+2trial**（`--combat-workers 1..8`/`--trial-workers 0..2`，全部game相同）。coordinator和ingress不创建战斗/试算Worker。
 - 每入口都持有全部game节点路由；逻辑部署分组不是路由或玩家分区。所有入口共享同一大厅/好友房/party/匹配池，同局、联防、Boss及观战固定一个owner，无需sticky。
 - 内层WS不压缩，WG回程raw帧与外层PMD的CPU/字节应分别衡量。入口数量与标称带宽不能直接推导容量。
 - 网络仅允许profile批准的本地及peer `/32`、精确容器IP、端口和对应路由。拒绝任意地址、额外绑定及raw direct访问，不改默认路由或其他网络组件。
@@ -58,7 +58,7 @@ python3 -I /opt/ark-cluster-beta/tools/cluster-deploy.py \
 
 ## 健康与生命周期边界
 
-- game：固定node/build/protocol/publicSlot、streamMarkers以及签名RPC私有`health.combat={status:ready,workers:8,ready:8}`、trial2/2；10个真实WorkerThread，只有Main -20/reset，其他线程0。health不进入浏览器PONG，普通HTTP GET/health404不可套单体healthcheck。
+- game：固定node/build/protocol/publicSlot、streamMarkers以及签名RPC私有`health.combat={status:ready,workers:N,ready:N}`、trial M/M（M=0为disabled 0/0），N/M取policy target（默认8/2）；N+M个真实WorkerThread，只有Main -20/reset，其他线程0。health不进入浏览器PONG，普通HTTP GET/health404不可套单体healthcheck。
 - coordinator：原生GET health显示0 combat/0 trial、maxRooms0；真实WorkerThread数量0。它的browser build与runtime内容身份是不同字段，不冒称相等。
 - ingress：GET health404+固定Origin的loopback WS upgrade、0 WorkerThread、固定源/路由/配置/代次；这是relay监听验证，不是TLS、口令或完整公网玩法验收。
 - 每5秒检查固定代次；image/bridge的不可变ID元数据缓存，容器/PID/线程、runtime文件、私有health仍重读。不按入口在线人数推断后端CPU。
@@ -67,6 +67,23 @@ python3 -I /opt/ark-cluster-beta/tools/cluster-deploy.py \
 - manager不修改旧core/beta/prod工具、旧WG/recovery、其他站点、数据库或证书，不执行镜像清理。
 
 一个coordinator仍是内存状态、无持久化/HA；game重启丢本节点局，coordinator重启可能丢全局身份/队列/目录。多个入口不是内存容灾。任何切换/回滚都不能恢复被重建的内存局。
+
+game重启或失联时，coordinator不再让其房间永久停在“对局中”：状态RPC看到同一节点的新generation时立即关闭旧generation的已发布房间（`room.closed {reason:'node-restarted'}`）；连续`nodeLostMs`（默认15秒）无成功状态时关闭该节点的已发布房间（`node-unavailable`，与发布/撤权失败相同）。不迁移、不伪造结算；释放RPC保持原node/actor代次围栏，失联期间未确认的释放在同一generation恢复应答后补发一次，新generation则丢弃。客户端两种原因均有本地化文案（`public/js/main.js` CLOSE_REASON）。
+
+## 协调器主线程测量
+
+coordinator的原生`/healthz`在`performance`下额外带`phases`（仅coordinator；单体/game的health形状不变）：与10秒采样窗口同步轮换，每项为`{count,totalMs,maxMs,p50Ms,p99Ms,items,peakMs,totalCount}`，名称为固定代码常量或已校验的消息类型，例如`presence.publish`（每片发送数）、`net.heartbeat`（每片socket数）、`receipt.chunk/commit/parse/apply`、`receipt.worker`（Worker往返墙钟）、`match.plan/prepare/valid/commit/publish`、`queue.pump/sweep/population`、`ws.<type>`/`ws.hello`/`ws.close`（同步部分）、`static.<mount>`（含I/O等待的墙钟与请求数）及`gc.minor/major/incremental/weakcb`。只含计数与耗时，无会话/房间标识；匿名`/healthz`代理原样透出，不改变其门禁/no-store规则。
+
+本地回放（仅127.0.0.1临时端口，不连共享或生产主机）：
+
+```sh
+node tools/coordbench.mjs --out before.json --server-root /path/to/baseline-export   # 基线树
+node tools/coordbench.mjs --out after.json                                          # 当前树
+```
+
+默认1400个合成WS会话经2个ingress、4个合成game节点（无战斗Worker）、20人房间（约1.5MB结束收据）、4人公开匹配、重连抖动及`/shared` `/data`页面加载；按窗口报告事件循环延迟、ELU、CPU、同一组外部计时（两棵树可比）及`phases`。`--storm`在中途让全部会话断线重连（入口重启/集体刷新），`--offload-static`模拟Nginx已接管`/shared` `/data`，`--receipt-worker`开启下述收据Worker。数字只用于同机前后对比，不是容量或线上负载结论。
+
+结束收据在coordinator只解码/解析一次，转成各成员`m.result`、最终`m.public`与summary的JSON文本；`cluster.terminal`由这些文本按字节拼接（公共部分只做一次UTF-8编码），不再逐成员重新序列化。coordinator配置可选`"receiptWorker": true`（默认关闭）：≥128KiB的收据改由一个`worker_threads`线程校验SHA-256并解析，Worker异常/超时回退到同一内联实现。它会让coordinator出现1个WorkerThread；受`cluster-host-manager.py`管理的core profile要求coordinator为0个WorkerThread，开启前须同版更新该线程合同与对应policy批准，未受管的同机栈可直接在runtime配置中开启。
 
 ## 追加与范围
 

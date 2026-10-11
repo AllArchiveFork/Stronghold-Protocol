@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import { once } from 'node:events';
 import { createHash, randomBytes } from 'node:crypto';
-import { createReceiptSink, sendEndReceipt } from '../server/cluster/receipts.js';
+import { createOffThreadCodec, createReceiptSink, sendEndReceipt } from '../server/cluster/receipts.js';
 import { RpcError, createRpcAuthenticator, createRpcClient, createRpcHandler } from '../server/cluster/rpc.js';
 
 const CHUNK_BYTES = 24 * 1024;
@@ -485,4 +485,107 @@ test('sender rejects non-host schemas and sink configuration has hard byte/time 
   const f = fixture({ maxBytes: 100 });
   throwsCode(() => f.ops['end.chunk'](wire(receipt()).chunks[0]), 'BAD_REQUEST');
   assert.equal(f.sink.sweep().bufferedBytes, 0);
+});
+
+// ---- single parse and the coordinator's off-thread verification ----
+const applied = { accepted: true, pending: false };
+function encodedLobby(f) {
+  const encoded = [];
+  f.lobby.receiveEncodedEnd = (assignmentId, value) => {
+    encoded.push({ assignmentId, value });
+    const info = f.infos.get(assignmentId);
+    if (!f.assignments.has(assignmentId) || f.ended.has(assignmentId) || value.generation !== info.generation) return false;
+    f.ended.add(assignmentId);
+    return true;
+  };
+  return encoded;
+}
+const texts = value => ({ assignmentId: AID, roomCode: 'ABCD', generation: NODE_GENERATION, summary: JSON.stringify(value.summary),
+  lastPublic: JSON.stringify(value.lastPublic), results: Object.entries(value.results).map(([id, result]) => [id, JSON.stringify(result)]) });
+
+test('a completed receipt is decoded and parsed exactly once; an encoded lobby receives its JSON texts', () => {
+  const f = fixture(), encoded = encodedLobby(f), value = receipt(AID, '回放⭐'.repeat(15_000)), document = wire(value);
+  const parse = JSON.parse; let large = 0;
+  JSON.parse = function (text, ...rest) { if (typeof text === 'string' && text.length >= 40_000) large++; return parse.call(this, text, ...rest); };
+  try { assert.deepEqual(complete(f.ops, document), applied); } finally { JSON.parse = parse; }
+  assert.equal(large, 1);
+  assert.equal(f.calls.length, 0, 'the object form is only for lobbies without receiveEncodedEnd');
+  assert.deepEqual(encoded, [{ assignmentId: AID, value: texts(value) }]);
+  assert.deepEqual(f.sink.sweep(), { bufferedBytes: 0, receipts: 0, tombstones: 1 });
+});
+
+test('off-thread verification: identical concurrent commits share one Worker parse and one lobby apply', async t => {
+  const f = fixture({ offThreadBytes: 1024 }), encoded = encodedLobby(f);
+  t.after(() => f.sink.close());
+  const value = receipt(AID, '回放⭐'.repeat(30_000)), document = wire(value);
+  chunksInto(f.ops, document);
+  const first = f.ops['end.commit'](document.meta), second = f.ops['end.commit']({ ...document.meta });
+  assert.equal(typeof first.then, 'function', 'a large commit resolves after the Worker');
+  assert.deepEqual(f.ops['end.chunk'](document.chunks[1]), { accepted: true }, 'identical chunk retries stay acknowledged');
+  assert.deepEqual(f.sink.flush(AID), { accepted: false }, 'nothing applies before verification');
+  assert.deepEqual(await Promise.all([first, second]), [applied, applied]);
+  assert.deepEqual(encoded, [{ assignmentId: AID, value: texts(value) }]);
+  assert.deepEqual(await f.ops['end.commit'](document.meta), applied);
+  assert.equal(encoded.length, 1);
+  assert.deepEqual(f.sink.sweep(), { bufferedBytes: 0, receipts: 0, tombstones: 1 });
+});
+
+test('off-thread verification fails closed like the inline path: digest, schema and an unpublished hold', async t => {
+  const f = fixture({ offThreadBytes: 1024 }), encoded = encodedLobby(f);
+  t.after(() => f.sink.close());
+  const document = wire(receipt(AID, 'x'.repeat(90_000)));
+  const changed = Buffer.from(document.chunks[0].data, 'base64url'); changed[30] ^= 1;
+  chunksInto(f.ops, { chunks: [{ ...document.chunks[0], data: changed.toString('base64url') }, ...document.chunks.slice(1)] });
+  await rejectsCode(() => f.ops['end.commit'](document.meta), 'BAD_REQUEST');
+  assert.deepEqual(f.sink.sweep(), { bufferedBytes: 0, receipts: 0, tombstones: 0 });
+  const invalid = wire({ ...receipt(AID, 'y'.repeat(90_000)), results: { u1: { t: 'b.ev' } } });
+  chunksInto(f.ops, invalid);
+  await rejectsCode(() => f.ops['end.commit'](invalid.meta), 'BAD_REQUEST');
+  assert.equal(encoded.length, 0);
+  f.add(AID, { state: 'committed' });
+  const held = wire(receipt(AID, 'z'.repeat(90_000)));
+  chunksInto(f.ops, held);
+  assert.deepEqual(await f.ops['end.commit'](held.meta), { accepted: true, pending: true });
+  f.add(AID);
+  assert.deepEqual(f.sink.flush(AID), applied);
+  assert.equal(encoded.length, 1);
+});
+
+test('closing the sink while the Worker verifies rejects the waiting commit CLOSED; small bodies stay synchronous', async () => {
+  const f = fixture({ offThreadBytes: 64 * 1024 }); encodedLobby(f);
+  const small = wire(receipt(AID, 'x'.repeat(1000)));
+  chunksInto(f.ops, small);
+  assert.deepEqual(f.ops['end.commit'](small.meta), applied);
+  f.add('end-b');
+  const large = wire(receipt('end-b', 'y'.repeat(90_000)), { assignmentId: 'end-b' });
+  chunksInto(f.ops, large);
+  const pending = f.ops['end.commit'](large.meta);
+  f.sink.close();
+  await rejectsCode(() => pending, 'CLOSED');
+});
+
+test('the off-thread codec falls back to the identical inline result when its Worker fails, exits or is unavailable', async () => {
+  const value = receipt(AID, '回放'.repeat(10_000)), bytes = Buffer.from(JSON.stringify(value));
+  const meta = { assignmentId: AID, actorGeneration: ACTOR_GENERATION, totalBytes: bytes.length, sha256: digest(bytes) };
+  const expected = { summary: JSON.stringify(value.summary), lastPublic: JSON.stringify(value.lastPublic),
+    results: [['u1', JSON.stringify(value.results.u1)]] };
+  const { EventEmitter } = await import('node:events');
+  const fake = (event) => () => {
+    const worker = new EventEmitter();
+    worker.postMessage = () => setImmediate(() => worker.emit(event, event === 'exit' ? 1 : new Error('synthetic worker failure')));
+    worker.terminate = () => Promise.resolve(0);
+    return worker;
+  };
+  for (const spawn of [fake('error'), fake('exit'), () => { throw new Error('no worker threads'); }]) {
+    const codec = createOffThreadCodec({ spawn });
+    assert.deepEqual(await codec.run(bytes, meta), expected);
+    await assert.rejects(codec.run(bytes, { ...meta, sha256: '0'.repeat(64) }), rpcCode('BAD_REQUEST'));
+    codec.close();
+  }
+  const silent = createOffThreadCodec({ timeoutMs: 20, spawn: () => Object.assign(new EventEmitter(), { postMessage() {}, terminate: () => Promise.resolve(0) }) });
+  assert.deepEqual(await silent.run(bytes, meta), expected, 'a deadline falls back inline');
+  silent.close();
+  const real = createOffThreadCodec();
+  assert.deepEqual(await real.run(bytes, meta), expected);
+  real.close();
 });

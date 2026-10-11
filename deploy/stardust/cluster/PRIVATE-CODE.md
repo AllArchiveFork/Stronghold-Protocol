@@ -76,6 +76,17 @@ add_header X-Robots-Tag "noindex, nofollow" always;
 
 include不能和旧同URL exactalias/prefix一起重复加载。安装前独立核对现用vhost，只替换Beta配套私有码include/default受保护HTTP上游，`nginx -t`后正常reload。正式vhost/game/auth、公共素材规则、PRTS动画、旧WG/recovery均不由此工具变更。
 
+## 可选：运行时静态（`--runtime-static`）
+
+默认输出不变（逐字节），只有显式`--runtime-static`时才把协调器的另外三个私有挂载也生成精确alias，使页面加载不再占用coordinator主线程：
+
+- `shared/**/*.js` → `/shared/…`，`server/sim/**/*.js` → `/sim/…`（排除Node专用`nodeData.js`，大小写不敏感），`data/**/*.json` → `/data/…`（排除Git忽略的生成索引`data/local-assets.json`，它仍由coordinator供给）。
+- 三个源根必须与manifest在该根下的条目逐一一致（未发布的`.md`等也须列出），只容忍上述生成索引；链接/额外文件/空目录同样拒绝。单文件8MiB、合计32MiB（独立于JS/CSS预算）。
+- 每个alias与JS/CSS相同：`auth_request`、仅GET/HEAD、`private, no-store`及全部stock安全头、无业务ACAO、404进入同一受保护fallback；另加`gzip on`与`gzip_types application/javascript application/json`，因为coordinator原本对这些文件gzip。新增`^~ /shared/`、`^~ /sim/`、`^~ /data/`前缀，未知/缺失路径（含`/data/local-assets.json`、`/sim/nodeData.js`、目录301）只代理到同一个coordinator；`/data.js`垫片不受影响，仍走vhost原有位置。
+- metadata仅在启用时记录`runtimeStatic:true`；`--verify`按记录值重建，显式`--runtime-static`与记录不符即拒绝。
+
+部署时（需单独授权）：先核对现用vhost没有同URL的`/shared/`、`/sim/`、`/data/`精确或前缀location（否则重复/冲突），确认目标profile与`--topology`，用`--runtime-static`生成并`--verify`，安装到同一`localcode`树，`openresty -t`后正常reload。核验：任一`/data/*.json`与`/shared/*.js`响应带`X-Ark-Code-Source: edge`、`Content-Encoding: gzip`（客户端请求时）、`Cache-Control: private, no-store`、无ACAO；`/data/local-assets.json`仍为`cluster`；coordinator `/healthz`的`phases.static.data/static.shared`计数应降到接近0。coordinator原路径保留为fallback，回滚只需换回不带`--runtime-static`的include。
+
 ## 验证入口与边界
 
 准备器回归应覆盖schema、canonical输入、链接、目录、输出库存及stock安全头表达式。隔离Nginx HTTP检查应覆盖body/SHA/MIME、单值安全头、private-no-store/no-CORS、HEAD/授权304、匿名条件请求仍401、POST405、异源403、未知/缺文件fallback及匿名缺文件不触发取代码。

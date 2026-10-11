@@ -1,4 +1,5 @@
 """Opt-in real isolated Nginx private aliases/gate/fallback; no actual TLS/password acceptance."""
+import gzip
 import http.client
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import importlib.util
@@ -22,17 +23,23 @@ code = fixtures.code
 
 @unittest.skipUnless(os.environ.get('CLUSTER_PRIVATE_CODE_HTTP') == '1', 'opt-in existing verified Nginx HTTP fixture')
 class PrivateCodeHttpTests(unittest.TestCase):
-    profile, source_kind = 'beta', 'tree'
+    profile, source_kind, runtime = 'beta', 'tree', False
     def test_real_gate_alias_headers_head_conditional_origin_and_same_cluster_fallback(self):
-        fixture = fixtures.PrivateCodeTests()
-        fixture.setUp()
-        self.addCleanup(fixture.doCleanups)
+        if self.runtime:
+            holder = fixtures.RuntimeStaticTests()
+            holder.setUp()
+            self.addCleanup(holder.doCleanups)
+            fixture = holder.base
+        else:
+            fixture = fixtures.PrivateCodeTests()
+            fixture.setUp()
+            self.addCleanup(fixture.doCleanups)
         fixture.root.chmod(0o755)
         p = code.profiles.get_profile(self.profile)
         if self.source_kind == 'commit':
             fixture.value.update(kind='commit', baseRevision='e' * 40); fixture.refresh(); fixture.build = 'e' * 40
         value = code.prepare(fixture.source, fixture.manifest, fixture.digest, fixture.build, fixture.output,
-                             profile=self.profile, source_kind=self.source_kind)
+                             profile=self.profile, source_kind=self.source_kind, runtime=self.runtime)
         requests = []
 
         class Backend(BaseHTTPRequestHandler):
@@ -229,6 +236,32 @@ http {{
         check_private(headers, 'cluster')
         self.assertEqual(requests[-1]['method'], 'HEAD')
         cases += 1
+        if self.runtime:
+            data = (fixture.source / 'data/chess.json').read_bytes()
+            status, headers, body = request('GET', '/data/chess.json', extra={'Accept-Encoding': 'gzip'})
+            self.assertEqual(status, 200)
+            check_private(headers, 'edge')
+            self.assertEqual(dict(headers)['Content-Type'], 'application/json')
+            self.assertEqual(dict(headers).get('Content-Encoding'), 'gzip')
+            self.assertEqual(gzip.decompress(body), data)
+            cases += 1
+            for uri, source in (('/sim/battle/step.js', 'server/sim/battle/step.js'), ('/shared/constants.js', 'shared/constants.js'),
+                                ('/data/i18n/en.json', 'data/i18n/en.json')):
+                status, headers, body = request('GET', uri)
+                self.assertEqual((status, body), (200, (fixture.source / source).read_bytes()))
+                check_private(headers, 'edge')
+                cases += 1
+            for uri in ('/sim/nodeData.js', '/data/local-assets.json', '/shared/unlisted.js'):
+                status, headers, body = request('GET', uri)
+                self.assertEqual((status, body), (200, ('same-cluster:' + uri).encode()))
+                check_private(headers, 'cluster')
+                cases += 1
+            status, _, body = request('GET', '/data/chess.json', auth=False)
+            self.assertEqual(status, 401)
+            self.assertNotIn(data, body)
+            status, _, body = request('POST', '/sim/Battle.js')
+            self.assertEqual(status, 405)
+            cases += 2
         print(json.dumps({'event': 'cluster-private-code-http-check', 'nginx': 'verified1.28.3',
                           'profile': self.profile, 'sourceKind': self.source_kind, 'cases': cases, 'passed': cases, 'actualTLSorPasswordAcceptance': False,
                           'scope': 'owned loopback Nginx aliases/stock headers/fixture auth/HEAD/304/fixed-cluster fallback'}))
@@ -240,6 +273,10 @@ class BetaCommitPrivateCodeHttpTests(PrivateCodeHttpTests):
 
 class FormalPrivateCodeHttpTests(PrivateCodeHttpTests):
     profile, source_kind = 'formal', 'commit'
+
+
+class FormalRuntimeStaticHttpTests(PrivateCodeHttpTests):
+    profile, source_kind, runtime = 'formal', 'commit', True
 
 
 if __name__ == '__main__':

@@ -235,11 +235,13 @@ H.SERVER_CHESS_PRICE = {
   },
 };
 
+// 「<获得时>获得N件X」 names its item: the shared shop stock does not refuse it (GitHub #488; the text has no stock
+// condition, and 0.2.2 had none). The copies still occupy stock (PlayerState.acquireItem requirePool).
 H.SERVER_GAIN_EQUIP = {
   run(ctx) {
     const { bb, bbStr } = ctx.source;
     if (!ctx.gd.item(bbStr.chess)) return;
-    for (let i = 0; i < Math.min(10, num(bb.count, 1)); i++) ctx.grantItem(bbStr.chess);
+    for (let i = 0; i < Math.min(10, num(bb.count, 1)); i++) ctx.grantItem(bbStr.chess, { requirePool: false });
   },
 };
 
@@ -260,11 +262,12 @@ H.SERVER_GAIN_RANDOM_EQUIP_CHESS_IN_POOL = {
   },
 };
 
-/** Weighted item roll of an equip pool; elite garrisons use the pool's `goldenWeights` when present. */
+/** Weighted item roll of an equip pool; elite garrisons use the pool's `goldenWeights` when present. Both draws skip
+ * items without shared stock, like every effect-pool draw (DESIGN §29.8; the elite one did not, GitHub #488). */
 function rollEquip(ctx, poolId, golden) {
   const pool = ctx.data.choices && ctx.data.choices.pools ? ctx.data.choices.pools[poolId] : null;
   if (golden && pool && Array.isArray(pool.weighted) && Array.isArray(pool.goldenWeights) && pool.goldenWeights.length === pool.weighted.length) {
-    const pairs = pool.weighted.map((x, i) => [x[0], Math.max(0, num(pool.goldenWeights[i]))]).filter(([id, w]) => w > 0 && ctx.gd.item(id));
+    const pairs = pool.weighted.map((x, i) => [x[0], Math.max(0, num(pool.goldenWeights[i]))]).filter(([id, w]) => w > 0 && ctx.itemInStock(id));
     let total = 0;
     for (const [, w] of pairs) total += w;
     if (total > 0) {

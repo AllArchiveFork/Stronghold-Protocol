@@ -239,7 +239,7 @@ const ITEM_HANDLERS = {
       const copy = ctx.grantChess(target.id, { requirePool: false });
       if (!copy) { ev.error = 'HAND_FULL'; return; }
       for (const it of target.items || []) {
-        const itemPiece = ctx.grantItem(it.id);
+        const itemPiece = ctx.grantItem(it.id, { requirePool: false });
         if (itemPiece) ctx.equipDirect(itemPiece.uid, copy.uid);
       }
     },

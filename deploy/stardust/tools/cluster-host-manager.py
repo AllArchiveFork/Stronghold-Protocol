@@ -116,6 +116,9 @@ def parse_policy(value, *, profile='beta'):
                          else {deploy.ingress_service(index, profile) for index in range(1, count + 1)})
     require(all(isinstance(row, dict) and isinstance(row.get('service'), str) for row in targets)
             and {row['service'] for row in targets} == expected_services, 'fixed target services required')
+    # All games carry the one generated pool pair (combat 1..8, trial 0..2); coordinator/ingress 0/0.
+    workers = deploy.game_workers(targets)
+    require(workers is not None and (role == 'edge' or workers != (0, 0)), 'invalid fixed target identity')
     for row in targets:
         require(isinstance(row, dict), 'invalid target')
         service = row['service']
@@ -128,7 +131,7 @@ def parse_policy(value, *, profile='beta'):
                 and deploy.HEX64.fullmatch(str(row['runtime_sha256']))
                 and row['runtime_file'] == str(bundle / 'runtime' / service / 'runtime.json')
                 and type(row['combat_workers']) is int and type(row['trial_workers']) is int
-                and (row['combat_workers'], row['trial_workers']) == ((8, 2) if is_game else (0, 0)), 'invalid fixed target identity')
+                and (row['combat_workers'], row['trial_workers']) == (workers if is_game else (0, 0)), 'invalid fixed target identity')
         if is_game:
             index = int(service[5:])
             require(row['node_id'] == service and type(row['public_slot']) is int and row['public_slot'] == index
@@ -171,7 +174,7 @@ def load_policy(file, *, profile='beta'):
                                   image=policy['image_id'], build=policy['build'], kind=policy['source_kind'],
                                   manifest=policy['manifest_sha256'], profile=profile, ip=row['container_ip'],
                                   ports=[f'{item["host_ip"]}:{item["host_port"]}:{item["container_port"]}' for item in row['mappings']],
-                                  secrets_mounts=keys)
+                                  secrets_mounts=keys, combat_workers=row['combat_workers'], trial_workers=row['trial_workers'])
         require(compose['services'][row['service']] == expected, 'Compose service differs from fixed security baseline')
     return policy
 
@@ -220,11 +223,12 @@ def runtime_health_ready(value, target, build):
                 or not isinstance(value.get('generation'), str) or not re.fullmatch(r'[A-Za-z0-9_-][A-Za-z0-9_.:-]{0,127}', value['generation']):
             return False
         health = value.get('health')
+        # Exact policy pools; a zero trial pool is reported as disabled 0/0 by the game node.
         return isinstance(health, dict) and all(
-            isinstance(health.get(name), dict) and health[name].get('status') == 'ready'
+            isinstance(health.get(name), dict) and health[name].get('status') == ('ready' if count else 'disabled')
             and type(health[name].get('workers')) is int and type(health[name].get('ready')) is int
             and health[name]['workers'] == count and health[name]['ready'] == count
-            for name, count in (('combat', 8), ('trial', 2)))
+            for name, count in (('combat', target['combat_workers']), ('trial', target['trial_workers'])))
     if target['role'] == 'coordinator':
         return (isinstance(value, dict) and value.get('ok') is True and type(value.get('version')) is int and value['version'] == PROTOCOL
                 and type(value.get('maxRooms')) is int and value['maxRooms'] == 0

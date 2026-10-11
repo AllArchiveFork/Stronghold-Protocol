@@ -1,0 +1,182 @@
+/* Team panel and emote danmaku (ui/teamPanel.js, ui/teamLayout.js, ui/danmaku.js).
+   .team--classic: the official column (desktop, at most four seats) — big avatars, the emote bubble beside its row.
+   .team--list:    compact one-line rows in a bounded scroller (phones, more than four seats); a wide desktop takes two
+                   columns (.team--wide), an experimental room groups the rows by chess pool (.team--pools). On a phone
+                   the open list is a drawer over the shop bar and the corner buttons, closed by its own header.
+   Loaded after emotes.css and alliance.css, before devices.css (which keeps the touch hit areas). */
+
+.team {
+  --team-top: 2.36rem;                          /* below the bond strip */
+  --team-bottom: calc(2.64rem + 8px);           /* above the shop bar (ui/fieldHost.js HUD_REM.shopBarTop) */
+  --team-w1: max(280px, 2.8rem);
+  --team-w2: min(max(520px, 5.2rem), 32vw);
+  --team-fs: max(calc(.15 * var(--t)), 13px);   /* list text */
+  --team-fs-sm: max(calc(.12 * var(--t)), 11px);
+  --team-row: 44px;
+  --team-av: 36px;
+  position: absolute; left: .22rem; top: var(--team-top); display: flex; flex-direction: column; gap: .14rem; pointer-events: none;
+}
+.team__header { flex: none; pointer-events: auto; }
+.team__notice:empty { display: none; }
+.team .team__players[hidden] { display: none; }
+.team__toggle {
+  display: flex; align-items: center; gap: 8px; width: 100%; min-height: 44px; padding: 6px 10px;
+  color: var(--mint-400); background: rgba(10, 18, 15, .94); border: 1px solid var(--mint-700); font-size: max(calc(.16 * var(--t)), 14px);
+}
+.team__toggle .icon { width: 18px; height: 18px; }
+.team__toggle .icon:last-child { margin-left: auto; transform: rotate(-90deg); }
+.team.is-folded .team__toggle .icon:last-child { transform: rotate(90deg); }
+.team.is-folded { width: max(148px, 2.4rem); }
+
+/* ---- a row (both densities) ---------------------------------------------------------------------------------------- */
+.team__players { display: flex; flex-direction: column; gap: .14rem; }
+.team__row { position: relative; display: flex; align-items: center; gap: .1rem; pointer-events: auto; }
+.team__btn { position: relative; padding: 0; background: none; border: 0; transition: transform var(--t-fast); }
+.team__btn:hover { transform: translateX(.03rem); }
+.team__seat {
+  position: absolute; left: -.02rem; top: -.04rem; font-size: max(.11rem, 10px); padding: 0 .04rem; line-height: 1.3;
+  background: rgba(8, 11, 10, .9); color: var(--text-lo); border: 1px solid var(--line-2);
+}
+.team__ai { position: absolute; right: -.04rem; bottom: -.04rem; font-family: var(--font-num); font-size: max(.11rem, 10px); font-weight: 700; padding: 0 .04rem; background: #a9c3d8; color: #0b1520; }
+.team__you { position: absolute; right: -.08rem; top: -.08rem; width: .22rem; height: .22rem; display: grid; place-items: center; background: var(--mint-500); color: var(--text-on-mint); clip-path: polygon(25% 3%, 75% 3%, 100% 50%, 75% 97%, 25% 97%, 0 50%); }
+.team__you .icon { width: .14rem; height: .14rem; }
+.team__info { display: flex; flex-direction: column; gap: .02rem; min-width: 0; padding: .04rem .12rem .04rem .06rem; background: linear-gradient(90deg, rgba(8, 11, 10, .82), rgba(8, 11, 10, 0)); }
+.team__name { font-size: max(.15rem, 12px); font-weight: 500; color: var(--text-md); max-width: 1.5rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-shadow: 0 1px 2px #000; }
+.team__line { display: flex; align-items: center; gap: .1rem; }
+.team__line .misstag { height: .21rem; min-width: .68rem; padding-right: .08rem; }
+.team__line .misstag.has-art { width: .68rem; }
+.team__line .misstag__n { font-size: .16rem; }
+.team__line .misstag__icon { font-size: .13rem; }
+.team__status { width: .26rem; height: .26rem; display: grid; place-items: center; border: 1px solid currentColor; background: rgba(0, 0, 0, .5); }
+.team__status .icon { width: .18rem; height: .18rem; }
+.team__status .lsprite { width: .2rem; height: .2rem; object-fit: contain; }
+.team__status.has-sprite { border-color: transparent; background: none; animation: none; }
+.team__status.has-sprite .lsprite { width: .26rem; height: .26rem; }
+.team__status.is-lo { color: var(--text-lo); }
+.team__status.is-mint { color: var(--mint-400); }
+.team__status.is-gold { color: var(--gold); animation: blink 1.2s steps(2) infinite; }
+.team__status.is-orange { color: var(--orange-hi); }
+.team__status.is-red, .team__status.is-offline { color: var(--red-premium); }
+.team__eye { color: var(--amber); display: grid; }
+.team__eye .icon { width: .2rem; height: .2rem; }
+.team__row.is-self .pavatar { box-shadow: 0 0 0 2px var(--mint-500), 0 0 .18rem rgba(23, 249, 183, .35); }
+.team__row.is-watched .pavatar { box-shadow: 0 0 0 2px var(--amber), 0 0 .18rem rgba(246, 163, 41, .45); }
+.team__row.is-dead .team__name { color: var(--text-dim); text-decoration: line-through; }
+/* 最终攻势 / 隐秘核心: the viewer's pair framed in the official green from the round's start (item 51) — the official
+   ui/battle bg_team_border (a white frame with its glow) tinted through a mask; a plain green ring without the local art.
+   It replaces the own row's mint ring; a watched row keeps its amber one inside the frame. */
+.team__frame {
+  position: absolute; inset: -.07rem; pointer-events: none; z-index: 1;
+  background: var(--mint-500); -webkit-mask: var(--frame) center / 100% 100% no-repeat; mask: var(--frame) center / 100% 100% no-repeat;
+}
+.team__frame--plain { inset: -.04rem; background: none; -webkit-mask: none; mask: none; border: 2px solid var(--mint-500); box-shadow: 0 0 .14rem rgba(78, 216, 175, .65); }
+.team__row.is-self.is-team .pavatar { box-shadow: none; }
+/* 前往查看 / 返回战场 (research 09 §3.1: tapping a teammate's avatar expands a mint button under it) */
+.team__row.is-open .pavatar { box-shadow: 0 0 0 2px var(--mint-400), 0 0 .2rem rgba(23, 249, 183, .45); }
+.team__row.is-open .team__info { background: linear-gradient(90deg, rgba(13, 44, 36, .92), rgba(8, 11, 10, 0)); }
+.team__ob, .team__back { align-self: flex-start; margin-top: .04rem; min-width: 1.1rem; animation: pop-in var(--t-fast) var(--ease-out); }
+.team__ob .btn__label, .team__back .btn__label { letter-spacing: .12em; }
+.team__back { border-color: rgba(255, 255, 255, .7); color: #fff; }
+
+/* ---- classic: the emote bubble beside its row (emotes.css draws it) ------------------------------------------------ */
+.team .team__bubble { position: absolute; left: calc(100% + .06rem); top: 50%; transform: translateY(-50%); }
+
+/* ---- list -------------------------------------------------------------------------------------------------------- */
+.team.team--list { width: var(--team-w1); max-width: calc(100vw - 32px); padding: 4px; gap: 4px; }
+.team.team--list.is-open { bottom: var(--team-bottom); }
+.team.team--list.team--wide { width: var(--team-w2); }
+.team.team--list.is-folded { width: max(148px, 2.4rem); }
+.team--list .team__players {
+  display: grid; grid-auto-flow: column; grid-template-columns: repeat(var(--team-columns, 1), minmax(0, 1fr));
+  grid-template-rows: repeat(var(--team-rows, 1), max-content); align-content: start; gap: 4px;
+  min-height: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; touch-action: pan-y; padding: 2px; pointer-events: auto;
+}
+.team--list.team--pools .team__players { grid-auto-flow: row; grid-template-rows: none; align-items: start; }
+.team--list .team__row {
+  min-height: var(--team-row); min-width: 0; gap: 6px; padding: 0 6px 0 0;
+  background: rgba(10, 18, 15, .88); border: 1px solid var(--line);
+}
+.team--list .team__btn { flex: none; width: 44px; height: 44px; min-width: 44px; min-height: 44px; display: grid; place-items: center; }
+.team--list .pavatar { --pa: var(--team-av); }
+.team--list .team__info { flex: 1; min-width: 0; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 2px 8px; padding: 0; background: none; }
+.team--list .team__row.is-open .team__info { background: none; }
+.team--list .team__row.is-open { background: rgba(13, 44, 36, .92); border-color: var(--mint-700); }
+.team--list .team__name { flex: 1 1 3em; min-width: 0; max-width: none; font-size: var(--team-fs); }
+.team--list .team__line { flex: none; gap: 6px; }
+.team--list .lp--sm { font-size: var(--team-fs); gap: 2px; }
+.team--list .lp__pend { font-size: var(--team-fs-sm); }
+.team--list .team__line .misstag { height: 20px; min-width: 52px; }
+.team--list .team__line .misstag.has-art { width: 56px; }
+.team--list .misstag__n, .team--list .misstag__icon { font-size: 12px; }
+.team--list .team__status, .team--list .team__status.has-sprite .lsprite { width: 20px; height: 20px; }
+.team--list .team__status .icon, .team--list .team__eye .icon { width: 16px; height: 16px; }
+.team--list .team__seat { font-size: 10px; left: -2px; top: -2px; padding: 0 2px; }
+.team--list .team__ai { font-size: 10px; padding: 0 2px; right: -2px; bottom: -2px; }
+.team--list .team__you { width: 16px; height: 16px; right: -2px; top: -2px; }
+.team--list .team__you .icon { width: 12px; height: 12px; }
+.team--list .team__frame { inset: -3px; }
+/* the second line of a row: 救援 / 前往查看 / 返回战场 */
+.team--list .team-rescue-action, .team--list .team__ob, .team--list .team__back { flex-basis: 100%; }
+.team--list .team-rescue-action--compact { margin: 2px 0; max-width: 100%; }
+.team.team--list .team-rescue-action--compact .btn { min-height: 44px; min-width: 44px; padding: 8px; }
+.team-rescue-action--compact .btn__icon { width: 18px; height: 18px; }
+.team--list .team__ob, .team--list .team__back { position: static; margin: 2px 0; min-height: 44px; max-width: 100%; white-space: normal; font-size: 14px; }
+.team--list .team-rescue { font-size: var(--team-fs-sm); max-width: none; padding: 4px; }
+.team--list .team-rescue > small { font-size: var(--team-fs-sm); }
+
+/* an experimental room: the rows grouped by chess pool (m.public poolGroups) */
+.team__pool { display: flex; flex-direction: column; gap: 4px; min-width: 0; padding-left: 4px; border-left: 2px solid var(--line-2); }
+.team__pool.is-mine { border-left-color: var(--mint-500); }
+.team__pool-head {
+  position: sticky; top: 0; z-index: 2; display: flex; align-items: baseline; gap: 6px; min-height: 24px; padding: 3px 6px;
+  background: rgba(8, 11, 10, .95); color: var(--text-md); font-size: var(--team-fs); font-weight: 700; letter-spacing: .04em;
+}
+.team__pool-head small { font-size: var(--team-fs-sm); font-weight: 400; color: var(--text-lo); letter-spacing: 0; }
+.team__pool.is-mine .team__pool-name { color: var(--mint-400); }
+.team__pool-head .team__pool-mine { margin-left: auto; color: var(--mint-400); }
+
+/* ---- danmaku ----------------------------------------------------------------------------------------------------- */
+.gm__hud > .danmaku {
+  --dm-lane-h: max(.5rem, 40px);
+  position: absolute; left: 0; right: 0; top: 2.16rem; height: calc(var(--dm-lanes, 3) * var(--dm-lane-h));
+  overflow: hidden; pointer-events: none;
+}
+.danmaku__item {
+  position: absolute; left: 100%; top: calc(var(--dm-lane, 0) * var(--dm-lane-h) + 2px); height: calc(var(--dm-lane-h) - 4px);
+  display: flex; align-items: center; gap: 6px; padding: 0 8px 0 2px; white-space: nowrap;
+  background: rgba(8, 11, 10, .66); border: 1px solid rgba(78, 216, 175, .3); border-radius: calc(var(--dm-lane-h) / 2);
+  animation: danmaku-fly var(--dm-dur, 6000ms) linear forwards; will-change: transform;
+}
+.danmaku__item.is-self { border-color: var(--mint-500); background: rgba(13, 44, 36, .78); }
+.danmaku__who { display: flex; flex: none; }
+.danmaku__who .pavatar { --pa: calc(var(--dm-lane-h) - 10px); border-radius: 50%; overflow: hidden; }
+.danmaku__who .pavatar + .pavatar { margin-left: -12px; }
+.danmaku__name { max-width: 7em; overflow: hidden; text-overflow: ellipsis; font-size: max(calc(.15 * var(--t)), 13px); font-weight: 500; color: var(--text-hi); text-shadow: 0 1px 2px #000; }
+.danmaku__n { font-size: max(calc(.15 * var(--t)), 13px); color: var(--gold); }
+.danmaku__art { flex: none; width: calc(var(--dm-lane-h) - 6px); height: calc(var(--dm-lane-h) - 6px); display: grid; place-items: center; }
+@keyframes danmaku-fly { from { transform: translateX(0); } to { transform: translateX(calc(-100vw - 100%)); } }
+/* reduced motion: standing in the lane's middle, gone after the bubble time (only the delay survives the global 1 ms) */
+.danmaku--still .danmaku__item { left: 50%; transform: translateX(-50%); will-change: auto;
+  animation: danmaku-out 1ms linear calc(var(--dm-dur, 3000ms) - 1ms) forwards; }
+@keyframes danmaku-out { to { opacity: 0; } }
+
+/* ---- phones: the folded header under the bond strip, the open list a drawer ------------------------------------- */
+@media (max-height: 600px) and (pointer: coarse), (max-width: 767px) {
+  .gm .team { --team-top: max(2.6rem, 104px); }
+  .gm .team.is-folded { width: 164px; }
+  .gm .team.team--list.is-open {
+    bottom: 8px; width: min(300px, calc(100vw - 24px)); z-index: 5;
+    background: rgba(6, 10, 9, .94); border: 1px solid var(--line-2); box-shadow: .06rem 0 .3rem rgba(0, 0, 0, .55);
+  }
+  .gm .team .team__name { font-size: max(calc(.16 * var(--t)), 14px); }
+  .gm .team .lp--sm { font-size: 14px; }
+  .gm__hud > .danmaku { --dm-lane-h: 34px; }
+}
+/* a portrait phone in a big room: the top bar takes two rows (screens/game.css), the roster starts below them */
+@media (max-width: 600px) and (orientation: portrait) {
+  .gm.gm--expanded .team { --team-top: 4.1rem; }
+  .gm.gm--expanded.gm--unite-budget .team { --team-top: 5.1rem; }
+}
+@media (max-height: 560px) and (orientation: landscape) and (hover: hover) and (pointer: fine) {
+  .team.team--list { --team-top: 1.9rem; --team-bottom: 1.4rem; }
+}

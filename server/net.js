@@ -16,7 +16,9 @@
 //     (`maxConnectionsPerAddr`, checked at upgrade time through `admission`), rooms and running matches
 //     in server/lobby.js. Local / LAN peers without a forwarding header (dev machine, tests, LAN party)
 //     have no key and are never limited per address.
-//   * Heartbeat (ws ping/pong every `heartbeatMs`, dead sockets terminated), hello timeout.
+//   * Heartbeat (ws ping/pong every `heartbeatMs`, dead sockets terminated), hello timeout. The sockets are split
+//     round-robin into ~1 s slices of the interval (HEARTBEAT_SLICE_MS), so one tick pings 1/N of them instead of
+//     every socket at once; each socket is still pinged once per `heartbeatMs` and dropped after one missed interval.
 //   * Send helpers that never throw, with a backpressure guard: non-critical `b.snap` frames are skipped
 //     while the socket has more than 1 MB queued; a socket with more than 16 MB queued is terminated
 //     (the client reconnects and receives a full state resync).
@@ -45,11 +47,16 @@ import { ERR, ERR_TEXT, PROTOCOL_VERSION, MATCHMAKING_VERSION } from '../shared/
 import { PLAYER_CAPACITY_VERSION } from '../shared/playerCapacity.js';
 import { isCompressibleType } from './wsCompression.js';
 import { moderateName } from '../shared/names.js';
+import { NO_PHASES } from './phaseMetrics.js';
+import { serverFullDetail } from './onlineLimit.js';
 export { sanitizeName } from '../shared/names.js';
 
 /** Tunables (all overridable through the Network / SessionRegistry constructors). */
 /** Every lobby heartbeat carries the same public cluster summary: normalize it at most once per this many ms. */
 export const CLUSTER_LOAD_CACHE_MS = 1000;
+/** Target spacing of heartbeat slices; at most HEARTBEAT_SLICES_MAX slices per interval (1 below ~1.5 s). */
+export const HEARTBEAT_SLICE_MS = 1000;
+export const HEARTBEAT_SLICES_MAX = 30;
 
 export const NET_DEFAULTS = Object.freeze({
   ratePerSec: 40,               // token bucket refill rate
@@ -82,6 +89,13 @@ export const CLOSE = Object.freeze({ REPLACED: 4001, HELLO_TIMEOUT: 4002, POLICY
 
 const WS_OPEN = 1;
 const MAX_RID = 2 ** 31;
+/** Phase names of the validated message types (bounded by C2S), built once per type. */
+const MESSAGE_PHASES = new Map();
+const messagePhase = (t) => {
+  let name = MESSAGE_PHASES.get(t);
+  if (!name) { name = `ws.${t}`; MESSAGE_PHASES.set(t, name); }
+  return name;
+};
 const noopLog = { info() {}, warn() {}, error() {}, debug() {} };
 
 // ---------------------------------------------------------------------------------------------------
@@ -118,6 +132,8 @@ export class Session {
     this.pendingResult = null;
     /** @type {number} ms epoch of the last full match resync (lobby-owned; throttles repeated hellos) */
     this.resyncAt = -Infinity;
+    /** @type {number} ms epoch of the last presence.state sent to this session (lobby-owned; in-match refresh rate) */
+    this.presenceAt = -Infinity;
     /** @type {Record<string, { skill: number, module: string|null }> | null} checked operator loadout (lobby-owned, DESIGN §16) */
     this.loadout = null;
     /** @type {Readonly<Record<string, { potential: number, cultivate: number }>> | null} checked per-operator 潜能 / 练度 (lobby-owned, 0.2.2; room.loadout `ops`) */
@@ -283,19 +299,21 @@ const onSendDone = (err) => { void err; }; // errors surface through the socket'
 
 /**
  * Send an already-encoded frame. Skips when the socket is not OPEN, when `droppable` and the socket is
- * congested (> 1 MB queued), and terminates sockets whose queue exceeds 16 MB.
+ * congested (> 1 MB queued), and terminates sockets whose queue exceeds 16 MB. A Buffer must hold the UTF-8
+ * of a JSON text (built once for many members, e.g. cluster.terminal) and is still sent as a TEXT frame.
  * @param {import('ws').WebSocket | null | undefined} ws
- * @param {string} data
+ * @param {string | Buffer} data
  * @param {{ droppable?: boolean, compress?: boolean }} [opts]
  * @returns {boolean} true when the frame was queued
  */
 export function sendRaw(ws, data, { droppable = false, compress = false } = {}) {
-  if (!ws || ws.readyState !== WS_OPEN || typeof data !== 'string') return false;
+  if (!ws || ws.readyState !== WS_OPEN || (typeof data !== 'string' && !Buffer.isBuffer(data))) return false;
   try {
     const queued = ws.bufferedAmount;
     if (queued > NET_DEFAULTS.hardBufferBytes) { ws.terminate(); return false; }
     if (droppable && queued > NET_DEFAULTS.snapDropBytes) return false;
-    ws.send(data, { compress: compress === true }, onSendDone);
+    // A Buffer would default to a binary frame: say text explicitly; string sends keep their exact options.
+    ws.send(data, typeof data === 'string' ? { compress: compress === true } : { compress: compress === true, binary: false }, onSendDone);
     return true;
   } catch {
     return false;
@@ -326,6 +344,19 @@ export function send(ws, msg) {
 export function sendSession(session, msg) {
   if (!session || !session.connected) return false;
   return send(session.ws, msg);
+}
+
+/**
+ * sendSession for a frame already encoded with encode(): the same socket, backpressure and compression rules as
+ * send(), without serializing the message again. Never throws.
+ * @param {Session | null | undefined} session
+ * @param {string} type the message's `t`
+ * @param {string | Buffer} data the JSON text (or its UTF-8 bytes, see sendRaw)
+ * @returns {boolean}
+ */
+export function sendSessionEncoded(session, type, data) {
+  if (!session || !session.connected) return false;
+  return sendRaw(session.ws, data, { droppable: type === 'b.snap', compress: isCompressibleType(type) });
 }
 
 /** @param {unknown} rid */
@@ -484,6 +515,8 @@ class Connection {
     this.pendingHandlers = 0;
     /** true once the server initiated the close; frames still in flight are ignored */
     this.closing = false;
+    /** heartbeat slice index (Network.heartbeatSlices) */
+    this.slice = 0;
   }
 
   /** Server-initiated close (never throws). Later frames from this socket are ignored. */
@@ -508,9 +541,11 @@ export class Network {
    *   getLoadDetails?: () => unknown,
    *   getClusterLoad?: () => unknown,
    *   options?: Partial<typeof NET_DEFAULTS>,
+   *   metrics?: { start: () => number, end: (name: string, t0: number, items?: number) => void },
    * }} opts
    */
-  constructor({ registry, handler, log = noopLog, now = Date.now, getLoadState = null, getLoadDetails = null, getClusterLoad = null, options = {} }) {
+  constructor({ registry, handler, log = noopLog, now = Date.now, getLoadState = null, getLoadDetails = null, getClusterLoad = null, options = {},
+    metrics = NO_PHASES, onlineLimit = null }) {
     this.registry = registry;
     this.handler = handler;
     this.log = log;
@@ -526,7 +561,16 @@ export class Network {
     /** @type {Map<string, number>} open sockets per client network key */
     this.connsPerKey = new Map();
     this.closed = false;
-    this.heartbeatTimer = setInterval(() => this.heartbeat(), this.opts.heartbeatMs);
+    /** diagnostics only (server/phaseMetrics.js): never changes a reply */
+    this.metrics = metrics;
+    /** @type {{ limit: () => number } | null} the online cap (server/onlineLimit.js) for NEW sessions */
+    this.onlineLimit = onlineLimit;
+    const slices = Math.max(1, Math.min(HEARTBEAT_SLICES_MAX, Math.round(this.opts.heartbeatMs / HEARTBEAT_SLICE_MS)));
+    /** @type {Set<Connection>[]} round-robin heartbeat slices; one is visited per tick */
+    this.heartbeatSlices = Array.from({ length: slices }, () => new Set());
+    this.heartbeatCursor = 0;
+    this.heartbeatAssign = 0;
+    this.heartbeatTimer = setInterval(() => this.heartbeatTick(), Math.max(1, Math.floor(this.opts.heartbeatMs / slices)));
     this.heartbeatTimer.unref?.();
     const sweepMs = Math.max(20, Math.min(15_000, Math.floor(this.opts.reconnectWindowMs / 4)));
     this.sweepTimer = setInterval(() => this.sweep(), sweepMs);
@@ -559,6 +603,8 @@ export class Network {
     if (this.closed) { try { ws.close(CLOSE.SHUTDOWN, 'server shutdown'); } catch { /* ignore */ } return; }
     const conn = new Connection(ws, clientAddress(req, this.opts.trustProxy), this.now(), this.opts);
     this.conns.set(ws, conn);
+    conn.slice = this.heartbeatAssign++ % this.heartbeatSlices.length;
+    this.heartbeatSlices[conn.slice].add(conn);
     if (conn.key) this.connsPerKey.set(conn.key, (this.connsPerKey.get(conn.key) || 0) + 1);
     ws.on('message', (data, isBinary) => {
       try { this.onFrame(conn, data, isBinary); } catch (e) { this.log.error('[net] frame handler crashed', e); }
@@ -631,7 +677,12 @@ export class Network {
       this.reply(conn, pong);
       return;
     }
-    if (msg.t === 'hello') { this.onHelloMsg(conn, msg, now); return; }
+    if (msg.t === 'hello') {
+      const t0 = this.metrics.start();
+      this.onHelloMsg(conn, msg, now);
+      this.metrics.end('ws.hello', t0);
+      return;
+    }
     if (!conn.session) { this.reply(conn, errorMsg(ERR.BAD_MSG, rid, 'hello required')); return; }
     if (HEAVY_TYPES.has(msg.t) && !conn.heavy.take(now)) { this.reply(conn, errorMsg(ERR.RATE, rid, `${msg.t} too often`)); return; }
 
@@ -644,6 +695,7 @@ export class Network {
         this.reply(conn, errorMsg(isErrCode(res.error) ? res.error : ERR.INTERNAL, rid, res.detail));
       } else if (validRid(rid)) this.reply(conn, { t: 'ok', rid });
     };
+    const t0 = this.metrics.start();
     let res;
     try {
       // client-side combat reports (b.progress / b.result, DESIGN §14) belong to the running match like 'g.*' intents:
@@ -664,6 +716,7 @@ export class Network {
       Promise.resolve(res).then(respond, () => respond({ error: ERR.INTERNAL }))
         .catch(() => {}).finally(() => { conn.pendingHandlers--; });
     } else respond(res);
+    this.metrics.end(messagePhase(msg.t), t0); // the synchronous part only
   }
 
   /** @param {Connection} conn @param {any} msg @param {number} now */
@@ -712,6 +765,9 @@ export class Network {
         resumed = true;
         if (session.ws && session.ws !== conn.ws) this.detachReplaced(session.ws);
       } else {
+        // the online cap admits no NEW session while the lobby is at it; a resumed one above always comes back
+        const full = this.serverFull();
+        if (full) { this.reply(conn, errorMsg(ERR.SERVER_FULL, rid, full)); return; }
         session = this.registry.create(name);
         if (!session) { this.reply(conn, errorMsg(ERR.INTERNAL, rid, 'server full')); return; }
       }
@@ -757,6 +813,7 @@ export class Network {
 
   /** @param {Connection} conn */
   onClose(conn) {
+    this.heartbeatSlices[conn.slice]?.delete(conn);
     if (this.conns.delete(conn.ws) && conn.key) {
       const n = (this.connsPerKey.get(conn.key) || 1) - 1;
       if (n > 0) this.connsPerKey.set(conn.key, n);
@@ -769,40 +826,67 @@ export class Network {
     s.connected = false;
     s.disconnectedAt = this.now();
     if (this.closed) return;
+    const t0 = this.metrics.start();
     try { this.handler.onDisconnect?.(s); } catch (e) { this.log.error('[net] onDisconnect crashed', e); }
+    this.metrics.end('ws.close', t0);
   }
 
-  /** Ping every socket; terminate the ones that did not answer since the previous heartbeat. */
+  /** The SERVER_FULL detail when the online cap is set and reached (the lobby's onlineCount), else null. */
+  serverFull() {
+    let cap = 0;
+    try { cap = this.onlineLimit?.limit() ?? 0; } catch { cap = 0; }
+    if (!(cap > 0)) return null;
+    let online = 0;
+    try { online = Number(this.handler.onlineCount?.()) || 0; } catch { online = 0; }
+    return online >= cap ? serverFullDetail(online, cap) : null;
+  }
+
+  /** One heartbeat check of a socket: ping it, or drop it when it did not answer since its previous ping. */
+  heartbeatConn(conn, now) {
+    try {
+      if (conn.closing) {
+        // Closing handshake never completed within a heartbeat interval → drop the TCP connection.
+        if (!conn.alive) conn.ws.terminate();
+        conn.alive = false;
+        return;
+      }
+      if (!conn.session && now - conn.openedAt > this.opts.helloTimeoutMs) {
+        conn.close(CLOSE.HELLO_TIMEOUT, 'hello timeout');
+        return;
+      }
+      if (!conn.alive) { conn.ws.terminate(); return; }
+      conn.alive = false;
+      conn.ws.ping();
+    } catch (e) {
+      this.log.debug?.('[net] heartbeat error', e?.message);
+    }
+  }
+
+  /** Timer tick: the next slice only (each slice comes round once per heartbeatMs). */
+  heartbeatTick() {
+    const slice = this.heartbeatSlices[this.heartbeatCursor];
+    this.heartbeatCursor = (this.heartbeatCursor + 1) % this.heartbeatSlices.length;
+    if (!slice.size) return;
+    const t0 = this.metrics.start(), now = this.now();
+    for (const conn of [...slice]) this.heartbeatConn(conn, now);
+    this.metrics.end('net.heartbeat', t0, slice.size);
+  }
+
+  /** Ping every socket at once; terminate the ones that did not answer since the previous heartbeat. */
   heartbeat() {
     const now = this.now();
-    for (const conn of this.conns.values()) {
-      try {
-        if (conn.closing) {
-          // Closing handshake never completed within a heartbeat interval → drop the TCP connection.
-          if (!conn.alive) conn.ws.terminate();
-          conn.alive = false;
-          continue;
-        }
-        if (!conn.session && now - conn.openedAt > this.opts.helloTimeoutMs) {
-          conn.close(CLOSE.HELLO_TIMEOUT, 'hello timeout');
-          continue;
-        }
-        if (!conn.alive) { conn.ws.terminate(); continue; }
-        conn.alive = false;
-        conn.ws.ping();
-      } catch (e) {
-        this.log.debug?.('[net] heartbeat error', e?.message);
-      }
-    }
+    for (const conn of [...this.conns.values()]) this.heartbeatConn(conn, now);
   }
 
   /** Purge expired sessions and tell the handler. */
   sweep() {
+    const t0 = this.metrics.start();
     let expired;
     try { expired = this.registry.sweep(this.now()); } catch (e) { this.log.error('[net] sweep crashed', e); return; }
     for (const s of expired) {
       try { this.handler.onExpire?.(s); } catch (e) { this.log.error('[net] onExpire crashed', e); }
     }
+    this.metrics.end('net.sweep', t0, expired.length);
   }
 
   /**

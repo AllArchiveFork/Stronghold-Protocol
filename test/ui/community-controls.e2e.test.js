@@ -52,6 +52,10 @@ describe('community UI: lobby header and shared DIY details', { skip: !enabled }
     }, lang);
     await page.goto(`http://127.0.0.1:${srv.port}/`, { waitUntil: 'networkidle0' });
     await page.waitForSelector('.lobby-screen');
+    // an unread announcement opens over the lobby on arrival (screens/lobby.js); read it first, as a player would
+    if (await page.waitForSelector('.announcement-board', { timeout: 2000 }).catch(() => null)) {
+      await page.click('.announcement-board .modal__actions .btn'); await page.waitForSelector('.announcement-board', { hidden: true });
+    }
     return { context, page };
   }
   for (const width of [1600, 844]) for (const lang of ['zh-CN', 'en', 'ja', 'ko', 'zh-TW']) {
@@ -70,7 +74,8 @@ describe('community UI: lobby header and shared DIY details', { skip: !enabled }
         });
         await page.waitForSelector('[data-testid="resume-local-match"]');
         await page.waitForSelector('[data-testid="pwa-install"]');
-        const boxes = await page.$$eval('.lobby-screen .topbar button, .lobby-screen .topbar__center', els => els.map(e => {
+        // (a closed 更多 menu's entries are not on screen: only what is shown must fit and take its own taps)
+        const boxes = await page.$$eval('.lobby-screen .topbar button, .lobby-screen .topbar__center', els => els.filter(e => e.getClientRects().length).map(e => {
           const r = e.getBoundingClientRect(), hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
           return { label: e.getAttribute('aria-label') || e.textContent.trim(), x: r.x, y: r.y, right: r.right, bottom: r.bottom,
             hit: e.tagName !== 'BUTTON' || hit === e || e.contains(hit) };

@@ -5,6 +5,7 @@ import { randomBytes } from 'node:crypto';
 import { ERR, MAX_SEATS, DIFFICULTIES, MATCHMAKING_VERSION } from '../shared/constants.js';
 import { EXPERIMENTAL_DEFAULTS, experimentalOptions, experimentalKey, sameExperimental } from '../shared/experimental.js';
 import { PLAYER_CAPACITY_VERSION, roomCapacity } from '../shared/playerCapacity.js';
+import { NO_PHASES } from './phaseMetrics.js';
 
 // Quantity/per-network admission caps use 0 = unlimited; ticket and acceptance deadlines stay bounded.
 export const MATCHMAKING_DEFAULTS = Object.freeze({ maxEntries: 0, maxPerAddr: 0, waitMs: 600_000, acceptMs: 30_000 });
@@ -24,7 +25,7 @@ function observeThenable(value) {
 
 export class Matchmaking {
   constructor({ now = Date.now, send, available, members, allocate, asyncAllocate = null, allocationMs = 6000,
-    options = {}, timers = { setTimeout, clearTimeout } }) {
+    options = {}, timers = { setTimeout, clearTimeout }, metrics = NO_PHASES }) {
     if (asyncAllocate !== null && typeof asyncAllocate !== 'function') throw new TypeError('invalid matchmaking asyncAllocate');
     if (!Number.isSafeInteger(allocationMs) || allocationMs < 1 || allocationMs > 8000) throw new TypeError('invalid matchmaking allocationMs');
     this.asyncAllocate = asyncAllocate;
@@ -48,6 +49,8 @@ export class Matchmaking {
     this.timer = null;
     this.populationTimer = null;
     this.closed = false;
+    /** diagnostics only (server/phaseMetrics.js) */
+    this.metrics = metrics;
   }
 
   has(session) { return this.entries.has(session.playerId); }
@@ -111,6 +114,7 @@ export class Matchmaking {
   idle(e, reason) { this.send(e.session, { t: 'queue.state', state: 'idle', ticketId: null, required: MAX_SEATS, reason }); }
 
   notifyPopulation() {
+    const t0 = this.metrics.start();
     const { counts, waiting } = this.waitingPopulation();
     for (const saved of waiting) {
       const e = saved.entry;
@@ -120,6 +124,7 @@ export class Matchmaking {
         || e.ticketId !== saved.ticketId || e.offerId || this.stale(e, this.now())) continue;
       if (e.lastWaitingCount !== (counts.get(this.poolKey(e)) || 0)) this.push(e, counts);
     }
+    this.metrics.end('queue.population', t0, waiting.length);
   }
 
   armPopulation() {
@@ -412,6 +417,11 @@ export class Matchmaking {
 
   pump() {
     if (this.closed) return;
+    const t0 = this.metrics.start();
+    try { this.pumpPools(); } finally { this.metrics.end('queue.pump', t0, this.entries.size); }
+  }
+
+  pumpPools() {
     const pools = new Map();
     for (const party of this.parties.values()) {
       const e = party.entries[0];
@@ -513,6 +523,11 @@ export class Matchmaking {
 
   /** One timer scans retained tickets; incoming operations also enforce their own deadlines. */
   sweep() {
+    const t0 = this.metrics.start();
+    try { this.sweepEntries(); } finally { this.metrics.end('queue.sweep', t0, this.entries.size); }
+  }
+
+  sweepEntries() {
     const now = this.now();
     const expired = new Set([...this.entries.values()].filter((e) => this.stale(e, now)));
     let allocationExpired = false;

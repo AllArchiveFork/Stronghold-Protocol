@@ -24,6 +24,15 @@ HEX40, HEX64 = re.compile(r'[a-f0-9]{40}'), re.compile(r'[a-f0-9]{64}')
 SEGMENT = re.compile(r'[A-Za-z0-9_-][A-Za-z0-9_.-]*')
 MAX_MANIFEST, MAX_FILE, MAX_CODE = 1024 * 1024, 8 * 1024 * 1024, 32 * 1024 * 1024
 TOPOLOGIES = ('wg', 'local')
+# Opt-in (--runtime-static): the coordinator's other private static mounts (server/http/static.js) as exact
+# aliases too, so page loads stop costing coordinator main-thread time. Source root, URL prefix, served
+# extensions. Unknown/missing URLs under these prefixes still reach the same coordinator (its 404/301 rules).
+RUNTIME_ROOTS = (('shared', 'shared', ('.js',)), ('server/sim', 'sim', ('.js',)), ('data', 'data', ('.json',)))
+# The Node-only loader is never served (static.js SIM_PRIVATE); the generated renderer index is not a Git
+# file (cluster-generated-assets.py) and stays with the coordinator. Compared lower-case.
+RUNTIME_DENY = frozenset(('server/sim/nodedata.js',))
+RUNTIME_IGNORED = frozenset(('data/local-assets.json',))
+MAX_RUNTIME = 32 * 1024 * 1024
 
 
 class Refused(Exception):
@@ -125,7 +134,26 @@ def reject_duplicates(pairs):
     return result
 
 
-def source_manifest(path, expected_sha, build, *, profile='beta', source_kind='tree'):
+def runtime_root(path):
+    return next((root for root in RUNTIME_ROOTS if path.startswith(root[0] + '/')), None)
+
+
+def is_runtime(path):
+    root = runtime_root(path)
+    return bool(root) and path.lower() not in RUNTIME_DENY and path.lower() not in RUNTIME_IGNORED \
+        and any(path.endswith(ext) for ext in root[2])
+
+
+def url_path(path):
+    """Served path below the site root: public/js/a.js -> js/a.js, server/sim/b.js -> sim/b.js, data/c.json -> data/c.json."""
+    if is_code(path):
+        return path[len('public/'):]
+    root = runtime_root(path)
+    require(root is not None and is_runtime(path), 'UNKNOWN_PRIVATE_CODE_ENTRY')
+    return root[1] + path[len(root[0]):]
+
+
+def source_manifest(path, expected_sha, build, *, profile='beta', source_kind='tree', runtime=False):
     profiles.get_profile(profile)
     require(source_kind in ('tree', 'commit'), 'INVALID_SOURCE_KIND')
     require(profiles.path_allowed(path, profile), 'CROSS_PROFILE_SOURCE_PATH')
@@ -163,6 +191,12 @@ def source_manifest(path, expected_sha, build, *, profile='beta', source_kind='t
     require(any(row['path'].startswith('public/js/') for row in selected)
             and any(row['path'].startswith('public/css/') for row in selected)
             and sum(row['bytes'] for row in selected) <= MAX_CODE, 'INVALID_PRIVATE_CODE_INVENTORY')
+    if runtime:
+        served = [row for row in files if is_runtime(row['path'])]
+        require(all(row['bytes'] <= MAX_FILE for row in served)
+                and all(any(row['path'].startswith(root[0] + '/') for row in served) for root in RUNTIME_ROOTS)
+                and sum(row['bytes'] for row in served) <= MAX_RUNTIME, 'INVALID_RUNTIME_STATIC_INVENTORY')
+        selected = selected + served
     return value, selected
 
 
@@ -197,7 +231,7 @@ def parents(paths):
     return sorted(directories)
 
 
-def verified_snapshots(source, selected):
+def verified_snapshots(source, selected, manifest_files=()):
     source = root_directory(source)
     directory(source / 'public')
     actual_files, actual_dirs = [], []
@@ -205,9 +239,17 @@ def verified_snapshots(source, selected):
         files, dirs = inventory(source, prefix)
         actual_files.extend(files)
         actual_dirs.extend([prefix, *dirs])
-    expected = [row['path'] for row in selected]
+    expected = [row['path'] for row in selected if is_code(row['path'])]
     expected_dirs = sorted(set(ROOTS) | {path for path in parents(expected) if path != 'public'})
     require(sorted(actual_files) == expected and sorted(actual_dirs) == expected_dirs, 'SOURCE_CODE_INVENTORY_MISMATCH')
+    if any(not is_code(row['path']) for row in selected):
+        # Each runtime root holds exactly its manifest files (served or not), plus at most the ignored index.
+        for prefix, _url, _ext in RUNTIME_ROOTS:
+            files, dirs = inventory(source, prefix)
+            listed = sorted(row['path'] for row in manifest_files if row['path'].startswith(prefix + '/'))
+            require(sorted(file for file in files if file not in RUNTIME_IGNORED) == listed
+                    and sorted(dirs) == sorted(path for path in parents(listed) if path.startswith(prefix + '/')),
+                    'SOURCE_RUNTIME_INVENTORY_MISMATCH')
     snapshots = {}
     for row in selected:
         raw, mode = read_file(source / row['path'])
@@ -273,7 +315,7 @@ def proxy_body(*, profile='beta', topology='wg'):
     ]
 
 
-def render_include(build, selected, *, profile='beta', source_kind='tree', topology='wg'):
+def render_include(build, selected, *, profile='beta', source_kind='tree', topology='wg', runtime=False):
     p = profiles.get_profile(profile)
     fallback = '@ark_' + p.name + '_cluster_code'
     require(HEX40.fullmatch(build), 'INVALID_TREE_IDENTITY')
@@ -298,11 +340,21 @@ def render_include(build, selected, *, profile='beta', source_kind='tree', topol
         ]
     if topology != 'wg':
         lines.append('# Topology=local: fallback dials the co-located coordinator on its core bridge, not WG.')
+    if runtime:
+        lines.append('# Runtime static: /shared/, /sim/ and /data/ are edge aliases too; same gate, headers and fallback.')
+    require(runtime == any(not is_code(row['path']) for row in selected), 'UNKNOWN_PRIVATE_CODE_ENTRY')
     for row in selected:
         source_path = safe_path(row['path'])
-        require(is_code(source_path), 'UNKNOWN_PRIVATE_CODE_ENTRY')
-        path = source_path[len('public/'):]
-        mime = 'application/javascript' if path.startswith('js/') else 'text/css'
+        path = url_path(source_path)
+        extra = []
+        if path.startswith('js/'):
+            mime = 'application/javascript'
+        elif path.startswith('css/'):
+            mime = 'text/css'
+        else:
+            # The coordinator gzips these itself; keep large game data compressed at the edge too.
+            mime = 'application/json' if path.endswith('.json') else 'application/javascript'
+            extra = ['    gzip on;', '    gzip_types application/javascript application/json;']
         lines.extend(['', 'location = /' + path + ' {',
                       '    auth_request /_gate/check;',
                       '    if ($request_method !~ ^(GET|HEAD)$) { return 405; }',
@@ -310,21 +362,21 @@ def render_include(build, selected, *, profile='beta', source_kind='tree', topol
                       # Static404 occurs after access phase; named fallback repeats the gate.
                       '    error_page 404 = ' + fallback + ';',
                       '    disable_symlinks on;', '    types { }',
-                      '    default_type ' + mime + ';', '    expires off;', '    etag on;',
+                      '    default_type ' + mime + ';', *extra, '    expires off;', '    etag on;',
                       *security_headers('edge', profile=profile), '}'])
     # Exact locations win over these prefixes. Unknown code can ONLY proxy to the
     # same private coordinator, not a filesystem wildcard or old/formal backend.
-    for prefix in ('/js/', '/css/'):
+    for prefix in ('/js/', '/css/', *(('/' + url + '/' for _root, url, _ext in RUNTIME_ROOTS) if runtime else ())):
         lines.extend(['', 'location ^~ ' + prefix + ' {', *proxy_body(profile=profile, topology=topology), '}'])
     lines.extend(['', 'location ' + fallback + ' {', *proxy_body(profile=profile, topology=topology), '}', ''])
     return '\n'.join(lines).encode()
 
 
-def release_metadata(build, digest, source, selected, *, profile='beta', source_kind='tree', topology='wg'):
+def release_metadata(build, digest, source, selected, *, profile='beta', source_kind='tree', topology='wg', runtime=False):
     p = profiles.get_profile(profile)
     tool_bytes, _ = read_file(Path(__file__).resolve())
-    include = render_include(build, selected, profile=profile, source_kind=source_kind, topology=topology)
-    files = [{'path': row['path'][len('public/'):], 'sourcePath': row['path'], 'bytes': row['bytes'],
+    include = render_include(build, selected, profile=profile, source_kind=source_kind, topology=topology, runtime=runtime)
+    files = [{'path': url_path(row['path']), 'sourcePath': row['path'], 'bytes': row['bytes'],
               'sha256': row['sha256'], 'sourceMode': row['mode'], 'mode': '0o644'} for row in selected]
     value = {'version': 1, 'namespace': p.name, 'sourceKind': source_kind, 'build': build,
              'sourceManifestSha256': digest, 'sourceManifestFiles': len(source['files']),
@@ -333,6 +385,8 @@ def release_metadata(build, digest, source, selected, *, profile='beta', source_
              'nginx': [{'path': 'nginx/cluster-private-code-' + profile + '.conf', 'bytes': len(include), 'sha256': sha(include)}]}
     if topology != 'wg':
         value['topology'] = topology  # WG releases keep their original metadata bytes.
+    if runtime:
+        value['runtimeStatic'] = True  # Like topology: only the opt-in is recorded; default bytes are unchanged.
     return value, include
 
 
@@ -342,9 +396,10 @@ def recorded_topology(raw):
                            parse_constant=lambda _constant: (_ for _ in ()).throw(Refused('INVALID_JSON_CONSTANT')))
     except (ValueError, UnicodeError):
         raise Refused('STAGED_METADATA_MISMATCH') from None
-    # Only a non-default topology is ever recorded; the exact re-render below proves the rest.
-    require(isinstance(value, dict) and ('topology' not in value or value['topology'] == 'local'), 'STAGED_METADATA_MISMATCH')
-    return value.get('topology', 'wg')
+    # Only a non-default topology / runtime opt-in is ever recorded; the exact re-render below proves the rest.
+    require(isinstance(value, dict) and ('topology' not in value or value['topology'] == 'local')
+            and ('runtimeStatic' not in value or value['runtimeStatic'] is True), 'STAGED_METADATA_MISMATCH')
+    return value.get('topology', 'wg'), value.get('runtimeStatic', False)
 
 
 def expected_outputs(value):
@@ -369,17 +424,19 @@ def put(path, raw):
         os.close(fd)
 
 
-def prepare(source, manifest, digest, build, output, *, profile='beta', source_kind='tree', topology='wg'):
+def prepare(source, manifest, digest, build, output, *, profile='beta', source_kind='tree', topology='wg', runtime=False):
     p = profiles.get_profile(profile)
     require(topology in TOPOLOGIES, 'INVALID_TOPOLOGY')
+    require(runtime in (True, False), 'INVALID_RUNTIME_STATIC')
     require(all(profiles.path_allowed(path, profile) for path in (source, manifest, output)), 'CROSS_PROFILE_SOURCE_PATH')
     source, output = root_directory(source), absolute(output)
     root_directory(output.parent)
     require(output != source and source not in output.parents, 'OUTPUT_INSIDE_SOURCE')
     require(not os.path.lexists(output), 'OUTPUT_ALREADY_EXISTS')
-    original, selected = source_manifest(manifest, digest, build, profile=profile, source_kind=source_kind)
-    snapshots = verified_snapshots(source, selected)
-    value, include = release_metadata(build, digest, original, selected, profile=profile, source_kind=source_kind, topology=topology)
+    original, selected = source_manifest(manifest, digest, build, profile=profile, source_kind=source_kind, runtime=runtime)
+    snapshots = verified_snapshots(source, selected, original['files'])
+    value, include = release_metadata(build, digest, original, selected, profile=profile, source_kind=source_kind, topology=topology,
+                                      runtime=runtime)
     paths = [row['path'] for row in expected_outputs(value)] + ['release-manifest.json', 'SHA256SUMS']
     os.mkdir(output, 0o755)
     os.chmod(output, 0o755)
@@ -399,17 +456,20 @@ def prepare(source, manifest, digest, build, output, *, profile='beta', source_k
     return value
 
 
-def verify(output, manifest, digest, build, *, profile='beta', source_kind='tree', topology=None):
+def verify(output, manifest, digest, build, *, profile='beta', source_kind='tree', topology=None, runtime=None):
     profiles.get_profile(profile)
     require(topology is None or topology in TOPOLOGIES, 'INVALID_TOPOLOGY')
+    require(runtime in (None, True, False), 'INVALID_RUNTIME_STATIC')
     require(all(profiles.path_allowed(path, profile) for path in (output, manifest)), 'CROSS_PROFILE_SOURCE_PATH')
     output = root_directory(output)
-    original, selected = source_manifest(manifest, digest, build, profile=profile, source_kind=source_kind)
     metadata, metadata_mode = read_file(output / 'release-manifest.json', MAX_MANIFEST)
-    # Re-render with the recorded topology; an explicit expectation must agree with it.
-    recorded = recorded_topology(metadata)
+    # Re-render with the recorded topology/runtime opt-in; an explicit expectation must agree with it.
+    recorded, recorded_runtime = recorded_topology(metadata)
     require(topology is None or topology == recorded, 'TOPOLOGY_MISMATCH')
-    value, include = release_metadata(build, digest, original, selected, profile=profile, source_kind=source_kind, topology=recorded)
+    require(runtime is None or runtime == recorded_runtime, 'RUNTIME_STATIC_MISMATCH')
+    original, selected = source_manifest(manifest, digest, build, profile=profile, source_kind=source_kind, runtime=recorded_runtime)
+    value, include = release_metadata(build, digest, original, selected, profile=profile, source_kind=source_kind, topology=recorded,
+                                      runtime=recorded_runtime)
     require(metadata == canonical(value) and metadata_mode == 0o644, 'STAGED_METADATA_MISMATCH')
     paths = sorted([row['path'] for row in expected_outputs(value)] + ['release-manifest.json', 'SHA256SUMS'])
     files, dirs = inventory(output)
@@ -432,6 +492,8 @@ def main():
     parser.add_argument('--build', required=True)
     # Prepare defaults to wg; verify defaults to the recorded topology and refuses a different explicit one.
     parser.add_argument('--topology', choices=TOPOLOGIES)
+    # Opt-in /shared/ /sim/ /data/ edge aliases; verify follows the recorded choice (an explicit flag must agree).
+    parser.add_argument('--runtime-static', action='store_true')
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument('--out')
     mode.add_argument('--verify')
@@ -439,12 +501,12 @@ def main():
     try:
         require(bool(args.source) == bool(args.out), 'INVALID_CLI_MODE')
         value = prepare(args.source, args.manifest, args.manifest_sha256, args.build, args.out, profile=args.profile,
-                        source_kind=args.source_kind, topology=args.topology or 'wg') if args.out else \
+                        source_kind=args.source_kind, topology=args.topology or 'wg', runtime=args.runtime_static) if args.out else \
             verify(args.verify, args.manifest, args.manifest_sha256, args.build, profile=args.profile, source_kind=args.source_kind,
-                   topology=args.topology)
+                   topology=args.topology, runtime=True if args.runtime_static else None)
         print(json.dumps({'event': 'cluster-private-code-' + ('prepared' if args.out else 'verified'),
                           'namespace': value['namespace'], 'sourceKind': value['sourceKind'], 'build': value['build'],
-                          'topology': value.get('topology', 'wg'),
+                          'topology': value.get('topology', 'wg'), **({'runtimeStatic': True} if value.get('runtimeStatic') else {}),
                           'sourceManifestSha256': value['sourceManifestSha256'], 'urls': len(value['files']), 'activated': False}))
         return 0
     except (Refused, OSError, ValueError, TypeError):

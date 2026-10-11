@@ -1,4 +1,5 @@
 """WG-less co-located stack generation from a core bundle; no SSH, Docker or production mutations."""
+import hashlib
 import importlib.util
 import json
 import os
@@ -44,6 +45,28 @@ class LocalStackTests(unittest.TestCase):
         self.assertEqual([row['url'] for row in config['nodes']], ['http://172.30.245.%d:3000' % (10 + i) for i in range(1, 17)])
         self.assertEqual(config['origins'], [p.origin])
         self.assertEqual(len(compose['services']), 25)
+
+    def test_online_limit_directory_is_mounted_read_only_into_the_coordinator_only(self):
+        limits = self.root / 'limits'
+        limits.mkdir(mode=0o755)
+        summary = local.compose(self.core, self.root / 'limited', profile=self.profile, ingress_instances=2, online_limit_dir=limits)
+        compose = json.loads((self.root / 'limited/compose.json').read_text())
+        coordinator = compose['services']['coordinator']
+        self.assertIn(str(limits) + ':/run/limits:ro', coordinator['volumes'])
+        self.assertEqual(coordinator['environment']['SP_ONLINE_LIMIT_FILE'], '/run/limits/online-limit.json')
+        for name, service in compose['services'].items():
+            if name != 'coordinator':
+                self.assertNotIn('SP_ONLINE_LIMIT_FILE', service['environment'])
+                self.assertFalse(any(v.startswith(str(limits)) for v in service['volumes']))
+        self.assertEqual(summary['onlineLimitDir'], str(limits))
+        plain, plain_compose = self.stack('plain', instances=2)
+        self.assertNotIn('onlineLimitDir', plain)
+        self.assertNotIn('SP_ONLINE_LIMIT_FILE', plain_compose['services']['coordinator']['environment'])
+        loose = self.root / 'loose'
+        loose.mkdir()
+        os.chmod(loose, 0o777)
+        with self.assertRaises(local.Refused):
+            local.compose(self.core, self.root / 'loose-stack', profile=self.profile, ingress_instances=2, online_limit_dir=loose)
 
     def test_nothing_is_published_on_the_wg_address(self):
         _, compose = self.stack()
@@ -193,6 +216,81 @@ class ThirtyTwoNodeLocalStackTests(unittest.TestCase):
         with self.assertRaises(local.Refused):
             local.compose(self.core, self.root / 'tampered', profile=self.profile, ingress_instances=8)
         self.assertFalse((self.root / 'tampered').exists())
+
+
+
+class WorkerPoolLocalStackTests(unittest.TestCase):
+    """Per-game pools come only from the verified core bundle (cluster-deploy --combat-workers/--trial-workers)."""
+    profile = 'formal'
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp(prefix='ark-cluster-local-pools-tests-',
+                                          dir=os.environ.get('CLUSTER_TEST_TMPDIR', '/root' if os.geteuid() == 0 else None)))
+        os.chmod(self.root, 0o700)
+        self.addCleanup(shutil.rmtree, self.root)
+
+    def core(self, name, combat, trial):
+        deploy.generate(self.root / name, image=IMAGE, build=BUILD, manifest_sha256=MANIFEST, source_kind='tree',
+                        role='core', profile=self.profile, game_nodes=32, combat_workers=combat, trial_workers=trial)
+        return self.root / name
+
+    def test_thirty_two_games_keep_the_bundle_pools_and_the_summary_schema(self):
+        default = local.compose(self.core('core-default', 8, 2), self.root / 'local-default', profile=self.profile, ingress_instances=8)
+        for combat, trial in ((3, 1), (2, 1)):
+            with self.subTest(combat=combat, trial=trial):
+                core = self.core('core-%d-%d' % (combat, trial), combat, trial)
+                summary = local.compose(core, self.root / ('local-%d-%d' % (combat, trial)), profile=self.profile, ingress_instances=8)
+                compose = json.loads((self.root / ('local-%d-%d' % (combat, trial)) / 'compose.json').read_text())
+                self.assertEqual(len(compose['services']), 41)
+                for name, service in compose['services'].items():
+                    expected = (str(combat), str(trial)) if name.startswith('game-') else ('0', '0')
+                    self.assertEqual((service['environment']['SP_COMBAT_WORKERS'], service['environment']['SP_TRIAL_WORKERS']), expected)
+                for index in range(1, 33):
+                    runtime = json.loads((core / 'runtime' / ('game-%02d' % index) / 'runtime.json').read_text())
+                    self.assertEqual((runtime['combatWorkers'], runtime['trialWorkers']), (combat, trial))
+                # The Nginx preparation consumes this exact summary schema; pools do not appear in it.
+                self.assertEqual(set(summary), set(default))
+                self.assertEqual({k: v for k, v in summary.items() if not k.endswith(('Sha256', 'coreBundle'))},
+                                 {k: v for k, v in default.items() if not k.endswith(('Sha256', 'coreBundle'))})
+
+    def test_bundle_whose_pools_disagree_with_its_targets_is_refused(self):
+        core = self.core('core', 3, 1)
+        policy_file, compose_file = core / 'host-policy.json', core / 'compose.json'
+        policy, compose = json.loads(policy_file.read_text()), json.loads(compose_file.read_text())
+        os.chmod(policy_file, 0o600)
+
+        def publish(new_policy, new_compose):
+            raw = deploy.canonical(new_compose)
+            compose_file.write_bytes(raw)
+            policy_file.write_bytes(deploy.canonical({**new_policy, 'compose_sha256': hashlib.sha256(raw).hexdigest()}))
+
+        variants = []
+        changed = json.loads(json.dumps(compose)); changed['services']['game-05']['environment']['SP_COMBAT_WORKERS'] = '8'
+        variants.append((policy, changed))
+        changed = json.loads(json.dumps(compose)); changed['services']['coordinator']['environment']['SP_TRIAL_WORKERS'] = '1'
+        variants.append((policy, changed))
+        changed = json.loads(json.dumps(policy)); changed['targets'][4]['trial_workers'] = 2
+        variants.append((changed, compose))
+        changed = json.loads(json.dumps(policy))
+        for row in changed['targets'][:32]:
+            row['combat_workers'], row['trial_workers'] = 8, 2
+        variants.append((changed, compose))
+        for index, (new_policy, new_compose) in enumerate(variants):
+            publish(new_policy, new_compose)
+            with self.subTest(variant=index), self.assertRaises(local.Refused):
+                local.compose(core, self.root / 'tampered', profile=self.profile, ingress_instances=8)
+            self.assertFalse((self.root / 'tampered').exists())
+        publish(policy, compose)
+        runtime_file = core / 'runtime' / 'game-07' / 'runtime.json'
+        runtime = json.loads(runtime_file.read_text())
+        os.chmod(runtime_file, 0o640)
+        for change in ({'combatWorkers': 8}, {'trialWorkers': 2}, {'trialWorkers': True}):
+            runtime_file.write_bytes(deploy.canonical({**runtime, **change}))
+            with self.subTest(runtime=change), self.assertRaises(local.Refused):
+                local.compose(core, self.root / 'tampered', profile=self.profile, ingress_instances=8)
+            self.assertFalse((self.root / 'tampered').exists())
+        runtime_file.write_bytes(deploy.canonical(runtime))
+        self.assertEqual(len(local.compose(core, self.root / 'restored', profile=self.profile, ingress_instances=8)['ingress']), 8)
 
 
 if __name__ == '__main__':

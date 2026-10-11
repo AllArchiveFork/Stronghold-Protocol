@@ -182,10 +182,13 @@ export class ClusterLobby extends Lobby {
     try { return super.start(session); } finally { this.inspectStart = false; }
   }
 
-  newPlan(room, oldRooms, sessions, key, keys, valid, signal) {
+  newPlan(room, oldRooms, sessions, key, keys, check, signal) {
+    const t0 = this.metrics.start();
     let seed;
     try { seed = this.seedFn() >>> 0; } catch { seed = randomInt(2 ** 32); }
     const dto = matchDTO(room, seed, this.opts.snapshotHz);
+    // Diagnostics only: each admission re-check is one timed synchronous phase.
+    const valid = () => { const at = this.metrics.start(); try { return check(); } finally { this.metrics.end('match.valid', at); } };
     const plan = { room, oldRooms, sessions, key, keys, dto, controller: new AbortController(), valid,
       aborted: false, published: false, remoteCommitted: false, transferred: false, rollbackDone: false,
       handle: null, remoteCleanup: null, proxy: null, ctx: null, basePublish: null, release: null,
@@ -205,6 +208,7 @@ export class ClusterLobby extends Lobby {
     signal?.addEventListener('abort', cancel, { once: true });
     plan.detach = () => signal?.removeEventListener('abort', cancel);
     if (signal?.aborted) plan.abort();
+    this.metrics.end('match.plan', t0, plan.dto.seats.length);
     return plan;
   }
 
@@ -217,8 +221,10 @@ export class ClusterLobby extends Lobby {
       signal.addEventListener('abort', abort, { once: true });
     });
     let raw;
+    const t0 = this.metrics.start();
     try { raw = Promise.resolve(this.platform.prepare(structuredClone(plan.spec), { signal, isCurrent: () => !plan.aborted && plan.valid() })); }
     catch (error) { signal.removeEventListener('abort', abort); plan.abort(); throw error; }
+    finally { this.metrics.end('match.prepare', t0); } // the synchronous part, up to the node RPC
     // A provider ignoring cancellation still receives late compensation; the
     // request itself does not wait indefinitely for that provider to settle.
     raw.then(handle => { plan.handle = handle; if (plan.aborted) plan.abort(); }, () => {});
@@ -344,6 +350,11 @@ export class ClusterLobby extends Lobby {
   }
 
   commitPlan(plan) {
+    const t0 = this.metrics.start();
+    try { return this.commitPlanNow(plan); } finally { this.metrics.end('match.commit', t0); }
+  }
+
+  commitPlanNow(plan) {
     if (plan.aborted || plan.transferred || !plan.valid()) invalid();
     plan.local = {
       room: Object.fromEntries(['match', 'matchCtx', 'matchCount', 'matchKey', 'matchKeys', 'revivalLocked', 'replay'].map(key => [key, plan.room[key]])),
@@ -397,6 +408,11 @@ export class ClusterLobby extends Lobby {
   }
 
   publishPlan(plan) {
+    const t0 = this.metrics.start();
+    try { return this.publishPlanNow(plan); } finally { this.metrics.end('match.publish', t0); }
+  }
+
+  publishPlanNow(plan) {
     if (plan.aborted || !plan.transferred || plan.published || plan.room.match !== plan.proxy) invalid(ERR.INTERNAL);
     // Both publishers are synchronous/nonthrowing by contract. Once publication
     // starts it cannot be un-sent; transport loss is not a fabricated end receipt.
@@ -431,7 +447,7 @@ export class ClusterLobby extends Lobby {
         || receipt.generation !== plan.handle.generation || !plain(receipt.results)
         || Object.keys(receipt).some(key => !['assignmentId', 'roomCode', 'generation', 'lastPublic', 'results', 'summary'].includes(key))) return false;
       if (receipt.lastPublic != null && (!plain(receipt.lastPublic) || receipt.lastPublic.t !== 'm.public')) return false;
-      const members = new Set([...plan.spec.seats.filter(s => !s.isBot).map(s => s.playerId), ...plan.spec.spectators, ...plan.proxy.members]);
+      const members = this.endMembers(plan);
       const frames = new Map();
       for (const [id, result] of Object.entries(receipt.results)) {
         if (!members.has(id) || !plain(result) || result.t !== 'm.result') return false;
@@ -439,28 +455,62 @@ export class ClusterLobby extends Lobby {
       }
       const publicFrame = receipt.lastPublic == null ? null : encode(receipt.lastPublic);
       if (receipt.lastPublic != null && publicFrame == null) return false;
-      const bytes = [...frames.values()].reduce((n, frame) => n + Buffer.byteLength(frame), Buffer.byteLength(publicFrame || ''));
-      if (bytes > 2 * 1024 * 1024) return false;
       const summary = structuredClone(receipt.summary ?? null);
-      if (bytes + Buffer.byteLength(JSON.stringify(summary)) > 2 * 1024 * 1024) return false;
-      if (this.rooms.get(plan.room.code) === plan.room && plan.room.matchCtx === plan.ctx && plan.ctx.live && !plan.room.disposed) {
-        const liveMembers = [...plan.proxy.members].filter(id => {
-          const session = this.registry.byId(id), seat = plan.room.seatOf(id), observer = plan.room.spectatorOf(id);
-          return session?.roomCode === plan.room.code && ((seat && !seat.isBot && !seat.left) || observer);
-        });
-        // These per-member terminal frames, the following room.state, and the
-        // terminate marker share ONE ordered control WS. No wait/delay can make
-        // two independent game/control connections correctly ordered.
-        if (this.platform.deliverEnd(assignmentId, receipt, liveMembers) !== true) return false;
-        plan.proxy.ended = true;
-        plan.ctx.lastPublic = publicFrame; plan.ctx.results = frames;
-        plan.proxy.opts.onEnd(summary);
-      } else {
-        plan.proxy.ended = true;
-        this.releasePlan(plan); // Real end of an already-left room; no replay into a new incarnation.
-      }
-      return true;
+      return this.finishEnd(plan, assignmentId, frames, publicFrame, summary, JSON.stringify(summary));
     } catch { return false; }
+  }
+
+  /**
+   * receiveEnd for the receipt sink's single parse (receipt-codec.js encodeReceipt output): `summary`, `lastPublic`
+   * and each `results` entry are the JSON texts of an already shape-checked receipt. Same membership, size, order
+   * and replay rules as receiveEnd; the frames are forwarded and replayed as these exact texts.
+   * @param {string} assignmentId
+   * @param {{ assignmentId: string, roomCode: string, generation: string, summary: string, lastPublic: string | null,
+   *   results: [string, string][] }} receipt
+   */
+  receiveEncodedEnd(assignmentId, receipt) {
+    const plan = this.assignments.get(assignmentId);
+    try {
+      if (!plan || plan.proxy.ended || !plain(receipt) || receipt.assignmentId !== assignmentId || receipt.roomCode !== plan.room.code
+        || receipt.generation !== plan.handle.generation || !Array.isArray(receipt.results) || typeof receipt.summary !== 'string'
+        || (receipt.lastPublic !== null && typeof receipt.lastPublic !== 'string')
+        || Object.keys(receipt).some(key => !['assignmentId', 'roomCode', 'generation', 'lastPublic', 'results', 'summary'].includes(key))) return false;
+      const members = this.endMembers(plan);
+      const frames = new Map();
+      for (const entry of receipt.results) {
+        if (!Array.isArray(entry) || entry.length !== 2 || !members.has(entry[0]) || typeof entry[1] !== 'string' || frames.has(entry[0])) return false;
+        frames.set(entry[0], entry[1]);
+      }
+      return this.finishEnd(plan, assignmentId, frames, receipt.lastPublic, JSON.parse(receipt.summary), receipt.summary);
+    } catch { return false; }
+  }
+
+  endMembers(plan) {
+    return new Set([...plan.spec.seats.filter(s => !s.isBot).map(s => s.playerId), ...plan.spec.spectators, ...plan.proxy.members]);
+  }
+
+  /** Common end of both receipt forms: frames are encoded m.result texts by member, publicFrame the final m.public. */
+  finishEnd(plan, assignmentId, frames, publicFrame, summary, summaryText) {
+    const bytes = [...frames.values()].reduce((n, frame) => n + Buffer.byteLength(frame), Buffer.byteLength(publicFrame || ''));
+    if (bytes > 2 * 1024 * 1024) return false;
+    if (bytes + Buffer.byteLength(summaryText) > 2 * 1024 * 1024) return false;
+    if (this.rooms.get(plan.room.code) === plan.room && plan.room.matchCtx === plan.ctx && plan.ctx.live && !plan.room.disposed) {
+      const liveMembers = [...plan.proxy.members].filter(id => {
+        const session = this.registry.byId(id), seat = plan.room.seatOf(id), observer = plan.room.spectatorOf(id);
+        return session?.roomCode === plan.room.code && ((seat && !seat.isBot && !seat.left) || observer);
+      });
+      // These per-member terminal frames, the following room.state, and the
+      // terminate marker share ONE ordered control WS. No wait/delay can make
+      // two independent game/control connections correctly ordered.
+      if (this.platform.deliverEnd(assignmentId, { lastPublic: publicFrame, results: frames }, liveMembers) !== true) return false;
+      plan.proxy.ended = true;
+      plan.ctx.lastPublic = publicFrame; plan.ctx.results = frames;
+      plan.proxy.opts.onEnd(summary);
+    } else {
+      plan.proxy.ended = true;
+      this.releasePlan(plan); // Real end of an already-left room; no replay into a new incarnation.
+    }
+    return true;
   }
 
   loadout(session, message) {

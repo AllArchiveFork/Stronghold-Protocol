@@ -17,6 +17,7 @@ import { lanUrls, displayHost, isProcessEntry, runMain } from './http/boot.js';
 import { CombatWorkerPool } from './match/combat/pool.js';
 import { createHealthMetrics, serverLoadState, publicLoadDetails } from './healthMetrics.js';
 import { resolveWsCompression } from './wsCompression.js';
+import { createOnlineLimit } from './onlineLimit.js';
 import { parseSnapshotHz } from './match/fields.js';
 
 export {
@@ -75,19 +76,22 @@ export async function startServer(opts = {}) {
   }
   let registry, lobby, network, packs, serveStatic, browserBuild;
   const startedAt = Date.now();
+  // The online cap (server/onlineLimit.js): a JSON file re-read while the server runs; none = no cap.
+  const onlineLimit = createOnlineLimit({ file: opts.onlineLimitFile ?? process.env.SP_ONLINE_LIMIT_FILE ?? null, log });
   try {
     ({ registry, lobby, network } = createSessionStack({ ...opts, snapshotHz }, {
-      data, log, combatPool, trialPool,
+      data, log, combatPool, trialPool, onlineLimit,
       getLoadState: () => serverLoadState(healthMetrics?.snapshot?.()),
       getLoadDetails: () => publicLoadDetails(healthMetrics?.snapshot?.()),
     }));
     packs = createPackRegistry({ publicDir, dataDir, packsDir }, { log });
     packs.refresh(true);
-    serveStatic = createStaticHandler({ publicDir, dataDir, sharedDir, packsDir, packs, log });
+    serveStatic = createStaticHandler({ publicDir, dataDir, sharedDir, packsDir, packs, log, metrics: opts.phaseMetrics });
     browserBuild = computeBuildTag(ROOT, publicDir);
   } catch (e) {
     network?.close();
     lobby?.shutdown('boot-failed');
+    onlineLimit.close();
     await closePools();
     throw e;
   }
@@ -129,12 +133,13 @@ export async function startServer(opts = {}) {
   } catch (e) {
     network.close();
     lobby.shutdown('boot-failed');
+    onlineLimit.close();
     await closePools();
     throw e;
   }
   server.on('error', e => log.error('[http] server error', e));
   try {
-    healthMetrics = (opts.healthMetricsFactory ?? createHealthMetrics)({ log });
+    healthMetrics = (opts.healthMetricsFactory ?? createHealthMetrics)(opts.phaseMetrics ? { log, phases: opts.phaseMetrics } : { log });
     healthMetrics.start();
   } catch (e) {
     try { healthMetrics?.dispose(); } catch { /* diagnostic only */ }
@@ -153,6 +158,7 @@ export async function startServer(opts = {}) {
       }
       try { lobby.shutdown('shutdown'); } catch (e) { log.error('[shutdown] lobby', e); }
       network.close();
+      onlineLimit.close();
       await closePools();
       await new Promise(resolve => {
         server.close(() => resolve());

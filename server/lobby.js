@@ -110,6 +110,7 @@ import { getData as defaultGetData, lookup } from './data.js';
 import { Match as DefaultMatch } from './match/Match.js';
 import { Matchmaking } from './matchmaking.js';
 import { KITTED_CHARS } from './sim/content/kits/index.js';
+import { NO_PHASES } from './phaseMetrics.js';
 
 /** Room code alphabet: uppercase letters without I and O (and no digits, so no 0/1). */
 export const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
@@ -124,6 +125,18 @@ export const LOBBY_DEFAULTS = Object.freeze({
   soloReconnectWindowMs: null, // a dropped solo run stays resumable this long (null = data singleReconnectTime, 24 h)
   matchmaking: null,           // queue admission/deadline options; defaults live in matchmaking.js
 });
+
+/**
+ * presence.state fan-out: one publication is sent in slices of this many sessions per macrotask, so a large lobby
+ * never sends to every online session inside one event-loop turn.
+ */
+export const PRESENCE_SLICE = 200;
+/**
+ * Sessions whose room is in a running match render no online count (public/js/ui/matchmaking.js OnlinePlayers is a
+ * lobby-screen element): they receive the coalesced presence.state at most this often (ms), every other session as
+ * before. Their count is at most this much older when they come back to the lobby screen.
+ */
+export const PRESENCE_IN_MATCH_MS = 10_000;
 
 /** Official `singleReconnectTime` (s) when the data lacks it (constData, research 01 §1). */
 export const SOLO_RECONNECT_FALLBACK_SEC = 86_400;
@@ -279,9 +292,11 @@ export class Lobby {
    *   now?: () => number,
    *   seedFn?: () => number,
    *   options?: Partial<typeof LOBBY_DEFAULTS>,
+   *   metrics?: typeof NO_PHASES,
    * }} opts
    */
-  constructor({ registry, log = noopLog, MatchClass = DefaultMatch, getData = defaultGetData, now = Date.now, seedFn, combatPool = null, trialPool = null, options = {} }) {
+  constructor({ registry, log = noopLog, MatchClass = DefaultMatch, getData = defaultGetData, now = Date.now, seedFn, combatPool = null, trialPool = null, options = {},
+    metrics = NO_PHASES }) {
     this.combatPool = combatPool;
     this.trialPool = trialPool;
     this.registry = registry;
@@ -305,8 +320,12 @@ export class Lobby {
     this.presenceSeq = 0;
     this.presenceTimer = null;
     this.presencePublishedAt = -Infinity;
+    /** @type {{ frame: string | null, sessions: import('./net.js').Session[], index: number, at: number, immediate: any } | null} unfinished fan-out */
+    this.presenceBatch = null;
+    /** diagnostics only (server/phaseMetrics.js) */
+    this.metrics = metrics;
     this.queue = new Matchmaking({
-      now, options: this.opts.matchmaking || {}, send: sendSession,
+      now, options: this.opts.matchmaking || {}, send: sendSession, metrics,
       available: (s, entry) => this.matchmakingAvailable(s, entry),
       members: (s, difficulty, party) => this.matchmakingMembers(s, difficulty, party),
       allocate: (sessions, difficulty) => this.allocateMatchmadeRoom(sessions, difficulty),
@@ -378,6 +397,9 @@ export class Lobby {
 
   presenceState() { return { t: 'presence.state', online: this.online.size, seq: this.presenceSeq, serverNow: this.now() }; }
 
+  /** Connected sessions — the number the online cap (server/onlineLimit.js, Network.serverFull) compares. */
+  onlineCount() { return this.online.size; }
+
   presenceChanged(session, connected) {
     const changed = connected ? !this.online.has(session.playerId) : this.online.has(session.playerId);
     if (connected) this.online.set(session.playerId, session);
@@ -393,8 +415,36 @@ export class Lobby {
     if (this.presenceTimer != null) clearTimeout(this.presenceTimer);
     this.presenceTimer = null;
     this.presencePublishedAt = this.now();
-    const frame = encode(this.presenceState());
-    for (const session of this.online.values()) if (this.isOnline(session)) sendRaw(session.ws, frame);
+    // A newer publication replaces an unfinished fan-out: everyone it had not reached gets the newer frame.
+    if (this.presenceBatch?.immediate) clearImmediate(this.presenceBatch.immediate);
+    this.presenceBatch = { frame: encode(this.presenceState()), sessions: [...this.online.values()], index: 0,
+      at: this.presencePublishedAt, immediate: null };
+    this.presenceSlice(); // the first slice synchronously (a small lobby is reached at once, as before)
+  }
+
+  /** One slice of the current presence fan-out; the rest follows on later macrotasks. */
+  presenceSlice() {
+    const batch = this.presenceBatch;
+    if (!batch) return;
+    batch.immediate = null;
+    const t0 = this.metrics.start(), end = Math.min(batch.sessions.length, batch.index + PRESENCE_SLICE);
+    let sent = 0;
+    for (; batch.index < end; batch.index++) {
+      const session = batch.sessions[batch.index];
+      if (!this.isOnline(session) || !this.presenceDue(session, batch.at)) continue;
+      session.presenceAt = batch.at;
+      sendRaw(session.ws, batch.frame);
+      sent++;
+    }
+    this.metrics.end('presence.publish', t0, sent);
+    if (batch.index < batch.sessions.length) batch.immediate = setImmediate(() => this.presenceSlice());
+    else if (this.presenceBatch === batch) this.presenceBatch = null;
+  }
+
+  /** In a running match the online count is not shown: refresh it there only every PRESENCE_IN_MATCH_MS. */
+  presenceDue(session, at) {
+    if (!session.roomCode || !this.rooms.get(session.roomCode)?.match) return true;
+    return !(at - session.presenceAt < PRESENCE_IN_MATCH_MS);
   }
 
   // ---------------------------------------------------------------------------------------------------
@@ -408,7 +458,7 @@ export class Lobby {
    */
   onHello(session, { resumed, repeat }) {
     this.presenceChanged(session, this.isOnline(session));
-    sendSession(session, this.presenceState());
+    if (sendSession(session, this.presenceState())) session.presenceAt = this.now();
     this.queue.sync(session);
     if (!resumed && !repeat) return;
     const room = this.roomOf(session);
@@ -515,6 +565,8 @@ export class Lobby {
     this.queue.close();
     if (this.presenceTimer != null) clearTimeout(this.presenceTimer);
     this.presenceTimer = null;
+    if (this.presenceBatch?.immediate) clearImmediate(this.presenceBatch.immediate);
+    this.presenceBatch = null;
     this.online.clear();
     for (const room of [...this.rooms.values()]) this.disposeRoom(room, reason);
     this.spectatorAliases.clear();

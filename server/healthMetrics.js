@@ -1,4 +1,5 @@
 // Read-only /healthz performance cache. One collector per listening server; no Worker RPC.
+// An optional phase recorder (server/phaseMetrics.js, coordinator only) adds `phases`, rotated with each sample.
 import { monitorEventLoopDelay, performance } from 'node:perf_hooks';
 import { normalizeLoadDetails } from '../shared/protocol.js';
 
@@ -59,8 +60,11 @@ export function createHealthMetrics({
   eventLoopUtilization = () => performance.eventLoopUtilization(),
   createHistogram = monitorEventLoopDelay,
   setInterval: schedule = globalThis.setInterval, clearInterval: unschedule = globalThis.clearInterval,
+  phases = null,
 } = {}) {
-  let cached = emptySnapshot('warming');
+  // Without a recorder the snapshot keeps its original shape (no `phases` key).
+  const withPhases = (snapshot) => (phases ? { ...snapshot, phases: null } : snapshot);
+  let cached = withPhases(emptySnapshot('warming'));
   let histogram = null, timer = null, baseline = null;
   let started = false, disposed = false, warned = false;
 
@@ -84,7 +88,7 @@ export function createHealthMetrics({
 
   function unavailable(error) {
     stopResources();
-    cached = emptySnapshot('unavailable');
+    cached = withPhases(emptySnapshot('unavailable'));
     warn(error);
   }
 
@@ -94,7 +98,7 @@ export function createHealthMetrics({
       const current = { at: now(), cpu: cpuUsage(), elu: eventLoopUtilization() };
       const elapsed = delta(current.at, baseline.at);
       const windowMs = elapsed > 0 ? elapsed : null;
-      const next = emptySnapshot(windowMs === null ? 'warming' : 'ready');
+      const next = withPhases(emptySnapshot(windowMs === null ? 'warming' : 'ready'));
       if (windowMs !== null) {
         const memory = memoryUsage();
         next.sampledAt = nonnegative(wallNow()); // Unix epoch ms, independent of the monotonic window.
@@ -117,6 +121,9 @@ export function createHealthMetrics({
         const total = active !== null && idle !== null ? nonnegative(active + idle) : null;
         next.mainThread.eventLoopUtilization = total > 0 ? nonnegative(active / total) : null;
         // An empty native histogram has percentile/min sentinels and max=0: none is a measurement.
+        if (phases) {
+          try { next.phases = phases.rotate(); } catch { next.phases = null; } // diagnostics only
+        }
         const count = histogram.count;
         if (Number.isFinite(count) && count > 0) {
           const ms = (ns) => Number.isFinite(ns) && ns >= 0 && ns < 2 ** 63 ? ns / 1e6 : null;
@@ -149,7 +156,7 @@ export function createHealthMetrics({
     if (disposed) return;
     disposed = true;
     stopResources();
-    cached = emptySnapshot('stopped');
+    cached = withPhases(emptySnapshot('stopped'));
   }
 
   return { start, snapshot: () => cached, dispose };

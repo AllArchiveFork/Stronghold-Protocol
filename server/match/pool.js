@@ -206,18 +206,22 @@ export class SharedPool {
 /** Shared equipment stock, derived from actual ownership. Merges, equips and returns cannot lose a reservation:
  * normal equipment occupies one, upgraded equipment two. Shop/choice displays reserve nothing. Source: the original
  * experiment BV1eLXXBqEgF, 1:30 and 2:30. [ASSUMED] An item that is consumed/destroyed or removed by elimination no
- * longer occupies stock, consistently with the video's ownership model; this is not a per-match purchase limit. */
+ * longer occupies stock, consistently with the video's ownership model; this is not a per-match purchase limit.
+ * A named free grant (acquireItem requirePool false, GitHub #488) may own more than the cap, like an operator grant
+ * beyond stock: `left` stays 0 until enough ownership leaves, and nothing is ever returned above the cap. */
 export class SharedItemPool {
   constructor(gd, players) { this.gd = gd; this.players = players; }
   cap(id) { return this.gd.itemPoolCopies(id); }
   need(id) { return this.gd.isGolden(id) ? 2 : 1; }
-  held(id) {
+  /** Copies owned by every player; `withinStock` skips pieces a free grant gave beyond stock (`overStock`, invariants). */
+  held(id, { withinStock = false } = {}) {
     const base = this.gd.baseIdOf(id);
     let count = 0;
+    const one = it => { if (this.gd.baseIdOf(it.id) === base && !(withinStock && it.overStock)) count += this.need(it.id); };
     const see = p => {
       if (!p) return;
-      if (p.kind === 'item' && this.gd.baseIdOf(p.id) === base) count += this.need(p.id);
-      for (const item of p.items || []) if (this.gd.baseIdOf(item.id) === base) count += this.need(item.id);
+      if (p.kind === 'item') one(p);
+      for (const item of p.items || []) one(item);
     };
     for (const ps of this.players()) {
       for (const p of ps.hand) see(p);

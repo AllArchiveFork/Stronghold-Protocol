@@ -26,6 +26,9 @@ GAME_FIRST_PORT, INGRESS_PORT, ORIGIN = _BETA.game_first_port, _BETA.ingress_por
 HEX40, HEX64 = re.compile(r'[a-f0-9]{40}'), re.compile(r'[a-f0-9]{64}')
 IMAGE = re.compile(r'sha256:[a-f0-9]{64}')
 GAME_NODE_COUNTS = (16, 32)
+# Per-game pools: combat 1..8, trial 0..2 (the game runtime accepts combat 1..32, trial 0..2).
+# The defaults keep existing bundles byte-identical; coordinator and ingress always run none.
+COMBAT_WORKERS, TRIAL_WORKERS = range(1, 9), range(0, 3)
 KNOWN_REPO = Path('/root/projects/Stronghold-Protocol')
 _TOOL = Path(__file__).resolve()
 _CANDIDATE_REPO = _TOOL.parents[3] if len(_TOOL.parents) > 3 else None
@@ -85,14 +88,32 @@ def mkdir_new(path, *, gid=1000):
     os.chmod(path, 0o750)
 
 
-def service(role, name, config_dir, *, image, build, kind, manifest, ip, ports, secrets_mounts=(), profile='beta'):
+def valid_workers(combat, trial):
+    return type(combat) is int and type(trial) is int and combat in COMBAT_WORKERS and trial in TRIAL_WORKERS
+
+
+def game_workers(targets):
+    """The one (combat, trial) pair all generated game targets record, (0, 0) without games; None if inconsistent."""
+    if not isinstance(targets, list) or not all(isinstance(row, dict) for row in targets):
+        return None
+    games = [row for row in targets if row.get('role') == 'game']
+    pair = (games[0].get('combat_workers'), games[0].get('trial_workers')) if games else (0, 0)
+    consistent = (not games or valid_workers(*pair)) and all(
+        type(row.get('combat_workers')) is int and type(row.get('trial_workers')) is int
+        and (row['combat_workers'], row['trial_workers']) == (pair if row.get('role') == 'game' else (0, 0))
+        for row in targets)
+    return pair if consistent else None
+
+
+def service(role, name, config_dir, *, image, build, kind, manifest, ip, ports, secrets_mounts=(), profile='beta',
+            combat_workers=8, trial_workers=2):
     return {
         'image': image, 'pull_policy': 'never', 'container_name': name,
         'init': True, 'restart': 'no', 'user': '1000:1000',
         'command': ['node', 'server/cluster/start.mjs', '--config', '/run/config/runtime.json'],
         'environment': {'NODE_ENV': 'production', 'SP_COMBAT': 'server', 'SP_VERIFY': 'off',
-                        'SP_SNAPSHOT_HZ': '10', 'SP_COMBAT_WORKERS': '8' if role == 'game' else '0',
-                        'SP_TRIAL_WORKERS': '2' if role == 'game' else '0', 'SP_WS_COMPRESSION': 'on'},
+                        'SP_SNAPSHOT_HZ': '10', 'SP_COMBAT_WORKERS': str(combat_workers) if role == 'game' else '0',
+                        'SP_TRIAL_WORKERS': str(trial_workers) if role == 'game' else '0', 'SP_WS_COMPRESSION': 'on'},
         'labels': {'org.opencontainers.image.source': SOURCE, 'org.opencontainers.image.revision': build,
                    'cn.stardust.cluster.source-kind': kind, 'cn.stardust.cluster.manifest-sha256': manifest,
                    'cn.stardust.cluster.role': role, 'cn.stardust.cluster.namespace': profiles.get_profile(profile).name},
@@ -111,11 +132,12 @@ def network(subnet):
     return {'default': {'driver': 'bridge', 'ipam': {'config': [{'subnet': subnet}]}}}
 
 
-def target(role, project, service_name, name, ip, mappings, config_file, config_sha, *, node_id=None, key_file=None, public_slot=None):
+def target(role, project, service_name, name, ip, mappings, config_file, config_sha, *, node_id=None, key_file=None, public_slot=None,
+           combat_workers=8, trial_workers=2):
     value = {'role': role, 'project': project, 'service': service_name, 'container_name': name,
              'container_ip': ip, 'mappings': mappings, 'runtime_file': str(config_file),
-             'runtime_sha256': config_sha, 'combat_workers': 8 if role == 'game' else 0,
-             'trial_workers': 2 if role == 'game' else 0}
+             'runtime_sha256': config_sha, 'combat_workers': combat_workers if role == 'game' else 0,
+             'trial_workers': trial_workers if role == 'game' else 0}
     if node_id is not None:
         value.update(node_id=node_id, key_file=str(key_file), public_slot=public_slot)
     return value
@@ -127,11 +149,14 @@ def ingress_service(instance, profile='beta'):
     return 'ingress' if instance == 1 else 'ingress-' + format(instance, '02d')
 
 
-def generate(out, *, image, build, manifest_sha256, source_kind, role, entry=1, profile='beta', ingress_instances=1, game_nodes=16):
+def generate(out, *, image, build, manifest_sha256, source_kind, role, entry=1, profile='beta', ingress_instances=1, game_nodes=16,
+             combat_workers=8, trial_workers=2):
     p = profiles.get_profile(profile)
     # Fixed inventories only; the default sixteen keeps existing bundles byte-identical.
     require(type(game_nodes) is int and game_nodes in GAME_NODE_COUNTS and game_nodes <= p.max_game_nodes,
             'invalid fixed game node count')
+    # Every game gets the same pools; an edge bundle only records them in its summary.
+    require(valid_workers(combat_workers, trial_workers), 'invalid per-game worker count')
     require(type(ingress_instances) is int and 1 <= ingress_instances <= p.max_ingress_instances
             and (role == 'edge' or ingress_instances == 1), 'invalid fixed ingress instance count')
     require(source_kind in ('commit', 'tree'), 'invalid source identity kind')
@@ -168,17 +193,19 @@ def generate(out, *, image, build, manifest_sha256, source_kind, role, entry=1, 
             ip, port = p.game_ip(index), p.game_host_port(index)
             config = {'role': 'game', 'nodeId': node_id, 'publicSlot': index, 'build': build,
                       'host': '0.0.0.0', 'port': 3000, 'keyFile': '/run/secrets/game.key',
-                      'coordinatorUrl': f'http://{p.core_ip(2)}:3001', 'combatWorkers': 8,
-                      'trialWorkers': 2, 'futureSkewMs': 1000}
+                      'coordinatorUrl': f'http://{p.core_ip(2)}:3001', 'combatWorkers': combat_workers,
+                      'trialWorkers': trial_workers, 'futureSkewMs': 1000}
             directory, file, sha = add_runtime(node_id, config)
             mappings = [{'container_port': 3000, 'host_ip': host, 'host_port': port} for host in ('127.0.0.1', p.wg_core)]
             name = p.core_project + '-' + node_id
             services[node_id] = service('game', name, directory, image=image, build=build, kind=source_kind,
                                         manifest=manifest_sha256, profile=profile, ip=ip,
                                         ports=[f'{row["host_ip"]}:{row["host_port"]}:3000' for row in mappings],
-                                        secrets_mounts=[str(keys_dir / (node_id + '.key')) + ':/run/secrets/game.key:ro'])
+                                        secrets_mounts=[str(keys_dir / (node_id + '.key')) + ':/run/secrets/game.key:ro'],
+                                        combat_workers=combat_workers, trial_workers=trial_workers)
             targets.append(target('game', p.core_project, node_id, name, ip, mappings, file, sha,
-                                  node_id=node_id, key_file=keys_dir / (node_id + '.key'), public_slot=index))
+                                  node_id=node_id, key_file=keys_dir / (node_id + '.key'), public_slot=index,
+                                  combat_workers=combat_workers, trial_workers=trial_workers))
             node_entries.append({'nodeId': node_id, 'publicSlot': index, 'url': f'http://{ip}:3000',
                                  'keyFile': '/run/secrets/' + node_id + '.key', 'capacity': 0})
         config = {'role': 'coordinator', 'build': build, 'host': '0.0.0.0', 'port': 3000,
@@ -231,7 +258,7 @@ def generate(out, *, image, build, manifest_sha256, source_kind, role, entry=1, 
         'manifestSha256': manifest_sha256, 'imageId': image, 'role': role,
         'entry': entry, 'gameNodes': game_nodes if role == 'core' else 0,
         **({'ingressInstances': ingress_instances} if ingress_instances > 1 else {}),
-        'combatWorkersPerGame': 8, 'trialWorkersPerGame': 2, 'ingressRoutes': game_nodes,
+        'combatWorkersPerGame': combat_workers, 'trialWorkersPerGame': trial_workers, 'ingressRoutes': game_nodes,
         # A deployment label only; every ingress still routes to ALL nodes.
         'ingressLogicalGroup': list(range((entry - 1) * group + 1, entry * group + 1)) if role == 'edge' else None,
         'coordinatorHighAvailability': False,
@@ -247,6 +274,9 @@ def main():
     parser.add_argument('--entry', type=int, default=1, choices=range(1, 5))
     parser.add_argument('--ingress-instances', type=int, default=1, choices=range(1, 9))
     parser.add_argument('--game-nodes', type=int, default=16, choices=GAME_NODE_COUNTS)
+    # Per game node; 8 + 2 keeps the original bundle bytes. Edge bundles record them in the summary only.
+    parser.add_argument('--combat-workers', type=int, default=8, choices=COMBAT_WORKERS)
+    parser.add_argument('--trial-workers', type=int, default=2, choices=TRIAL_WORKERS)
     parser.add_argument('--image-id', required=True)
     parser.add_argument('--build', required=True)
     parser.add_argument('--manifest-sha256', required=True)
@@ -256,7 +286,8 @@ def main():
         require(os.geteuid() == 0, 'host root required for protected deployment generation')
         policy = generate(args.out, image=args.image_id, build=args.build, manifest_sha256=args.manifest_sha256,
                           source_kind=args.source_kind, role=args.role, entry=args.entry, profile=args.profile,
-                          ingress_instances=args.ingress_instances, game_nodes=args.game_nodes)
+                          ingress_instances=args.ingress_instances, game_nodes=args.game_nodes,
+                          combat_workers=args.combat_workers, trial_workers=args.trial_workers)
         print(json.dumps({'event': 'cluster-bundle-prepared', 'role': policy['host_role'],
                           'source_kind': policy['source_kind'], 'build': policy['build'],
                           'targets': len(policy['targets']), 'activated': False}))

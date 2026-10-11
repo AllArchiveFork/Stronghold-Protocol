@@ -284,7 +284,8 @@ class BridgeIpamTests(unittest.TestCase):
 
 class HealthTests(Fixture):
     def game(self):
-        return {'role': 'game', 'node_id': 'game-01', 'public_slot': 1}, {
+        # Real targets always carry the generated pools (parse_policy); the default is 8 + 2.
+        return {'role': 'game', 'node_id': 'game-01', 'public_slot': 1, 'combat_workers': 8, 'trial_workers': 2}, {
             'nodeId': 'game-01', 'publicSlot': 1, 'build': BUILD, 'protocol': 1,
             'ready': True, 'streamMarkers': True, 'generation': 'node-new-generation',
             'health': {'combat': {'status': 'ready', 'workers': 8, 'ready': 8},
@@ -873,6 +874,168 @@ class GameNodeCountTests(Fixture):
         (Path(policy['bundle']) / 'keys' / 'game-32.key').unlink()
         with self.assertRaises((host.Refused, deploy.Refused)):
             host.load_policy(Path(policy['bundle']) / 'host-policy.json', profile='formal')
+
+
+
+@unittest.skipUnless(os.geteuid() == 0, 'root-owned protected policy fixtures')
+class WorkerCountTests(Fixture):
+    """Per-game pools are configurable (combat 1..8, trial 0..2); 8 + 2 stays byte-identical to the original format."""
+    profile = 'formal'
+
+    def files(self, policy):
+        # Fixture keys are random and never compared or printed; everything else is path-normalized.
+        root = Path(policy['bundle'])
+        return {str(file.relative_to(root)): file.read_bytes().replace(str(root).encode(), b'BUNDLE')
+                for file in sorted(root.rglob('*')) if file.is_file() and file.parent.name != 'keys'}
+
+    def rewrite(self, file, value):
+        os.chmod(file, 0o600)
+        file.write_bytes(deploy.canonical(value))
+
+    def test_explicit_eight_plus_two_is_byte_identical_to_the_default(self):
+        for profile, role, nodes in (('beta', 'core', 16), ('beta', 'edge', 16), ('formal', 'core', 32), ('formal', 'edge', 32)):
+            with self.subTest(profile=profile, role=role, nodes=nodes):
+                name = '-'.join((profile, role))
+                default = deploy.generate(self.root / ('default-' + name), image=IMAGE, build=BUILD, manifest_sha256=MANIFEST,
+                                          source_kind='tree', role=role, profile=profile, game_nodes=nodes)
+                explicit = deploy.generate(self.root / ('explicit-' + name), image=IMAGE, build=BUILD, manifest_sha256=MANIFEST,
+                                           source_kind='tree', role=role, profile=profile, game_nodes=nodes,
+                                           combat_workers=8, trial_workers=2)
+                left, right = self.files(default), self.files(explicit)
+                self.assertEqual(left['compose.json'], right['compose.json'])
+                self.assertEqual({k: v for k, v in json.loads(left.pop('host-policy.json')).items() if k != 'compose_sha256'},
+                                 {k: v for k, v in json.loads(right.pop('host-policy.json')).items() if k != 'compose_sha256'})
+                self.assertEqual(left, right)
+
+    def test_thirty_two_games_with_fewer_workers_are_generated_and_loaded_consistently(self):
+        for combat, trial in ((3, 1), (2, 1), (1, 0), (8, 0)):
+            with self.subTest(combat=combat, trial=trial):
+                policy = self.generate('core-%d-%d' % (combat, trial), game_nodes=32, combat_workers=combat, trial_workers=trial)
+                self.assertEqual(host.load_policy(Path(policy['bundle']) / 'host-policy.json', profile='formal'), policy)
+                self.assertNotIn('combat_workers', policy)
+                compose = json.loads(Path(policy['compose_file']).read_bytes())
+                games = [row for row in policy['targets'] if row['role'] == 'game']
+                self.assertEqual(len(games), 32)
+                for row in policy['targets']:
+                    expected = (combat, trial) if row['role'] == 'game' else (0, 0)
+                    self.assertEqual((row['combat_workers'], row['trial_workers']), expected)
+                    env = compose['services'][row['service']]['environment']
+                    self.assertEqual((env['SP_COMBAT_WORKERS'], env['SP_TRIAL_WORKERS']), tuple(map(str, expected)))
+                    runtime = json.loads(Path(row['runtime_file']).read_bytes())
+                    if row['role'] == 'game':
+                        self.assertEqual((runtime['combatWorkers'], runtime['trialWorkers']), (combat, trial))
+                        self.assertEqual(host.Config(policy, row).worker_count, combat + trial)
+                    else:
+                        self.assertNotIn('combatWorkers', runtime)
+                summary = json.loads(Path(policy['bundle'], 'bundle-summary.json').read_bytes())
+                self.assertEqual((summary['gameNodes'], summary['combatWorkersPerGame'], summary['trialWorkersPerGame']),
+                                 (32, combat, trial))
+                edge = self.generate('edge-%d-%d' % (combat, trial), role='edge', ingress_instances=8, game_nodes=32,
+                                     combat_workers=combat, trial_workers=trial)
+                self.assertEqual(host.load_policy(Path(edge['bundle']) / 'host-policy.json', profile='formal'), edge)
+                self.assertTrue(all((row['combat_workers'], row['trial_workers']) == (0, 0) for row in edge['targets']))
+                summary = json.loads(Path(edge['bundle'], 'bundle-summary.json').read_bytes())
+                self.assertEqual((summary['combatWorkersPerGame'], summary['trialWorkersPerGame']), (combat, trial))
+
+    def test_out_of_range_or_inexact_worker_counts_refuse_before_creating_output(self):
+        for combat, trial in ((0, 1), (9, 1), (32, 2), (-1, 1), (True, 1), ('3', 1), (3.0, 1), (None, 1),
+                              (3, 3), (3, -1), (3, True), (3, '1'), (3, 1.0), (3, None)):
+            for role in ('core', 'edge'):
+                with self.subTest(combat=combat, trial=trial, role=role), self.assertRaises(deploy.Refused):
+                    self.generate('invalid', role=role, game_nodes=32, combat_workers=combat, trial_workers=trial)
+                self.assertFalse((self.root / 'invalid').exists())
+
+    def test_host_manager_accepts_only_one_in_range_pool_pair_on_games(self):
+        policy = self.generate('core31', game_nodes=32, combat_workers=3, trial_workers=1)
+        edge = self.generate('edge31', role='edge', game_nodes=32, combat_workers=3, trial_workers=1)
+        host.parse_policy(deepcopy(policy), profile='formal')
+        # A uniform in-range pair parses; Compose/runtime agreement is load_policy's job (below).
+        changed = deepcopy(policy)
+        for row in changed['targets'][:32]:
+            row['combat_workers'], row['trial_workers'] = 2, 0
+        host.parse_policy(changed, profile='formal')
+        variants = []
+        for index, field, value in ((0, 'trial_workers', 2), (31, 'combat_workers', 2), (5, 'combat_workers', True),
+                                    (5, 'trial_workers', 1.0), (5, 'trial_workers', None), (32, 'combat_workers', 3), (32, 'trial_workers', 1)):
+            changed = deepcopy(policy); changed['targets'][index][field] = value; variants.append(changed)
+        for pair in ((0, 0), (0, 1), (9, 1), (3, 3), (12, 2), (-1, 1)):
+            changed = deepcopy(policy)
+            for row in changed['targets'][:32]:
+                row['combat_workers'], row['trial_workers'] = pair
+            variants.append(changed)
+        changed = deepcopy(policy); changed['targets'][0].pop('trial_workers'); variants.append(changed)
+        for index, changed in enumerate(variants):
+            with self.subTest(variant=index), self.assertRaises(host.Refused):
+                host.parse_policy(changed, profile='formal')
+        for field, value in (('combat_workers', 3), ('trial_workers', 1)):
+            changed = deepcopy(edge); changed['targets'][0][field] = value
+            with self.subTest(edge=field), self.assertRaises(host.Refused):
+                host.parse_policy(changed, profile='formal')
+        # Targets claiming the original 8 + 2 over a 3 + 1 Compose bundle are refused at load time.
+        file = Path(policy['bundle']) / 'host-policy.json'
+        self.rewrite(file, policy)
+        self.assertEqual(host.load_policy(file, profile='formal'), policy)
+        claimed = deepcopy(policy)
+        for row in claimed['targets'][:32]:
+            row['combat_workers'], row['trial_workers'] = 8, 2
+        self.rewrite(file, claimed)
+        with self.assertRaises(host.Refused):
+            host.load_policy(file, profile='formal')
+
+    def test_game_health_requires_exactly_the_policy_pools(self):
+        row = {'role': 'game', 'node_id': 'game-01', 'public_slot': 1, 'combat_workers': 3, 'trial_workers': 1}
+        value = {'nodeId': 'game-01', 'publicSlot': 1, 'build': BUILD, 'protocol': 1, 'ready': True, 'streamMarkers': True,
+                 'generation': 'node-new-generation', 'health': {'combat': {'status': 'ready', 'workers': 3, 'ready': 3},
+                                                                 'trial': {'status': 'ready', 'workers': 1, 'ready': 1}}}
+        self.assertTrue(host.runtime_health_ready(value, row, BUILD))
+        for pool, health in (('combat', {'status': 'ready', 'workers': 8, 'ready': 8}), ('combat', {'status': 'ready', 'workers': 3, 'ready': 2}),
+                             ('trial', {'status': 'ready', 'workers': 2, 'ready': 2}), ('trial', {'status': 'disabled', 'workers': 0, 'ready': 0})):
+            with self.subTest(pool=pool, health=health):
+                changed = deepcopy(value); changed['health'][pool] = health
+                self.assertFalse(host.runtime_health_ready(changed, row, BUILD))
+        # A zero trial pool is the game node's disabled 0/0 report, never a ready pool.
+        row = {**row, 'combat_workers': 2, 'trial_workers': 0}
+        value['health'] = {'combat': {'status': 'ready', 'workers': 2, 'ready': 2}, 'trial': {'status': 'disabled', 'workers': 0, 'ready': 0}}
+        self.assertTrue(host.runtime_health_ready(value, row, BUILD))
+        for health in ({'status': 'ready', 'workers': 0, 'ready': 0}, {'status': 'unknown', 'workers': 0, 'ready': 0},
+                       {'status': 'ready', 'workers': 1, 'ready': 1}):
+            with self.subTest(trial=health):
+                changed = deepcopy(value); changed['health']['trial'] = health
+                self.assertFalse(host.runtime_health_ready(changed, row, BUILD))
+
+    def test_signed_status_probe_and_thread_count_follow_the_target_pools(self):
+        policy = self.generate('probe', game_nodes=32, combat_workers=3, trial_workers=1)
+        target = next(row for row in policy['targets'] if row['service'] == 'game-32')
+        system = host.System(host.Config(policy, target))
+        pools = {'combat': {'status': 'ready', 'workers': 3, 'ready': 3}, 'trial': {'status': 'ready', 'workers': 1, 'ready': 1}}
+        calls = []
+
+        def http(port, method, path, body=None, headers=None):
+            calls.append((port, method, path))
+            request = json.loads(body)
+            return 200, json.dumps({'id': request['id'], 'ok': True, 'value': {
+                'nodeId': 'game-32', 'publicSlot': 32, 'build': BUILD, 'protocol': 1, 'ready': True, 'streamMarkers': True,
+                'generation': 'node-epoch-32', 'health': deepcopy(pools)}}).encode()
+        with patch.object(host, 'http_request', http):
+            system.health()
+            self.assertEqual(system.node_generation, 'node-epoch-32')
+            pools['trial'] = {'status': 'ready', 'workers': 2, 'ready': 2}
+            with self.assertRaises(host.NotReady):
+                system.health()
+        self.assertEqual(calls, [(35442, 'POST', '/_cluster/rpc')] * 2)
+        priority = host.priority
+        generation = priority.Generation(CID, IMAGE, BUILD, 'fixture-start', 0, 100, 10, 101, 11)
+        main = priority.Thread(101, 'MainThread', -20, os.SCHED_OTHER | priority.RESET_ON_FORK, 11)
+        helper = priority.Thread(130, 'libuv-worker', 0, os.SCHED_OTHER, 30)
+        for count, ready in ((4, True), (3, False), (10, False)):
+            workers = tuple(priority.Thread(102 + index, 'WorkerThread', 0, os.SCHED_OTHER, 20 + index) for index in range(count))
+            snapshot = priority.Snapshot(generation, (main, *workers, helper))
+            with self.subTest(workers=count):
+                if ready:
+                    priority.validate_threads(snapshot, system.config)
+                else:
+                    with self.assertRaises(host.NotReady):
+                        priority.validate_threads(snapshot, system.config)
 
 
 def independent_leases(policy):

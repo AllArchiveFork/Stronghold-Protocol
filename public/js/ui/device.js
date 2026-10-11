@@ -100,6 +100,25 @@ export function featureClasses(f) {
 export function reducedMotion(win = globalThis) { return mq(win, '(prefers-reduced-motion: reduce)'); }
 
 /**
+ * A media query's live match (re-renders when it changes: rotation, window resize, a new input device).
+ * @param {string} query
+ */
+export function useMedia(query) {
+  const [on, setOn] = useState(() => mq(globalThis, query));
+  useEffect(() => {
+    let m = null;
+    try { m = globalThis.matchMedia?.(query); } catch { m = null; }
+    if (!m) return undefined;
+    const update = () => setOn(!!m.matches);
+    update();
+    if (typeof m.addEventListener === 'function') { m.addEventListener('change', update); return () => m.removeEventListener('change', update); }
+    if (typeof m.addListener === 'function') { m.addListener(update); return () => m.removeListener(update); } // Safari < 14
+    return undefined;
+  }, [query]);
+  return on;
+}
+
+/**
  * Keep a class on <html> while a component is mounted and `on` holds (replaces CSS :has(), which Firefox ESR 115 and
  * Safari < 15.4 lack): the match screen sets sp-in-match, the connection banner sp-conn.
  * @param {string} name

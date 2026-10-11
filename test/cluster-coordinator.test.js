@@ -506,3 +506,34 @@ test('slow terminal browser closes through existing backpressure and receives it
   assert.equal(resumed.frames.find(frame => frame.t === 'm.result').own, `only-${slow.playerId}`);
   assert.equal(resumed.frames.filter(frame => frame.t === 'm.result').length, 1);
 });
+
+test('a restarted game node closes its old rooms at once with node-restarted; the other node keeps its match', async t => {
+  const f = await fixture(t), lost = await f.match('Restart'), kept = await f.match('Survive');
+  assert.notEqual(lost.owner.nodeId, kept.owner.nodeId);
+  const index = f.configs.findIndex(config => config.nodeId === lost.owner.nodeId), config = f.configs[index];
+  const port = Number(new URL(f.games[index].url).port);
+  await f.games[index].close();
+  // Same node id, key and address; a new process generation with no actors.
+  const replacement = await startGameNode({ ...config, generation: `${config.nodeId}-restarted`, host: '127.0.0.1', port,
+    streamMarkers: true, MatchClass: f.MatchClass, onEnd: () => {} });
+  f.games.push(replacement);
+  await until(() => f.coordinator.lobby.getRoom(lost.room.code) === null, 4000);
+  assert.equal(f.coordinator.platform.directory.byRoom(lost.room.code), null);
+  for (const player of lost.players) {
+    const closed = frames => frames.some(frame => frame.t === 'room.closed' && frame.reason === 'node-restarted');
+    if (player.socket.readyState === WebSocket.OPEN) await until(() => closed(player.frames));
+    else {
+      // The node's game channel closed first: the reason waits for the resume, as for any room.closed.
+      const resumed = await f.join(`${player.playerId}-back`, 1, player.token);
+      await until(() => closed(resumed.frames));
+      assert.equal(resumed.frames.some(frame => frame.t === 'room.state' && frame.inMatch), false);
+    }
+    assert.equal(f.coordinator.registry.byId(player.playerId).roomCode, null);
+  }
+  assert.equal(replacement.gameHost.stats().matches, 0, 'nothing was relocated to the new process');
+  assert.equal(f.coordinator.lobby.getRoom(kept.room.code).match !== null, true);
+  assert.equal(f.coordinator.platform.directory.byRoom(kept.room.code).ownerAvailable, true);
+  await kept.players[0].request('g.watch', { fieldId: kept.players[1].playerId });
+  // The restarted node is usable again for new matches.
+  await until(() => f.coordinator.platform.directory.nodes.get(config.nodeId)?.ready === true);
+});

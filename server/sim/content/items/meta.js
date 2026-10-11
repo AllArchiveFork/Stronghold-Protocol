@@ -145,7 +145,8 @@ export function registerMeta(registry) {
       const itemIds = (target.items || []).map((it) => it.id);
       const copy = ctx.grantChess(target.id, { requirePool: false, source: 'item:chess_item_6_02_m' });
       if (!copy) { ev.error = 'HAND_FULL'; return; }
-      for (const itemId of itemIds) ctx.grantItem(itemId, { source: 'item:chess_item_6_02_m' });
+      // the copied equipment, like the copied operator, is not refused by the shared stock (GitHub #488) [ASSUMED]
+      for (const itemId of itemIds) ctx.grantItem(itemId, { requirePool: false, source: 'item:chess_item_6_02_m' });
     },
   }));
 

@@ -1,14 +1,23 @@
 // Low-rate coordinator adapter. It reserves one node per entire match, prepares
 // player channels before start, and never carries battle snapshots/events.
+// A node that comes back with a new generation (restart), or answers no status for
+// nodeLostMs, cannot continue its published matches: they are retired at once through
+// onUnavailable (NODE_RESTARTED / NODE_LOST) instead of staying "in match" forever. A
+// release the lost node could not acknowledge is re-sent once it answers again with the
+// same generation (a new generation has no such actor).
 import { randomBytes, createHash } from 'node:crypto';
 import { ClusterDirectory, AllocationError } from './directory.js';
 import { createTicketAuthority } from './tickets.js';
 import { createRpcAuthenticator, createRpcClient, PREPARE_MAX_BYTES } from './rpc.js';
 import { normalizeClusterLoad, normalizeGameLoad, publicGameLabel, MAX_PUBLIC_GAME_NODES } from '../../shared/cluster-load.js';
 import { copyAssignmentSpec, GameHostError } from './game-host.js';
+import { NO_PHASES } from '../phaseMetrics.js';
 
 const safeId = v => typeof v === 'string' && v.length > 0 && v.length <= 128 && /^[A-Za-z0-9_-][A-Za-z0-9_.:-]*(?![\s\S])/.test(v);
 const cancelled = () => new AllocationError('CANCELLED');
+// Releases a lost node could not acknowledge, kept per node until it answers again (bounded).
+const MAX_ORPHANS = 1024;
+const TRANSPORT_CODES = new Set(['TRANSPORT', 'TIMEOUT', 'BAD_REPLY', 'CLOSED']);
 function pause(ms, signal) {
   if (signal.aborted) return Promise.reject(cancelled());
   return new Promise((resolve, reject) => {
@@ -20,17 +29,24 @@ function pause(ms, signal) {
 }
 
 export class RemoteGamePlatform {
-  constructor({ nodes, build, protocol, sendControl, onUnavailable = () => {}, onPublished = () => {}, requireStreamMarkers = false,
-    now = Date.now, directory, allocationMs = 5000, pollMs = 50, loadTtlMs = 5000 }) {
+  constructor({ nodes, build, protocol, sendControl, sendControlEncoded = null, onUnavailable = () => {}, onPublished = () => {},
+    requireStreamMarkers = false, now = Date.now, directory, allocationMs = 5000, pollMs = 50, loadTtlMs = 5000, nodeLostMs = 15_000,
+    metrics = NO_PHASES }) {
     if (!Array.isArray(nodes) || !nodes.length || !safeId(build) || !Number.isSafeInteger(protocol) || protocol < 1
       || typeof sendControl !== 'function' || typeof onUnavailable !== 'function' || typeof onPublished !== 'function'
-      || typeof requireStreamMarkers !== 'boolean' || typeof now !== 'function') throw new TypeError('invalid game platform');
+      || typeof requireStreamMarkers !== 'boolean' || typeof now !== 'function'
+      || (sendControlEncoded !== null && typeof sendControlEncoded !== 'function')) throw new TypeError('invalid game platform');
     if (!Number.isSafeInteger(allocationMs) || allocationMs < 1 || allocationMs > 6000
       || !Number.isSafeInteger(pollMs) || pollMs < 1 || pollMs > 1000
-      || !Number.isSafeInteger(loadTtlMs) || loadTtlMs < 1 || loadTtlMs > 30_000) throw new RangeError('invalid allocation deadline');
+      || !Number.isSafeInteger(loadTtlMs) || loadTtlMs < 1 || loadTtlMs > 30_000
+      || !Number.isSafeInteger(nodeLostMs) || nodeLostMs < 1 || nodeLostMs > 300_000) throw new RangeError('invalid allocation deadline');
     this.build = build;
     this.protocol = protocol;
     this.sendControl = sendControl;
+    /** (sessionId, type, encodedFrame) → boolean: the same ordered control path for a frame already encoded */
+    this.sendControlEncoded = sendControlEncoded;
+    this.nodeLostMs = nodeLostMs;
+    this.metrics = metrics;
     this.onUnavailable = onUnavailable;
     this.onPublished = onPublished;
     this.requireStreamMarkers = requireStreamMarkers;
@@ -80,7 +96,9 @@ export class RemoteGamePlatform {
     const client = node.client || createRpcClient({ url: node.url,
       authority: createRpcAuthenticator({ key: node.key, scope: node.nodeId, now: this.now }) });
     if (typeof client.call !== 'function' || typeof client.close !== 'function') throw new TypeError('invalid node transport');
-    this.nodes.set(node.nodeId, { ...descriptor, tickets, client, generation: null });
+    let addedAt = null;
+    try { addedAt = this.now(); } catch { /* the loss deadline then starts at the first answer */ }
+    this.nodes.set(node.nodeId, { ...descriptor, tickets, client, generation: null, answeredAt: null, addedAt, orphans: new Map(), releasingOrphans: false });
     // It remains ineligible until a fresh authenticated identity/health response.
     return true;
   }
@@ -94,11 +112,56 @@ export class RemoteGamePlatform {
           || typeof status.ready !== 'boolean' || (this.requireStreamMarkers && (status.streamMarkers !== true || status.terminalControl !== true))
           || !Number.isSafeInteger(status.counts?.matches) || status.counts.matches < 0) throw new AllocationError('NODE_IDENTITY');
         this.directory.register({ nodeId: node.nodeId, generation: status.generation, build: this.build, protocol: this.protocol, capacity: node.capacity });
+        const previous = node.generation;
         node.generation = status.generation;
+        node.answeredAt = this.now();
         this.directory.heartbeat(node.nodeId, { generation: status.generation, ready: status.ready, matches: status.counts.matches });
         this.cacheLoad(node, status);
-      } catch { this.directory.disable(node.nodeId); this.cacheLoad(node, null); }
+        if (previous !== null && previous !== status.generation) {
+          // A new process: every actor of the old generation is gone, and so are its pending releases.
+          node.orphans.clear();
+          this.retireNode(node, 'NODE_RESTARTED');
+        } else this.releaseOrphans(node);
+      } catch {
+        this.directory.disable(node.nodeId); this.cacheLoad(node, null);
+        let at;
+        try { at = this.now(); } catch { return; }
+        const since = node.answeredAt ?? node.addedAt;
+        if (Number.isSafeInteger(at) && Number.isSafeInteger(since) && at - since >= this.nodeLostMs) this.retireNode(node, 'NODE_LOST');
+      }
     }));
+  }
+
+  /**
+   * Retire the published matches this node can no longer run: a restarted node's old-generation actors, or every
+   * actor of a node lost for nodeLostMs. The lobby closes the room (onUnavailable) BEFORE the release's terminate
+   * markers, exactly as for a failed publication; no result is invented. Preparations fail on their own epochs.
+   */
+  retireNode(node, reason) {
+    for (const ctx of [...this.contexts.values()]) {
+      // A delivered terminal receipt already ended the room; its lobby release follows on its own.
+      if (ctx.node !== node || ctx.state !== 'published' || ctx.retiring || ctx.terminal
+        || (reason === 'NODE_RESTARTED' && ctx.generation === node.generation)) continue;
+      ctx.retiring = true;
+      void (async () => {
+        try {
+          await this.onUnavailable(Object.freeze({ assignmentId: ctx.spec.assignmentId, roomCode: ctx.spec.roomCode,
+            nodeId: node.nodeId, reason }));
+        } catch { /* the owner still gets the explicit release */ }
+        await this.release(ctx.spec.assignmentId);
+      })();
+    }
+  }
+
+  /** Re-send releases a lost node missed, now that it answers with the same generation. */
+  releaseOrphans(node) {
+    if (!node.orphans.size || node.releasingOrphans) return;
+    node.releasingOrphans = true;
+    const pending = [...node.orphans.values()];
+    void Promise.all(pending.map(async payload => {
+      try { await node.client.call('release', payload); node.orphans.delete(payload.assignmentId); }
+      catch (error) { if (!TRANSPORT_CODES.has(error?.code)) node.orphans.delete(payload.assignmentId); }
+    })).finally(() => { node.releasingOrphans = false; });
   }
 
   cacheLoad(node, value) {
@@ -403,13 +466,24 @@ export class RemoteGamePlatform {
       ...(method === 'setSkins' ? { choices: loadout } : { loadout, ...(ops === undefined ? {} : { ops }) }) });
   }
 
-  /** Only validated, bounded terminal frames may use the low-rate control path. */
+  /**
+   * Only validated, bounded terminal frames may use the low-rate control path. `lastPublic` (or null) and each
+   * `results` value are the JSON texts the lobby validated: every member's cluster.terminal frame is spliced from
+   * them, byte-identical to encoding { t, assignmentId, sessionId, lastPublic, result }, never re-serialized per
+   * member. With sendControlEncoded the shared final public frame is UTF-8 encoded once for all members.
+   * @param {string} assignmentId
+   * @param {{ lastPublic: string | null, results: Map<string, string> }} end
+   * @param {Iterable<string>} memberIds
+   */
   deliverEnd(assignmentId, { lastPublic, results }, memberIds) {
     const ctx = this.contexts.get(assignmentId);
     if (!ctx || ctx.state !== 'published' || ctx.terminal) return false;
     ctx.terminal = true;
+    const head = `{"t":"cluster.terminal","assignmentId":${JSON.stringify(assignmentId)},"sessionId":`;
+    const tail = `,"lastPublic":${lastPublic ?? 'null'},"result":`;
+    let tailBytes = null;
     for (const sessionId of memberIds) {
-      if (ctx.revokedMembers.has(sessionId) || !Object.hasOwn(results, sessionId)) continue;
+      if (ctx.revokedMembers.has(sessionId) || !results.has(sessionId)) continue;
       if (!ctx.members.has(sessionId)) {
         // A receipt may beat an in-flight addSpectator reply. The lobby's current
         // seat, directory reservation AND node's personal receipt must all agree.
@@ -417,8 +491,13 @@ export class RemoteGamePlatform {
         ctx.members.set(sessionId, 'spectator');
         try { this.control(ctx, 'cluster.prepare', sessionId); } catch {}
       }
-      try { this.sendControl(sessionId, { t: 'cluster.terminal', assignmentId, sessionId, lastPublic, result: results[sessionId] }); }
-      catch { /* offline/slow members get their own lobby replay on reconnect */ }
+      try {
+        if (this.sendControlEncoded) {
+          tailBytes ??= Buffer.from(tail);
+          this.sendControlEncoded(sessionId, 'cluster.terminal', Buffer.concat([Buffer.from(head + JSON.stringify(sessionId)), tailBytes,
+            Buffer.from(`${results.get(sessionId)}}`)]));
+        } else this.sendControl(sessionId, JSON.parse(`${head}${JSON.stringify(sessionId)}${tail}${results.get(sessionId)}}`));
+      } catch { /* offline/slow members get their own lobby replay on reconnect */ }
     }
     return true;
   }
@@ -434,8 +513,14 @@ export class RemoteGamePlatform {
     for (const id of ctx.members.keys()) {
       try { this.control(ctx, ctx.terminal ? 'cluster.terminate' : 'cluster.abort', id); } catch { /* dead ingress */ }
     }
-    try { await ctx.node.client.call('release', { assignmentId, nodeGeneration: ctx.generation, actorGeneration: ctx.actorGeneration }); return true; }
-    catch { return false; }
+    const payload = { assignmentId, nodeGeneration: ctx.generation, actorGeneration: ctx.actorGeneration };
+    try { await ctx.node.client.call('release', payload); return true; }
+    catch (error) {
+      // An unreachable node of the same generation may still run the actor: release it when it answers again.
+      if (TRANSPORT_CODES.has(error?.code) && !this.closed && ctx.node.generation === ctx.generation && Number.isSafeInteger(ctx.actorGeneration)
+        && ctx.node.orphans.size < MAX_ORPHANS) ctx.node.orphans.set(assignmentId, payload);
+      return false;
+    }
   }
 
   async close() {

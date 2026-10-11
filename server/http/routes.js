@@ -4,7 +4,8 @@
 //   * a URL longer than 4096 characters → 414; one that does not parse → 400;
 //   * any method but GET / HEAD → 405 with `Allow: GET, HEAD`;
 //   * GET /healthz → JSON status (protocol `version`, release `app`, uptime, the served `build`, sockets, sessions,
-//     rooms, matches), never cached;
+//     rooms, matches, the cached `performance` sample — a cluster coordinator adds `performance.phases`,
+//     server/phaseMetrics.js), never cached;
 //   * everything else → the static files (static.js).
 // A route that throws is logged and answers 500.
 

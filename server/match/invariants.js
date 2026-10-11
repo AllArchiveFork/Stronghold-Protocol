@@ -4,7 +4,8 @@
 //
 // collectViolations(m) → string[] (empty when every invariant holds):
 //   pool     raw balance ≤ cap and raw balance + Σ copies held by pieces == cap (public availability is clamped at zero) per base chess; non-pool chess hold 0 copies;
-//            every capped shop item is held by at most its cap (normal occupies 1, upgraded 2; effect-only items have no cap)
+//            every capped shop item is held by at most its cap (normal occupies 1, upgraded 2; effect-only items have no cap;
+//            copies a free grant gave beyond stock — piece.overStock, GitHub #488 — are not counted against it)
 //            a player's 自选 stock (0.2.0, player/diy.js) the same against its own pieces of each slotted slot — a DIY
 //            piece is always a slotted slot of its owner's, and a DIY shop / reward card one of its stocked slots
 //   economy  funds / pendingFunds non-negative integers, LP finite, shop level in range, prices ≥ 0
@@ -212,13 +213,14 @@ export function collectViolations(m, { limit = 25 } = {}) {
     for (const [base, n] of held) if (!pool.has(base) && n !== 0) fail(`non-pool chess ${base} holds ${n} copies`);
   }
 
-  // Shared shop equipment. The chess pool above may go negative (Mimic). Item stock may not: held ≤ cap.
+  // Shared shop equipment. The chess pool above may go negative (Mimic). Every stock-checked path keeps held ≤ cap;
+  // a named free grant beyond stock (acquireItem requirePool false) marks its piece `overStock` and is not counted.
   if (m.itemPool && gd.raw.items) {
     for (const [id, rec] of Object.entries(gd.raw.items)) {
       if (!rec || rec.isGolden) continue;
       const cap = m.itemPool.cap(id);
       if (!Number.isInteger(cap)) continue;
-      const h = m.itemPool.held(id);
+      const h = m.itemPool.held(id, { withinStock: true });
       if (h > cap) fail(`item ${id}: held ${h} > cap ${cap}`);
     }
   }

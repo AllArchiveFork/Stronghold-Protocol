@@ -6,9 +6,9 @@
 
 ## 拓扑
 
-game 数量只来自已校验 core bundle 的 policy（`cluster-deploy.py --game-nodes`，Formal 可选 16 或 32，Beta 固定 16）；`cluster-local-stack.py` 没有自己的节点数参数。
+game 数量只来自已校验 core bundle 的 policy（`cluster-deploy.py --game-nodes`，Formal 可选 16 或 32，Beta 固定 16）；`cluster-local-stack.py` 没有自己的节点数参数。每 game 的 Worker 数同样只来自 core bundle（`--combat-workers 1..8`、`--trial-workers 0..2`，默认 8+2，全部 game 相同）；组合栈逐个核对 game 的 Compose 环境与 runtime 和 policy target 一致。
 
-| core bundle | game（每个 8combat+2trial） | 本地 ingress | ingress loopback 端口 |
+| core bundle | game（默认每个 8combat+2trial） | 本地 ingress | ingress loopback 端口 |
 |---|---|---|---|
 | 16 节点（默认） | `.11`–`.26`，`35411`–`35426` | `.31` 起，最多 8 个（`.38`） | `35401` 起（与 edge 相同） |
 | 32 节点（仅 Formal） | `.11`–`.42`，`35411`–`35442` | `.51` 起，最多 16 个（`.66`） | `35451` 起（`.51`↔`35451`，到 `35466`） |
@@ -21,7 +21,8 @@ game 数量只来自已校验 core bundle 的 policy（`cluster-deploy.py --game
 ## 生成
 
 ```sh
-# 1. 全新 core bundle：新节点 key，只在本机生成、不离开本机。32 节点加 --game-nodes 32（仅 Formal）。
+# 1. 全新 core bundle：新节点 key，只在本机生成、不离开本机。32 节点加 --game-nodes 32（仅 Formal）；
+#    每 game 少于 8+2 时再加 --combat-workers N --trial-workers M（例如 3 1 或 2 1）。
 python3 -I /opt/ark-cluster-formal/tools/cluster-deploy.py --profile formal \
   --role core --game-nodes 32 --out "$NEW_CORE_BUNDLE" --image-id "$ACTUAL_IMAGE_ID" \
   --source-kind "$SOURCE_KIND" --build "$FIXED_BUILD" --manifest-sha256 "$SOURCE_MANIFEST_SHA256"

@@ -1,21 +1,107 @@
 /* ==========================================================================================
-   screens/lobby.css — mode cards (独立/同盟), difficulty cards, create button, join panel.
+   screens/lobby.css — the lobby: top bar, status strip, the four steps (模拟方式 → 模拟难度 → 出发 → 加入同盟) and
+   tips; mode cards, difficulty cards, the create button, the join panel, the matchmaking panel and the lobby dialogs.
+   Every lobby rule lives here (css/devices.css keeps only the generic safe-area / touch rules). Text sizes read --t with
+   a pixel floor where the 40 px root clamp would make them unreadable (phones, narrow windows).
    ========================================================================================== */
 
-.lobby-body {
-  display: grid;
-  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
-  gap: .28rem;
-  width: 100%;
-  max-width: 19.2rem;
-  margin: 0 auto;
-  padding: .16rem .5rem .18rem;
-  align-content: start;
+.lobby-screen {
+  --lb-pad: max(.32rem, 16px);   /* side padding of the bars and the body */
+  --lb-gap: .24rem;              /* between the two columns and between steps */
+  --lb-ctl: max(.44rem, 40px);   /* top bar control height */
+  --lb-fs: max(calc(.16 * var(--t)), 13px);
+  --lb-fs-sm: max(calc(.14 * var(--t)), 12px);
 }
-.lobby-left, .lobby-right { display: flex; flex-direction: column; min-width: 0; }
-.lobby-contact { display: flex; justify-content: flex-end; width: 100%; max-width: 19.2rem; margin-inline: auto; padding: 0 max(.5rem, 16px); flex: none; }
-.lobby-feedback { min-height: 40px; padding-inline: 14px; font-size: max(calc(.19 * var(--t)), 14px); color: var(--mint-400); border-color: var(--mint-700); letter-spacing: .06em; }
+
+/* ---- top bar: one row everywhere ------------------------------------------------------------------------------- */
+.lobby-screen .topbar { grid-template-columns: auto minmax(0, 1fr) auto; gap: .16rem; height: auto; min-height: 0; padding: .1rem var(--lb-pad); }
+.lobby-screen .topbar__left { gap: .1rem; }
+.lobby-screen .topbar__center { min-width: 0; }
+.lobby-screen .topbar__center .micro { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.lobby-screen .topbar__title { justify-content: center; font-size: max(calc(.25 * var(--t)), 14px); letter-spacing: .06em; text-wrap: balance; overflow-wrap: anywhere; }
+.lobby-screen .topbar__right { gap: .1rem; flex-wrap: nowrap; }
+.lobby-screen .topbar .btn, .lobby-tools > summary { min-height: var(--lb-ctl); }
+.lobby-screen .me-chip { min-height: var(--lb-ctl); }
+.lobby-screen .me-chip__name { max-width: 1.5rem; }
+.lobby-fullscreen { width: var(--lb-ctl); height: var(--lb-ctl); min-width: 40px; min-height: 40px; }
+.lobby-fullscreen .icon { width: 20px; height: 20px; }
+
+/* 更多: 公告 (a dot while one is unread) and 添加到桌面; it closes on a choice, a press outside it and Esc (lobby.js) */
+.lobby-tools { position: relative; }
+.lobby-tools > summary {
+  position: relative; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 6px 10px; list-style: none;
+  border: 1px solid var(--line-2); color: var(--text-md); background: var(--bg-1); cursor: pointer; font-size: var(--lb-fs); white-space: nowrap;
+}
+.lobby-tools > summary::-webkit-details-marker { display: none; }
+.lobby-tools > summary .icon { width: 16px; height: 16px; }
+.lobby-tools[open] > summary { color: var(--mint-400); border-color: var(--mint-700); }
+.lobby-tools__menu {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 20; display: flex; flex-direction: column; gap: 6px; width: 180px; padding: 8px;
+  background: var(--bg-1); border: 1px solid var(--line-2); box-shadow: 0 8px 24px rgba(0, 0, 0, .45);
+}
+.lobby-tools__menu .btn { width: 100%; min-height: 44px; justify-content: flex-start; font-size: 14px; }
+.lobby-tools:not([open]) .lobby-tools__menu { display: none; }
+/* opened rightward from the button's left edge when the right-aligned menu would leave the screen (lobby.js toolsMenuSide) */
+.lobby-tools--start .lobby-tools__menu { left: 0; right: auto; }
+.lobby-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--amber); box-shadow: 0 0 6px var(--amber); flex: none; }
+.lobby-tools > summary .lobby-dot { position: absolute; top: 4px; right: 4px; }
+.lobby-tools__menu .lobby-dot { margin-left: 6px; }
+
+/* ---- status strip: connection, online sessions, feedback group -------------------------------------------------------- */
+.lobby-status {
+  flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: 6px .16rem; width: 100%; max-width: 19.2rem; margin-inline: auto;
+  padding: 6px var(--lb-pad) 0; font-size: var(--lb-fs-sm);
+}
+.lobby-status .online-players { font-size: var(--lb-fs-sm); min-height: 32px; }
+.lobby-status .online-players .icon { width: 16px; height: 16px; }
+.lobby-contact { margin-left: auto; display: flex; }
+.lobby-feedback { min-height: 40px; padding-inline: 12px; font-size: var(--lb-fs); color: var(--mint-400); border-color: var(--mint-700); letter-spacing: .04em; }
 .lobby-feedback .icon { width: 16px; height: 16px; }
+.lobby-feedback__label { margin-right: 6px; color: var(--text-md); letter-spacing: 0; }
+
+/* ---- body: two columns; the steps in reading order ------------------------------------------------------------------ */
+.lobby-body {
+  display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: var(--lb-gap); align-content: start;
+  width: 100%; max-width: 19.2rem; margin: 0 auto; padding: .1rem var(--lb-pad) .12rem;
+}
+.lobby-left, .lobby-right { display: flex; flex-direction: column; gap: .14rem; min-width: 0; }
+.lobby-step { display: flex; flex-direction: column; min-width: 0; }
+.lobby-screen .section-label { align-items: center; min-height: .32rem; margin-bottom: .1rem; font-size: max(calc(.2 * var(--t)), 14px); }
+.lobby-screen .section-label__idx { font-size: max(calc(.15 * var(--t)), 11px); }
+.lobby-protocol-help { margin-left: auto; height: max(.36rem, 32px); font-size: var(--lb-fs-sm); }
+.sp-coarse .lobby-screen .me-chip { min-width: 44px; min-height: 44px; justify-content: center; }
+.lobby-screen .mode-card { min-height: 1.95rem; padding: .14rem .2rem; gap: .08rem; }
+.lobby-screen .mode-card__icon { width: .52rem; height: .52rem; }
+.lobby-screen .mode-card__icon .icon { width: .36rem; height: .36rem; }
+.lobby-screen .mode-card__name { font-size: max(calc(.32 * var(--t)), 16px); }
+.lobby-screen .mode-card__text { gap: .06rem; }
+.lobby-screen .mode-cards { margin-bottom: 0; }
+.lobby-screen .mode-card--match { min-height: 0; padding-block: .12rem; }
+.lobby-screen .mode-card--match .mode-card__desc { font-size: max(calc(.15 * var(--t)), 12px); }
+.lobby-screen .mode-card--match .mode-card__points { font-size: max(calc(.13 * var(--t)), 11px); }
+.lobby-screen .diff-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .14rem; }
+.lobby-screen .diff-card { grid-template-columns: minmax(0, 1fr); padding: .14rem .18rem .14rem .28rem; gap: .05rem; }
+.lobby-screen .diff-card__check { display: none; }
+.lobby-screen .diff-card__name { font-size: max(calc(.24 * var(--t)), 15px); }
+.lobby-locked { padding: .14rem .2rem; border: 1px dashed var(--line-2); font-size: var(--lb-fs); }
+/* 03 出发: the choice summed up in one line over the create button / the matchmaking panel */
+.lobby-go { --d-color: var(--amber); display: flex; flex-direction: column; gap: .12rem; padding: .16rem .2rem; background: rgba(13, 20, 17, .9); border: 1px solid var(--line-2); border-left: 3px solid var(--d-color); }
+.lobby-go__summary { display: flex; align-items: center; flex-wrap: wrap; gap: .04rem .1rem; margin: 0; font-size: max(calc(.17 * var(--t)), 13px); color: var(--text-md); }
+.lobby-go__summary > .icon { width: .24rem; height: .24rem; min-width: 18px; min-height: 18px; color: var(--mint-400); }
+.lobby-go__summary b { color: var(--text-hi); }
+.lobby-go__diff { color: var(--d-color); font-weight: 700; }
+.lobby-go__summary .num { color: var(--text-hi); font-weight: 700; }
+.lobby-go__hidden { padding: 0 .06rem; border: 1px solid var(--d-color); color: var(--d-color); font-size: var(--lb-fs-sm); }
+.lobby-screen .lobby-go .create-box { margin-top: 0; }
+.lobby-screen .lobby-go .matchmaking--compact { margin-top: 0; border: 0; padding: 0; background: none; }
+/* before queueing, the panel's difficulty line repeats the summary above it */
+.lobby-screen .lobby-go .matchmaking--compact:not(.is-active) > p { display: none; }
+.lobby-screen .join-row .field { min-width: 0; }
+/* a code field iOS does not zoom into (16 px) and a finger can hit (44 px) */
+.lobby-screen .join-row .field--code .field__box { height: max(.64rem, 44px); }
+.lobby-screen .join-row .field--code .field__input { font-size: max(.34rem, 16px); }
+.lobby-screen .join-row .field--code .field__input::placeholder { font-size: max(calc(.18 * var(--t)), 14px); }
+.join-foot__note { flex-basis: 100%; }
 
 /* ---- mode cards ------------------------------------------------------------------------------------ */
 .mode-cards { display: grid; grid-template-columns: 1fr 1fr; gap: .16rem; margin-bottom: .14rem; }
@@ -74,9 +160,9 @@
 }
 .mode-card__icon .icon { width: .44rem; height: .44rem; }
 .mode-card__text { position: relative; display: flex; flex-direction: column; gap: .1rem; }
-.mode-card__name { font-size: calc(.36 * var(--t)); font-weight: 900; letter-spacing: .08em; line-height: 1.1; }
-.mode-card__desc { font-size: calc(.17 * var(--t)); color: var(--text-lo); line-height: 1.65; max-width: 3.6rem; }
-.mode-card__points { display: flex; flex-direction: column; gap: .05rem; margin-top: .06rem; font-size: calc(.15 * var(--t)); color: var(--text-md); }
+.mode-card__name { font-size: max(calc(.36 * var(--t)), 16px); font-weight: 900; letter-spacing: .08em; line-height: 1.1; }
+.mode-card__desc { font-size: max(calc(.17 * var(--t)), 13px); color: var(--text-lo); line-height: 1.65; max-width: 3.6rem; }
+.mode-card__points { display: flex; flex-direction: column; gap: .05rem; margin-top: .06rem; font-size: max(calc(.15 * var(--t)), 12px); color: var(--text-md); }
 .mode-card__points span::before {
   content: '';
   display: inline-block;
@@ -97,7 +183,7 @@
   padding: .04rem .12rem .04rem .08rem;
   background: var(--mint-500);
   color: var(--text-on-mint);
-  font-size: calc(.14 * var(--t));
+  font-size: max(calc(.14 * var(--t)), 12px);
   font-weight: 700;
   opacity: 0;
   transform: translateY(-.06rem);
@@ -121,13 +207,13 @@
 .join-row { display: flex; gap: .16rem; align-items: stretch; }
 .join-row .field { flex: 1; }
 .join-row .btn { height: .64rem; }
-.join-foot { display: flex; align-items: center; flex-wrap: wrap; gap: .1rem; min-height: .32rem; font-size: calc(.14 * var(--t)); }
+.join-foot { display: flex; align-items: center; flex-wrap: wrap; gap: .1rem; min-height: .32rem; font-size: max(calc(.14 * var(--t)), 12px); }
 .code-chip {
   padding: .03rem .12rem .03rem .16rem;
   border: 1px solid var(--line-2);
   background: rgba(0, 0, 0, .3);
   color: var(--amber);
-  font-size: calc(.17 * var(--t));
+  font-size: max(calc(.17 * var(--t)), 13px);
   font-weight: 700;
   letter-spacing: .2em;
   transition: border-color var(--t-fast), background-color var(--t-fast);
@@ -142,9 +228,9 @@
   background: rgba(8, 10, 9, .55);
   border: 1px solid var(--line);
 }
-.tips__head { display: flex; align-items: center; gap: .1rem; font-size: calc(.16 * var(--t)); font-weight: 700; color: var(--text-md); }
+.tips__head { display: flex; align-items: center; gap: .1rem; font-size: max(calc(.16 * var(--t)), 12px); font-weight: 700; color: var(--text-md); }
 .tips__head > .icon { width: .2rem; height: .2rem; color: var(--mint-500); }
-.tips__idx { margin-left: auto; font-size: calc(.16 * var(--t)); color: var(--text-md); }
+.tips__idx { margin-left: auto; font-size: max(calc(.16 * var(--t)), 12px); color: var(--text-md); }
 .tips__nav {
   display: grid;
   place-items: center;
@@ -158,7 +244,7 @@
 }
 .tips__nav:hover { color: var(--mint-400); border-color: var(--mint-700); }
 .tips__nav .icon { width: .18rem; height: .18rem; }
-.tips__text { margin-top: .1rem; font-size: calc(.17 * var(--t)); color: var(--text-lo); line-height: 1.6; animation: tip-in var(--t-slow) var(--ease-out); }
+.tips__text { margin-top: .1rem; font-size: max(calc(.17 * var(--t)), 13px); color: var(--text-lo); line-height: 1.6; animation: tip-in var(--t-slow) var(--ease-out); }
 @keyframes tip-in { from { opacity: 0; transform: translateX(.1rem); } }
 
 /* ---- difficulty cards -------------------------------------------------------------------------------- */
@@ -185,20 +271,20 @@
 .diff-card__bar { position: absolute; left: 0; top: 0; bottom: 0; width: .06rem; background: var(--d-color); opacity: .45; transition: opacity var(--t-med), box-shadow var(--t-med); }
 .diff-card__head { grid-column: 1 / -1; display: flex; align-items: center; gap: .1rem; min-width: 0; }
 .diff-card__glyph { width: .28rem; height: .28rem; color: var(--d-color); filter: drop-shadow(0 0 5px var(--d-color)); filter: drop-shadow(0 0 5px color-mix(in srgb, var(--d-color) 55%, transparent)); }
-.diff-card__name { font-size: calc(.27 * var(--t)); font-weight: 900; letter-spacing: .06em; color: var(--d-color); }
-.diff-card__code { font-size: calc(.14 * var(--t)); color: var(--text-dim); letter-spacing: .1em; }
-.diff-card__meta { margin-left: auto; display: flex; align-items: center; gap: .04rem; font-size: calc(.14 * var(--t)); color: var(--text-lo); white-space: nowrap; }
-.diff-card__meta .num { color: var(--text-hi); font-weight: 700; font-size: calc(.17 * var(--t)); }
+.diff-card__name { font-size: max(calc(.27 * var(--t)), 14px); font-weight: 900; letter-spacing: .06em; color: var(--d-color); }
+.diff-card__code { font-size: max(calc(.14 * var(--t)), 12px); color: var(--text-dim); letter-spacing: .1em; }
+.diff-card__meta { margin-left: auto; display: flex; align-items: center; gap: .04rem; font-size: max(calc(.14 * var(--t)), 12px); color: var(--text-lo); white-space: nowrap; }
+.diff-card__meta .num { color: var(--text-hi); font-weight: 700; font-size: max(calc(.17 * var(--t)), 13px); }
 .diff-card__hidden {
   margin-left: .08rem;
   padding: 0 .07rem;
   border: 1px solid transparent; border: 1px solid color-mix(in srgb, var(--d-color) 45%, transparent);
   color: var(--d-color); color: color-mix(in srgb, var(--d-color) 80%, #fff);
-  font-size: calc(.12 * var(--t));
+  font-size: max(calc(.12 * var(--t)), 11px);
   line-height: 1.6;
 }
-.diff-card__desc { grid-column: 1; font-size: calc(.16 * var(--t)); color: var(--text-md); }
-.diff-card__effects { grid-column: 1; display: flex; flex-wrap: wrap; gap: .04rem .2rem; font-size: calc(.14 * var(--t)); color: var(--text-lo); }
+.diff-card__desc { grid-column: 1; font-size: max(calc(.16 * var(--t)), 12px); color: var(--text-md); }
+.diff-card__effects { grid-column: 1; display: flex; flex-wrap: wrap; gap: .04rem .2rem; font-size: max(calc(.14 * var(--t)), 12px); color: var(--text-lo); }
 .diff-card__effects span::before { content: '·'; margin-right: .05rem; color: var(--d-color); font-weight: 900; }
 /* battlefield pool note (config.json modes[].stages): 战场固定为 战场#01 / 战场随机（共N张） — the last item of the
    effects row (no extra card height: the lobby must not scroll at 1280×720 / 1920×1080) */
@@ -213,7 +299,7 @@
   flex-direction: column;
   align-items: center;
   gap: .03rem;
-  font-size: calc(.12 * var(--t));
+  font-size: max(calc(.12 * var(--t)), 11px);
   color: var(--text-dim);
 }
 .diff-card__check .icon {
@@ -239,28 +325,10 @@
 
 /* ---- create ------------------------------------------------------------------------------------------ */
 .create-box { margin-top: .3rem; display: flex; flex-direction: column; gap: .12rem; }
-.create-box .btn--xl { height: .92rem; font-size: calc(.32 * var(--t)); letter-spacing: .3em; }
-.create-box__hint { display: flex; align-items: center; justify-content: center; min-height: .3rem; font-size: calc(.14 * var(--t)); color: var(--text-lo); }
+.create-box .btn--xl { height: .92rem; font-size: max(calc(.32 * var(--t)), 16px); letter-spacing: .3em; }
+.create-box__hint { display: flex; align-items: center; justify-content: center; min-height: .3rem; font-size: max(calc(.14 * var(--t)), 12px); color: var(--text-lo); }
 
-/* Lobby-only chrome and optional readers; no changes to the game/room scale. */
-.lobby-screen .topbar { grid-template-columns: auto minmax(0, 1fr) auto; gap: .16rem; padding-inline: .32rem; height: auto; min-height: 1.1rem; padding-block: .12rem; }
-.lobby-screen .topbar__center { min-width: 0; }
-.lobby-screen .topbar__title { font-size: max(calc(.25 * var(--t)), 14px); letter-spacing: .06em; text-wrap: balance; }
-.lobby-screen .topbar__right { gap: .1rem; flex-wrap: wrap; }
-.lobby-tools { position: relative; }
-.lobby-tools > summary { display: flex; align-items: center; justify-content: center; gap: 6px; min-height: 40px; padding: 6px 10px; border: 1px solid var(--line-2); color: var(--text-md); background: var(--bg-1); cursor: pointer; font-size: max(calc(.16 * var(--t)), 12px); list-style: none; }
-.lobby-tools > summary::-webkit-details-marker { display: none; }
-.lobby-tools > summary .icon { width: 16px; height: 16px; }
-.lobby-tools__menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 20; display: flex; flex-direction: column; gap: 6px; width: 180px; padding: 8px; background: var(--bg-1); border: 1px solid var(--line-2); box-shadow: 0 6px 20px rgba(0, 0, 0, .4); }
-.lobby-tools__menu .btn { width: 100%; min-height: 44px; justify-content: flex-start; font-size: 14px; }
-.lobby-tools:not([open]) .lobby-tools__menu { display: none; }
-/* opened rightward from the button's left edge when the right-aligned menu would leave the screen (lobby.js toolsMenuSide) */
-.lobby-tools--start .lobby-tools__menu { left: 0; right: auto; }
-/* inside 更多 a row has room for its name (stats.css hides the 统计 label beside its icon on narrow top bars) */
-.lobby-tools__menu .stats-entry .btn__icon + .btn__label { position: static; width: auto; height: auto; margin: 0; overflow: visible; clip: auto; }
-.lobby-screen .me-chip__name { max-width: 1.5rem; }
-.lobby-screen .join-row .field { min-width: 0; }
-.lobby-protocol-help { margin-left: auto; height: .36rem; font-size: calc(.14 * var(--t)); }
+/* ---- matchmaking panel, dialogs, announcements ---------------------------------------------------------------------- */
 .lobby-screen .matchmaking--compact { margin-top: .14rem; padding: .14rem .2rem; }
 .lobby-screen .matchmaking__actions { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .1rem; margin-bottom: 0; }
 .lobby-screen .matchmaking.is-offered .matchmaking__actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -308,53 +376,115 @@
 .announcement-reading__track { height: 3px; background: var(--bg-4); overflow: hidden; }.announcement-reading__track i { display: block; width: 100%; height: 100%; background: var(--mint-500); transform-origin: left; }
 .announcement-reading > span { display: flex; align-items: center; justify-content: center; gap: 6px; }.announcement-reading .icon { width: 14px; height: 14px; transform: rotate(90deg); }
 .announcement-reading.has-more { color: var(--mint-400); }
-.lobby-fullscreen { min-width: 40px; min-height: 40px; width: max(.4rem, 40px); height: max(.4rem, 40px); }
 .fullscreen-help { width: min(max(5.4rem, 320px), calc(100vw - 32px)); }.fullscreen-help p { font-size: max(calc(.17 * var(--t)), 14px); line-height: 1.65; }.fullscreen-help p + p { margin-top: 12px; }
 .announcement-board .modal__actions .btn, .server-status-modal .modal__actions .btn, .fullscreen-help .modal__actions .btn { min-height: 40px; font-size: max(calc(.17 * var(--t)), 14px); padding-inline: 16px; }
-.lobby-fullscreen .icon { width: 20px; height: 20px; }
-@media (max-width: 400px) { .lobby-screen .topbar__right { gap: 4px; } }
 
+/* ---- narrower desktops: the title gives way, the chip keeps the avatar ---------------------------------------------- */
 @media (max-width: 1100px) {
-  .lobby-screen .topbar { grid-template-columns: auto minmax(0, 1fr); gap: .16rem; }
-  .lobby-screen .topbar__center, .lobby-screen .me-chip__text { display: none; }
-  .lobby-screen .me-chip { padding: .04rem; border: 0; background: none; }
-  .lobby-screen .topbar__title { font-size: max(calc(.25 * var(--t)), 14px); }
-  .lobby-screen .topbar .btn { font-size: max(calc(.16 * var(--t)), 12px); min-height: 40px; padding-inline: max(.14rem, 8px); }
-  .lobby-screen .online-players, .lobby-screen .ping { font-size: 12px; }
+  .lobby-screen .topbar { grid-template-columns: auto minmax(0, 1fr); }
+  .lobby-screen .topbar__center, .lobby-screen .me-chip__text, .lobby-screen .me-chip__stats { display: none; }
+  .lobby-screen .me-chip { padding: 2px; border-color: var(--line-2); }
+  /* the decorative English micro labels would fall under 8 px at the 40–55 px root */
+  .lobby-screen .mode-card__text > .micro, .lobby-screen .section-label > .micro, .lobby-screen .tips__head > .micro { display: none; }
+  .lobby-screen .topbar .btn { font-size: max(calc(.16 * var(--t)), 12px); padding-inline: max(.14rem, 8px); }
 }
-@media (max-width: 767px) {
-  .lobby-screen .topbar { height: 48px; padding-inline: 16px; grid-template-columns: auto auto; justify-content: space-between; }
-  .lobby-screen .topbar__center, .lobby-screen .me-chip { display: none; }
-  .lobby-screen .topbar__left, .lobby-screen .topbar__right { gap: 6px; }
-  .lobby-screen .topbar .btn { padding-inline: 8px; font-size: 12px; min-height: 40px; }
-  .lobby-screen .online-players { font-size: 12px; }
-}
-@media (max-width: 600px) and (min-height: 461px) {
-  .lobby-screen .topbar { height: auto; min-height: 96px; grid-template-columns: minmax(0, 1fr); gap: 4px; padding-block: 4px; }
-  .lobby-screen .topbar__left, .lobby-screen .topbar__right { justify-content: space-between; }
-  .lobby-body { grid-template-columns: minmax(0, 1fr); padding: 8px 16px 16px; gap: 16px; }
-  .lobby-screen .section-label { font-size: 13px; min-height: 24px; margin-bottom: 8px; }
+
+/* ---- phones and narrow windows: icon-only top bar controls (their names stay title / aria-label) ------------------- */
+@media (max-width: 767px), (max-height: 460px) {
+  .lobby-screen { --lb-pad: 12px; --lb-gap: 12px; --lb-ctl: 44px; }
+  .lobby-screen .topbar { padding-block: 4px; gap: 6px; }
+  .lobby-screen .topbar__right { gap: 6px; }
+  .lobby-screen .topbar__right > .btn:not([data-testid="resume-local-match"]), .lobby-screen .lobby-back { width: 44px; min-width: 44px; padding: 0; justify-content: center; }
+  /* the label's text goes (font-size 0: 设置 draws its gear inside the label); the name stays on aria-label / title */
+  .lobby-screen .topbar__right > .btn:not([data-testid="resume-local-match"]) .btn__label, .lobby-screen .lobby-back .btn__label { font-size: 0; letter-spacing: 0; }
+  .lobby-tools__label { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+  .lobby-screen .topbar__right > .btn .btn__icon, .lobby-screen .lobby-back .btn__icon { width: 20px; height: 20px; }
+  .lobby-tools > summary { width: 44px; padding: 0; }
+  .lobby-screen .me-chip { width: 44px; height: 44px; justify-content: center; }
+  .lobby-status { padding-top: 4px; gap: 4px 10px; }
+  .lobby-screen .latency-status { max-width: none; }
+  .lobby-screen .section-label { font-size: 14px; min-height: 24px; margin-bottom: 6px; gap: 6px; }
+  .lobby-screen .section-label__idx { font-size: 11px; }
   .lobby-screen .section-label > .micro { display: none; }
   .lobby-protocol-help { height: 32px; min-height: 32px; font-size: 12px; padding-inline: 8px; }
-  .mode-cards { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-bottom: 12px; }
-  .lobby-screen .mode-card, .lobby-screen .mode-card--match { min-height: 76px; padding: 8px 4px; flex-direction: column; gap: 6px; align-items: center; justify-content: center; grid-column: auto; }
-  .lobby-screen .mode-card__icon { width: 24px; height: 24px; }
+  .lobby-left, .lobby-right { gap: 12px; }
+  /* compact cards: the name and the essentials */
+  .mode-cards { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-bottom: 0; }
+  .lobby-screen .mode-card, .lobby-screen .mode-card--match { min-height: 64px; padding: 8px 4px; flex-direction: column; gap: 6px; align-items: center; justify-content: center; grid-column: auto; }
+  .lobby-screen .mode-card__icon { width: 26px; height: 26px; }
   .lobby-screen .mode-card__icon .icon { width: 18px; height: 18px; }
   .lobby-screen .mode-card__name { font-size: 15px; letter-spacing: .02em; }
-  .lobby-screen .mode-card__text { align-items: center; }
-  .lobby-screen .mode-card__text > .micro, .lobby-screen .mode-card__desc, .lobby-screen .mode-card__points, .lobby-screen .mode-card__check, .lobby-screen .diff-card__effects, .tips, .create-box__hint { display: none; }
-  .lobby-screen .join-panel .panel__body { padding: 10px; gap: 6px; }
-  .lobby-screen .join-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; }
-  .lobby-screen .join-row .field { grid-column: 1 / -1; }
-  .lobby-screen .join-row .btn { height: 44px; min-height: 44px; font-size: 13px; padding-inline: 12px; }
-  .lobby-screen .join-foot { font-size: 11px; line-height: 1.5; }
+  .lobby-screen .mode-card__text { align-items: center; gap: 0; }
+  .lobby-screen .mode-card__text > .micro, .lobby-screen .mode-card__desc, .lobby-screen .mode-card__points, .lobby-screen .mode-card__check,
+  .lobby-screen .diff-card__effects, .lobby-screen .diff-card__desc, .lobby-screen .diff-card__code, .lobby-screen .diff-card__check { display: none; }
   .lobby-screen .diff-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
-  .lobby-screen .diff-card { min-height: 76px; padding: 10px; gap: 6px; }
+  .lobby-screen .diff-card { min-height: 60px; padding: 8px 8px 8px 14px; gap: 4px; }
   .lobby-screen .diff-card__head { flex-wrap: wrap; gap: 4px 6px; }
   .lobby-screen .diff-card__name { font-size: 15px; }
   .lobby-screen .diff-card__meta { width: 100%; margin: 0; font-size: 12px; }
-  .lobby-screen .diff-card__meta .num { font-size: 12px; }
-  .lobby-screen .diff-card__desc, .lobby-screen .diff-card__code, .lobby-screen .diff-card__check { display: none; }
-  .lobby-screen .create-box { margin-top: 12px; }
-  .lobby-screen .create-box .btn--xl { height: 48px; font-size: 17px; }
+  .lobby-screen .diff-card__meta .num { font-size: 13px; }
+  .lobby-screen .diff-card__hidden { font-size: 11px; }
+  .lobby-go { padding: 10px; gap: 8px; }
+  .lobby-go__summary { font-size: 13px; }
+  .lobby-screen .create-box .btn--xl { height: 48px; font-size: 17px; letter-spacing: .2em; }
+  .lobby-screen .create-box__hint { font-size: 12px; min-height: 0; }
+  .lobby-screen .join-panel .panel__body { padding: 10px; gap: 8px; }
+  .lobby-screen .join-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; }
+  .lobby-screen .join-row .field { grid-column: 1 / -1; }
+  .lobby-screen .join-row .btn { height: 44px; min-height: 44px; font-size: 14px; padding-inline: 12px; }
+  .lobby-screen .join-foot { font-size: 12px; line-height: 1.5; gap: 6px; min-height: 0; }
+  .lobby-screen .code-chip { font-size: 13px; padding: 6px 8px; letter-spacing: .08em; min-height: 32px; }
+  .lobby-screen .tips__head, .lobby-screen .tips__text { font-size: 13px; }
+  .lobby-screen .tips__nav { width: 32px; height: 32px; }
+  .lobby-screen .matchmaking h2 { font-size: 17px; margin: 0 0 4px; }
+  .lobby-screen .matchmaking p, .lobby-screen .matchmaking__help { font-size: 12px; line-height: 1.4; margin: 3px 0; }
+  .lobby-screen .matchmaking__status { font-size: 13px; line-height: 1.4; margin: 4px 0 6px; }
+  .lobby-screen .matchmaking__actions { gap: 6px; }
+  .lobby-screen .matchmaking__actions .btn { height: 44px; min-height: 44px; font-size: 13px; padding-inline: 6px; letter-spacing: 0; }
+  .lobby-screen .matchmaking__revival { font-size: 12px; padding: 5px 8px; margin: 6px 0; }
+  .lobby-screen .matchmaking__revival p { font-size: 12px; line-height: 1.4; margin: 0; }
+  .lobby-screen .matchmaking__count { font-size: 12px; }
+  .lobby-screen .mode-card--match .mode-card__name { font-size: 15px; }
+}
+
+/* ---- portrait phones / narrow tall windows: one column, 出发 kept on the bottom edge while the body scrolls ---------- */
+@media (max-width: 767px) and (min-height: 461px) {
+  .lobby-body { grid-template-columns: minmax(0, 1fr); padding-bottom: calc(16px + var(--sa-b, 0px)); }
+  /* the steps join the body's flow so the sticky 出发 is bounded by the whole body, not by its column */
+  .lobby-left, .lobby-right { display: contents; }
+  .lobby-step--go { position: sticky; bottom: calc(4px + var(--sa-b, 0px)); z-index: 3; }
+  .lobby-step--go .lobby-go { background: rgba(10, 16, 14, .97); box-shadow: 0 -8px 20px rgba(0, 0, 0, .55); }
+  .lobby-step--go .section-label { display: none; }
+}
+
+/* ---- landscape phones (≤ 460 px tall): two columns, nothing scrolls at 640 × 360; the tips give way ------------------- */
+@media (max-height: 460px) {
+  .lobby-screen { --lb-gap: 12px; }
+  .lobby-screen .topbar { padding-left: calc(var(--lb-pad) + var(--sa-l, 0px)); padding-right: calc(var(--lb-pad) + var(--sa-r, 0px)); }
+  .lobby-status, .lobby-body { padding-left: calc(var(--lb-pad) + var(--sa-l, 0px)); padding-right: calc(var(--lb-pad) + var(--sa-r, 0px)); }
+  .lobby-body { grid-template-columns: repeat(2, minmax(0, 1fr)); padding-top: 2px; padding-bottom: calc(4px + var(--sa-b, 0px)); }
+  .lobby-left, .lobby-right { gap: 8px; }
+  .lobby-screen .tips, .lobby-screen .create-box__hint, .join-foot__note, .lobby-screen .join-foot > .t-dim { display: none; }
+  .lobby-screen .mode-card, .lobby-screen .mode-card--match { min-height: 50px; padding: 4px; gap: 2px; }
+  .lobby-screen .mode-card__icon { width: 22px; height: 22px; }
+  .lobby-screen .diff-card { min-height: 48px; padding: 5px 8px 5px 12px; gap: 2px; }
+  .lobby-status { padding-top: 2px; }
+  .lobby-feedback { min-height: 32px; }
+  .lobby-status .online-players { min-height: 28px; }
+  .lobby-status .ping, .lobby-status .server-load-button, .lobby-status .latency-status > * { min-height: 28px; height: 28px; }
+  .lobby-screen .diff-card__meta { line-height: 1.3; }
+  .lobby-screen .diff-card__hidden { line-height: 1.3; padding: 0 4px; }
+  .lobby-screen .section-label { min-height: 20px; margin-bottom: 4px; }
+  .lobby-screen .create-box .btn--xl { height: 44px; font-size: 16px; }
+  .lobby-go { padding: 8px; gap: 6px; }
+  .lobby-screen .join-panel .panel__body { padding: 8px; gap: 6px; }
+  .lobby-screen .join-row .btn { height: 44px; }
+  .lobby-screen .join-foot { min-height: 0; flex-wrap: nowrap; }
+  .lobby-screen .matchmaking--compact > header, .lobby-screen .matchmaking--compact:not(.is-active) > h2,
+  .lobby-screen .matchmaking--compact:not(.is-active) > .matchmaking__status { display: none; }
+  .lobby-dialog .modal__head { padding: 12px 16px 4px; }
+  .lobby-dialog .modal__body { padding: 8px 16px 12px; }
+  .lobby-dialog .modal__actions { padding: 8px 16px; }
+  .lobby-dialog .modal__actions .btn { min-height: 44px; font-size: 14px; }
+  .lobby-dialog .micro { font-size: 10px; }
 }

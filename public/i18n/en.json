@@ -227,6 +227,8 @@
   "模拟已结束": "Simulation Over",
   "同盟已过期": "The Alliance has expired",
   "服务器维护中，同盟已关闭": "Server maintenance in progress. The Alliance has been closed.",
+  "对局服务器已重启，本局模拟已中断": "The match server restarted. This simulation was interrupted.",
+  "对局服务器连接中断，本局模拟已结束": "Lost contact with the match server. This simulation has ended.",
   "该身份已在其他页面登录，本页已断开": "This identity signed in on another page. This page has been disconnected.",
   "同盟已关闭：{reason}": "Alliance closed: {reason}",
   "同盟已关闭": "Alliance closed",
@@ -1864,5 +1866,13 @@
   "{names}只能部署在召唤者相邻四格，已退回整备区": "{names} can only be deployed on the four tiles adjacent to the summoner and returned to the Bench",
   "{names}只能部署在召唤者相邻四格，整备区已满，下回合返还": "{names} can only be deployed on the four tiles adjacent to the summoner; the Bench is full, so they come back next round",
   "装备库存不足，未获得该装备": "Equipment stock is insufficient; no equipment was received",
-  "库存不足": "Out of stock"
+  "库存不足": "Out of stock",
+  "其他": "Other",
+  "卡池 {n}": "Pool {n}",
+  "你的卡池": "Your pool",
+  "出发": "Deploy",
+  "有未读公告": "Unread announcement",
+  "反馈群": "Feedback group",
+  "服务器在线人数已满，稍后自动重试": "The server is full. Retrying automatically shortly.",
+  "服务器在线人数已满（{online}/{limit}），稍后自动重试": "The server is full ({online}/{limit}). Retrying automatically shortly."
 }

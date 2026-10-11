@@ -445,8 +445,9 @@ Writes (all validated, never throw on bad input, never make funds / pools negati
 | `addFunds(n, reason?)` / `addPendingFunds(n)` / `spendFunds(n)` | funds now / at the next round start / pay (false when short) |
 | `addLayers(bondId, n, { requireActive })` | layer gain (`requireActive` = "使已激活的…"); returns layers added — at most the room left under `BOND_LAYER_CAP` (999, shared/constants.js `layerGainRoom`; the battle gains merged at SETTLE too); fires onLayers unless it added 0 |
 | `grantChess(id, { toTemp, golden, requirePool=true, fromPool=true })` | acquire a chess (takes pool copies; with `requirePool` a pool chess with no copy left fails → `null`); merges; fires onGain. `toTemp` puts it into temp, but a free hand slot pulls it in at the next recompute (temp holds overflow only, `PlayerState._fillHandFromTemp`) |
-| `grantItem(id, { toTemp })` | acquire an item (merges with an identical normal item); `toTemp` as for grantChess |
+| `grantItem(id, { toTemp, requirePool=true })` | acquire an item (merges with an identical normal item); `toTemp` as for grantChess. With `requirePool` a capped shop item without shared stock fails → `null` (toast); `requirePool: false` (a named free grant, GitHub #488) succeeds beyond stock and its copies still occupy it |
 | `rollChess({ maxTier, tier, bond, filter })` / `rollItem({ pool, tier, maxTier })` | copy-weighted chess id from the shared pool / item id (choices.json pools) |
+| `itemInStock(id)` | whether the shared item stock has room for one more `id` (true for an uncapped item) — for a content-side weighted draw |
 | `grantFreeRefresh(n)` | free refreshes (stack) |
 | `modifyPrice(delta)` / `setPrice(v)` | onPrice only: edit `ev.price` |
 | `promote(uid)` / `transform(uid, chessId)` / `upgradeItem(uid)` | elite in place / 突变细胞's transformation: destroy the chess wherever it stands (a board tile is freed; its equipment returns to the hand first, overflow temp), then gain `chessId` like `grantChess` (hand, overflow temp, the no-room rule; a merge it completes as usual — the carrier's tile is no copy's) and return the gained piece (the elite after a merge) / item → golden |
@@ -960,7 +961,8 @@ round was over. The official 1 s `broadcastBeginDelay` is not modelled.
   owner's decision of 2026-10-06 — a newly merged elite counts as a new 拉普兰德; until 0.2.0 it kept the highest count of
   its copies). A 拉普兰德 bought after selling one in the same round is a new copy and fires on its own first refresh
   ("获得该干员后"; each such +4 costs 3 + 1 refresh − 1 refund and needs her in the shop).
-* Chess granted by effects need a free pool copy unless `requirePool: false` (then they hold 0 copies).
+* Chess granted by effects need a free pool copy unless `requirePool: false` (then they still take their copies,
+  overdrawing the pool). Items likewise: `requirePool: false` grants beyond the shared stock (GitHub #488).
 * Boss-round `local` pack spawns (boss parts) all spawn; content scripts (bosses.js) decide their behaviour.
 * The Final Assault ends as a defeat when every field finished with the boss pool above 0 (boss escaped).
 * The 999 layer cap holds for every prep-side gain too (the client only shows the in-battle clamp; the scene server's
@@ -1012,6 +1014,12 @@ Equips, merges and returns cannot lose reservations. Consumptions/destruction re
 interpretation]. Shop/reward displays reserve nothing; rejected exhausted purchases retain funds and offers.
 整备 upgrades the purchased item only when `left` still has the golden's second copy; otherwise the item stays
 normal and the charge remains.
+Named free grants — 「<获得时>获得N件X」 特质 (`SERVER_GAIN_EQUIP`), strategies' fixed-round items
+(`preparation_start_gain_chess_from_round`) and 画卷's copied equipment — pass `requirePool: false` (GitHub #488, as
+in 0.2.2): they are never refused by stock, their copies still occupy it, and a piece granted beyond it carries
+`overStock` so the invariant checks only stock-checked copies against the cap. Random effect-pool draws keep
+skipping exhausted items. Ownership is counted live, so selling or consuming such a copy never returns stock above
+the cap.
 `m.public.sp.cards[].soldOut` disables duplicates when a preceding choice used the final copy; timer/bot choices
 use the same availability. Non-shop effect-only equipment is unlimited.
 

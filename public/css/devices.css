@@ -135,92 +135,28 @@ html:not(.sp-in-match) .toast-host { margin-top: var(--sa-t); }
   .gm.is-collapsed .gm__corner { flex-wrap: nowrap; width: auto; }
 }
 
-/* Short landscape phones (≤ 460 CSS px tall, 1rem = 40 px): the lobby's two columns are compressed so the
-   创建同盟 button and the join panel stay on screen without scrolling. The detail card's header is shorter (no
+/* Short landscape phones (≤ 460 CSS px tall, 1rem = 40 px; the lobby's own layout: css/screens/lobby.css). The detail
+   card's header is shorter (no
    romanised name, a shorter portrait) so the operator's own effect (特质) under it stays in view even in the short card
    docked above the shop bar (user playtest #3 item 8). */
 @media (max-height: 460px) {
   .dhead__art { height: 1.66rem; }
   .dhead__en { display: none; }
-  .lobby-screen .topbar { height: 48px; }
-  .lobby-body { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 8px 16px; gap: 12px; }
-  .lobby-screen .section-label { font-size: 13px; margin-bottom: 8px; min-height: 20px; gap: 6px; }
-  .lobby-screen .section-label > .micro { display: none; }
-  .lobby-protocol-help { height: 28px; font-size: 12px; padding-inline: 8px; }
-  .mode-cards { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-bottom: 12px; }
-  .lobby-screen .mode-card { min-height: 64px; padding: 8px 4px; gap: 6px; align-items: center; justify-content: center; }
-  .lobby-screen .mode-card--match { grid-column: auto; flex-direction: column; }
-  .lobby-screen .mode-card__icon { width: 24px; height: 24px; }
-  .lobby-screen .mode-card__icon .icon { width: 18px; height: 18px; }
-  .lobby-screen .mode-card__name { font-size: 14px; letter-spacing: .02em; }
-  .lobby-screen .mode-card__text { align-items: center; gap: 0; }
-  .lobby-screen .mode-card__text > .micro, .lobby-screen .mode-card__desc, .lobby-screen .mode-card__points,
-  .lobby-screen .mode-card__check, .lobby-screen .diff-card__effects, .tips, .create-box__hint { display: none; }
-  .lobby-screen .join-panel .panel__body { padding: 10px; gap: 6px; }
-  .lobby-screen .join-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; }
-  .lobby-screen .join-row .field { grid-column: 1 / -1; }
-  .lobby-screen .join-row .btn { height: 40px; min-height: 40px; font-size: 13px; padding-inline: 12px; }
-  .lobby-screen .join-row .join-spectate { width: 100%; }
-  .lobby-screen .join-foot { min-height: 20px; flex-wrap: nowrap; gap: 6px; font-size: 11px; }
-  .lobby-screen .join-foot > .t-lo { display: none; }
-  .lobby-screen .code-chip { font-size: 12px; padding: 4px 6px; letter-spacing: .08em; }
-  .lobby-screen .diff-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
-  .lobby-screen .diff-card { min-height: 58px; padding: 8px 8px 8px 12px; gap: 4px; }
-  .lobby-screen .diff-card__head { flex-wrap: wrap; gap: 3px 5px; }
-  .lobby-screen .diff-card__name { font-size: 14px; }
-  .lobby-screen .diff-card__meta { width: 100%; font-size: 10px; margin: 0; }
-  .lobby-screen .diff-card__meta .num { font-size: 11px; }
-  .lobby-screen .diff-card__hidden { font-size: 10px; }
-  .lobby-screen .diff-card__desc, .lobby-screen .diff-card__code, .lobby-screen .diff-card__check { display: none; }
-  .lobby-screen .create-box { margin-top: 10px; }
-  .lobby-screen .create-box .btn--xl { height: 44px; font-size: 16px; }
-  .lobby-screen .matchmaking--compact { margin-top: 8px; padding: 8px 10px; }
-  .lobby-screen .matchmaking--compact > header, .lobby-screen .matchmaking--compact:not(.is-active) > h2 { display: none; }
-  .lobby-screen .matchmaking h2 { font-size: 17px; margin: 0 0 4px; }
-  .lobby-screen .matchmaking p { font-size: 12px; line-height: 1.35; margin: 3px 0; }
-  .lobby-screen .matchmaking__status { font-size: 12px; line-height: 1.4; margin: 4px 0 6px; }
-  .lobby-screen .matchmaking__actions { gap: 6px; }
-  .lobby-screen .matchmaking__actions .btn { height: 44px; min-height: 44px; font-size: 12px; padding-inline: 6px; letter-spacing: 0; }
-  .lobby-screen .matchmaking__revival { font-size: 12px; padding: 5px 8px; margin: 6px 0; }
-  .lobby-screen .matchmaking__revival p { font-size: 11px; line-height: 1.4; margin: 0; }
-  .lobby-screen .matchmaking__count { font-size: 11px; }
-  .lobby-dialog .modal__head { padding: 12px 16px 4px; }
-  .lobby-dialog .modal__body { padding: 8px 16px 12px; }
-  .lobby-dialog .modal__actions { padding: 8px 16px; }
-  .lobby-dialog .modal__actions .btn { min-height: 44px; font-size: 14px; }
-  .lobby-dialog .micro { font-size: 10px; }
-
 }
 
 .rotate-hint__pwa { pointer-events: auto; margin-top: 6px; }
 .rotate-hint__pwa[hidden] { display: none; }
 
-/* Keep lobby actions within their real rows; expanded touch rosters start folded. */
+/* Phones (short touch screens in landscape, narrow ones): the match HUD's readable floors. */
 @media (max-height: 600px) and (pointer: coarse), (max-width: 767px) {
-  .lobby-screen .topbar { height: auto; min-height: 48px; padding-block: 4px; }
-  .lobby-screen .topbar__left { flex-wrap: nowrap; }
-  .lobby-screen .topbar__right { min-width: 0; }
-  .lobby-screen .me-chip { display: none; }
-  .lobby-screen .online-players { display: inline-flex; position: absolute; top: 100%; left: 16px; min-height: 40px; font-size: 12px; gap: 4px; }
-  .lobby-screen .online-players .icon { width: 16px; height: 16px; }
-  .lobby-screen .topbar .btn, .lobby-tools > summary { min-height: 44px; }
-  .lobby-screen .lobby-fullscreen { width: 44px; height: 44px; }
-  .lobby-body { padding-block: 6px; }
-  .gm .team { top: max(2.6rem, 104px); bottom: 88px; width: min(340px, calc(100vw - 32px)); max-height: calc(100% - 192px); padding: 4px; gap: 4px; }
-  .gm .team.is-folded { bottom: auto; width: 164px; }
-  .team .team__players { min-height: 0; overflow-y: auto; overflow-x: hidden; pointer-events: auto; touch-action: pan-y; overscroll-behavior: contain; }
-  .gm .team:not(.team--expanded) .team__row { min-height: 56px; gap: 10px; padding: 4px; background: rgba(10, 18, 15, .9); }
-  /* the rows fill the clipping scroller here: a teammate's emote sits inside its row, not beside it */
-  .gm .team:not(.team--expanded) .team__bubble { left: auto; right: 4px; }
-  .gm .team .team__btn { min-width: 44px; min-height: 44px; }
-  .gm .team .team__name { font-size: max(calc(.16 * var(--t)), 14px); max-width: 100%; }
-  .gm .team .lp--sm { font-size: 14px; }
-  .gm .team .team__ob, .gm .team .team__back { min-height: 44px; position: static; font-size: 14px; }
   /* Keep phone cards readable at the 40 px root floor. Larger shops scroll their offers instead of shrinking;
      the level, item and funds stay reachable, and the left corner keeps its own touch area. */
   .gm:not(.is-collapsed) .gm__corner { flex-wrap: wrap-reverse; align-content: flex-start; width: 148px; }
   .gm .dpanel:not(.dpanel--right) { bottom: calc(.44rem + max(1.51rem, 96px) * 55 / 151 + max(.56rem, 34px)); }
   .gm .shopbar { max-width: calc(100% - 164px - .26rem); }
+  /* the kill/level ticker under the top bar: readable at the 40 px root floor (it was 6.4 px), still clear of the bond discs */
+  .gm .ticker { top: calc(1rem - 4px); height: 20px; }
+  .gm .ticker__line { font-size: 11px; padding: 0 12px; }
   .gm .shopbar__row { max-width: 100%; min-width: 0; gap: 4px; padding: 4px; align-items: flex-end; }
   .gm .shopbar__cards, .gm .shopbar__rwcards { min-width: 0; gap: 4px; overflow-x: auto; padding: 10px 4px 4px;
     touch-action: pan-x; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
@@ -253,19 +189,4 @@ html:not(.sp-in-match) .toast-host { margin-top: var(--sa-t); }
   .set-row .set-toggle, .set-row .set-seg button { min-height: 44px; font-size: 12px; }
   .set-row { gap: 10px; }
   .set-hint { font-size: max(calc(.14 * var(--t)), 12px); }
-}
-@media (max-width: 600px) and (min-height: 461px) {
-  .lobby-screen .topbar { min-height: 96px; }
-  .lobby-screen .topbar__right { justify-content: flex-start; grid-column: 1; grid-row: auto; }
-}
-@media (max-height: 460px) and (min-width: 601px) {
-  .lobby-screen .topbar { grid-template-columns: auto minmax(0, 1fr); }
-  .lobby-screen .topbar__right { flex-wrap: nowrap; justify-content: flex-end; }
-  .lobby-screen .latency-status { max-width: 224px; }
-  .lobby-screen .lobby-tools > summary { white-space: nowrap; }
-  .lobby-screen .mode-card { min-height: 56px; }
-  .lobby-screen .diff-card { min-height: 54px; }
-  .lobby-screen .join-panel .panel__body { padding: 6px; }
-  .lobby-screen .join-foot { min-height: 0; }
-  .lobby-screen .join-foot > .t-dim { display: none; }
 }

@@ -71,6 +71,9 @@ test('coordinator nodes are unique, use separate files and preserve unlimited ca
   assert.equal(value.nodes[0].key.length, 32);
   await assert.rejects(f.write({ ...cfg, nodes: [cfg.nodes[0], cfg.nodes[0]] }));
   await assert.rejects(f.write({ ...cfg, privateHost: '8.8.8.8' }));
+  assert.equal('receiptWorker' in value, false, 'the receipt Worker stays opt-in');
+  assert.equal((await f.write({ ...cfg, receiptWorker: true })).receiptWorker, true);
+  for (const receiptWorker of ['true', 1, null]) await assert.rejects(f.write({ ...cfg, receiptWorker }));
 });
 
 test('one ingress configuration can later be copied to many entries without introducing keys or shard selection', async t => {

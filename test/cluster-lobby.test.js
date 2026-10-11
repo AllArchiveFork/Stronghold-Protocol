@@ -599,3 +599,35 @@ test('solo public queue allocations do not create spectator aliases', async t =>
   const h = harness(t), players = h.group(), states = h.queue(players); h.accept(players, states); h.complete(); await flush();
   assert.ok(h.lobby.roomOf(players[0]).match); assert.equal(h.lobby.spectatorAliases.size, 0);
 });
+
+test('an encoded end receipt (the sink single parse) ends the match exactly like the object form', async t => {
+  const outcomes = [];
+  for (const form of ['objects', 'encoded']) {
+    const h = harness(t), player = h.player(), room = h.privateRoom([player], 'solo'), promise = h.lobby.start(player), done = h.complete();
+    assert.deepEqual(await promise, { ok: true });
+    const delivered = [];
+    h.platform.deliverEnd = (assignmentId, end, members) => { delivered.push({ assignmentId, end, members }); return true; };
+    const assignmentId = done.handle.assignmentId, base = { assignmentId, roomCode: room.code, generation: done.handle.generation };
+    const lastPublic = { t: 'm.public', phase: 'END', text: '结算 "⭐"' }, result = { t: 'm.result', won: true, rows: [1, 2.5] };
+    const summary = { synthetic: true, placements: [{ uid: player.playerId, rank: 1 }] };
+    const encoded = { ...base, summary: JSON.stringify(summary), lastPublic: JSON.stringify(lastPublic), results: [[player.playerId, JSON.stringify(result)]] };
+    if (form === 'encoded') {
+      for (const changed of [{ generation: 'stale' }, { roomCode: 'ZZZZ' }, { results: [['outsider', '{"t":"m.result"}']] },
+        { results: [[player.playerId, result]] }, { results: [[player.playerId, '{}'], [player.playerId, '{}']] }, { results: {} },
+        { lastPublic }, { summary }, { extra: true }, { summary: JSON.stringify({ big: 'x'.repeat(2 * 1024 * 1024) }) }]) {
+        assert.equal(h.lobby.receiveEncodedEnd(assignmentId, { ...encoded, ...changed }), false);
+        assert.ok(room.match, 'bad/missing end never terminates a live remote actor');
+      }
+      assert.equal(h.lobby.receiveEncodedEnd(assignmentId, encoded), true);
+      assert.equal(h.lobby.receiveEncodedEnd(assignmentId, encoded), false, 'exactly once');
+    } else assert.equal(h.lobby.receiveEnd(assignmentId, { ...base, summary, lastPublic, results: { [player.playerId]: result } }), true);
+    assert.equal(room.match, null);
+    await nextTurn();
+    // Session ids are random per harness; everything else must match byte for byte.
+    outcomes.push(JSON.parse(JSON.stringify({ summary: room.lastSummary, publicFrame: room.replay.publicFrame, frames: [...room.replay.frames],
+      delivered: delivered.map(({ end, members }) => ({ lastPublic: end.lastPublic, results: [...end.results], members })),
+      releases: h.releases.length }).replaceAll(player.playerId, 'PLAYER')));
+  }
+  assert.deepEqual(outcomes[1], outcomes[0]);
+  assert.equal(outcomes[0].releases, 1);
+});

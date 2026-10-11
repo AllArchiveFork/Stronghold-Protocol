@@ -165,16 +165,113 @@ test('publication acknowledgement failure is explicit and compensates without in
   assert.equal(f.peers.reduce((n, p) => n + p.actors.size, 0), 0);
 });
 
-test('node recreation leaves an existing match marked lost, never relocates its room or identity', async t => {
+const settle = async (check, label) => {
+  for (let i = 0; i < 200 && !check(); i++) await new Promise(resolve => setTimeout(resolve, 5));
+  assert.ok(check(), label);
+};
+const transport = () => Object.assign(new Error('synthetic transport loss'), { code: 'TRANSPORT' });
+
+test('node recreation retires its old-generation match at once, never relocates its room or identity', async t => {
   const f = await fixture(t);
+  const staged = await f.platform.prepare(spec()), other = await f.platform.prepare(spec('EFGH'));
+  for (const handle of [staged, other]) { handle.commit(); handle.publish(); await f.platform.contexts.get(handle.assignmentId).publication; }
+  const selected = f.peers.find(p => p.nodeId === staged.nodeId), oldGeneration = selected.generation;
+  const actorGeneration = f.platform.contexts.get(staged.assignmentId).actorGeneration;
+  selected.generation = `${selected.nodeId}-replacement`;
+  selected.actors.clear(); // a new process has none of the old actors
+  const releases = [], invoke = selected.client.call;
+  selected.client.call = async (op, payload) => { if (op === 'release') releases.push(payload); return invoke(op, payload); };
+  f.frames.length = 0;
+  await f.platform.refresh();
+  await settle(() => !f.platform.contexts.has(staged.assignmentId), 'the lost match is released');
+  assert.deepEqual(f.failures, [{ assignmentId: staged.assignmentId, roomCode: 'ABCD', nodeId: staged.nodeId, reason: 'NODE_RESTARTED' }]);
+  assert.equal(f.platform.directory.byRoom('ABCD'), null, 'never relocated to another node or generation');
+  for (const id of spec().seats.map(s => s.playerId)) assert.equal(f.platform.directory.bySession(id), null);
+  assert.equal(f.platform.resume(staged.assignmentId, 'ABCD-p0'), false);
+  assert.ok(f.frames.filter(({ frame }) => frame.assignmentId === staged.assignmentId).every(({ frame }) => frame.t === 'cluster.abort'));
+  assert.equal(f.frames.filter(({ frame }) => frame.t === 'cluster.abort').length, 4);
+  // The compensation keeps the old epochs, so it can never touch an actor of the new generation.
+  assert.deepEqual(releases, [{ assignmentId: staged.assignmentId, nodeGeneration: oldGeneration, actorGeneration }]);
+  assert.equal(f.peers.reduce((n, p) => n + p.calls.filter(op => op === 'prepare').length, 0), 2);
+  // The other node's match is untouched; repeated refreshes do not retire anything twice.
+  await f.platform.refresh();
+  assert.equal(f.failures.length, 1);
+  if (other.nodeId !== staged.nodeId) assert.equal(f.platform.directory.byRoom('EFGH').ownerAvailable, true);
+});
+
+test('a node silent for nodeLostMs retires its matches; a missed release is re-sent when the same generation answers', async t => {
+  let time = 1_000_000;
+  const f = await fixture(t, { now: () => time, nodeLostMs: 15_000 });
   const staged = await f.platform.prepare(spec());
   staged.commit(); staged.publish();
   await f.platform.contexts.get(staged.assignmentId).publication;
   const selected = f.peers.find(p => p.nodeId === staged.nodeId);
-  selected.generation = `${selected.nodeId}-replacement`;
+  selected.failures.set('status', transport());
+  selected.failures.set('release', transport());
+  time += 14_999;
   await f.platform.refresh();
-  const old = f.platform.directory.byRoom('ABCD');
-  assert.equal(old.nodeId, staged.nodeId);
-  assert.equal(old.ownerAvailable, false);
-  assert.equal(f.platform.resume(staged.assignmentId, 'ABCD-p0'), false);
+  assert.equal(f.failures.length, 0, 'a shorter outage keeps the match');
+  assert.ok(f.platform.contexts.has(staged.assignmentId));
+  time += 1;
+  await f.platform.refresh();
+  await settle(() => !f.platform.contexts.has(staged.assignmentId), 'the lost match is released');
+  assert.deepEqual(f.failures, [{ assignmentId: staged.assignmentId, roomCode: 'ABCD', nodeId: staged.nodeId, reason: 'NODE_LOST' }]);
+  assert.equal(f.platform.directory.byRoom('ABCD'), null);
+  assert.equal(selected.actors.size, 1, 'the unreachable node still holds the actor');
+  await f.platform.refresh();
+  assert.equal(f.failures.length, 1, 'retired once');
+  selected.failures.clear();
+  await f.platform.refresh();
+  await settle(() => selected.actors.size === 0, 'the orphaned actor is released once the node answers');
+  const before = selected.calls.filter(op => op === 'release').length;
+  await f.platform.refresh();
+  assert.equal(selected.calls.filter(op => op === 'release').length, before, 'an acknowledged release is not repeated');
+});
+
+test('a node that comes back with a new generation drops its missed releases instead of replaying them', async t => {
+  let time = 1_000_000;
+  const f = await fixture(t, { now: () => time, nodeLostMs: 1000 });
+  const staged = await f.platform.prepare(spec());
+  staged.commit(); staged.publish();
+  await f.platform.contexts.get(staged.assignmentId).publication;
+  const selected = f.peers.find(p => p.nodeId === staged.nodeId);
+  selected.failures.set('status', transport()); selected.failures.set('release', transport());
+  time += 1000;
+  await f.platform.refresh();
+  await settle(() => !f.platform.contexts.has(staged.assignmentId), 'the lost match is released');
+  selected.failures.clear(); selected.generation = `${selected.nodeId}-next`; selected.actors.clear();
+  const releases = selected.calls.filter(op => op === 'release').length;
+  await f.platform.refresh();
+  await f.platform.refresh();
+  assert.equal(selected.calls.filter(op => op === 'release').length, releases);
+  assert.deepEqual(f.failures.map(value => value.reason), ['NODE_LOST']);
+});
+
+test('terminal frames are spliced from the validated JSON texts, byte-identical to encoding each member message', async t => {
+  const sent = [];
+  const f = await fixture(t, { sendControlEncoded: (sessionId, type, frame) => { sent.push({ sessionId, type, frame }); return true; } });
+  const staged = await f.platform.prepare(spec('ABCD', { spectators: ['watcher'] }));
+  staged.commit(); staged.publish();
+  await f.platform.contexts.get(staged.assignmentId).publication;
+  const lastPublic = { t: 'm.public', phase: 'RESULT', text: '回放⭐ "quoted" \\ \u2028', n: 1.5 };
+  const results = new Map(['ABCD-p0', 'ABCD-p2', 'watcher'].map(id => [id, JSON.stringify({ t: 'm.result', playerId: id, rank: 2, note: '结算' })]));
+  assert.equal(f.platform.deliverEnd(staged.assignmentId, { lastPublic: JSON.stringify(lastPublic), results }, ['ABCD-p0', 'ABCD-p1', 'watcher']), true);
+  assert.deepEqual(sent.map(({ sessionId, type }) => [sessionId, type]), [['ABCD-p0', 'cluster.terminal'], ['watcher', 'cluster.terminal']]);
+  for (const { sessionId, frame } of sent) {
+    assert.ok(Buffer.isBuffer(frame), 'the shared public frame is UTF-8 encoded once, not per member');
+    assert.equal(frame.toString('utf8'), JSON.stringify({ t: 'cluster.terminal', assignmentId: staged.assignmentId, sessionId,
+      lastPublic, result: JSON.parse(results.get(sessionId)) }));
+  }
+  assert.equal(f.platform.deliverEnd(staged.assignmentId, { lastPublic: null, results }, ['ABCD-p0']), false, 'exactly once');
+});
+
+test('without an encoded sender the terminal frame is the same message object, and a null public frame stays null', async t => {
+  const f = await fixture(t);
+  const staged = await f.platform.prepare(spec());
+  staged.commit(); staged.publish();
+  await f.platform.contexts.get(staged.assignmentId).publication;
+  f.frames.length = 0;
+  const result = { t: 'm.result', playerId: 'ABCD-p1', rank: 1 };
+  assert.equal(f.platform.deliverEnd(staged.assignmentId, { lastPublic: null, results: new Map([['ABCD-p1', JSON.stringify(result)]]) }, ['ABCD-p1']), true);
+  assert.deepEqual(f.frames, [{ sessionId: 'ABCD-p1', frame: { t: 'cluster.terminal', assignmentId: staged.assignmentId, sessionId: 'ABCD-p1', lastPublic: null, result } }]);
 });

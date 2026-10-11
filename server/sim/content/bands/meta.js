@@ -50,7 +50,7 @@ function roundCounter(ctx, key) {
 }
 const bumpRound = (ctx, key, n = 1) => { roundCounter(ctx, key); return ctx.incCounter(key, n); };
 
-/** Grant a chess or an item by id. */
+/** Grant a chess or an item by id; `requirePool: false` reaches both the chess pool and the item stock (GitHub #488). */
 function grant(ctx, id, opts = {}) {
   if (ctx.gd.item(id)) return ctx.grantItem(id, opts);
   if (ctx.gd.chess(id)) return ctx.grantChess(id, opts);

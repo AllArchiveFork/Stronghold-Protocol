@@ -100,6 +100,44 @@ function computeBonds(priv) {
   return out.sort((a, b) => (b.active - a.active) || (b.layers - a.layers));
 }
 
+const EXTRA_NAMES = ['能天使', '德克萨斯', '拉普兰德', '陈', '星熊', '银灰', '史尔特尔', '塞雷娅', '一位名字特别特别长的博士·Rhodes Island',
+  '艾雅法拉', '推进之王', '斯卡蒂', '赫拉格', '麦哲伦', '莫斯提马', '煌'];
+const EXTRA_BANDS = ['band_bldsk', 'band_sarkazb', 'band_amiya', 'band_amedic', null];
+/** Seats `from`..`to - 1` of a big room (players20). */
+function extraPlayers(from, to) {
+  const out = [];
+  for (let i = from; i < to; i++) {
+    const k = i - from;
+    const bot = k % 5 === 1;
+    const p = {
+      playerId: `p${i + 1}`, seat: i, name: bot ? `AI·${EXTRA_NAMES[k % EXTRA_NAMES.length]}` : EXTRA_NAMES[k % EXTRA_NAMES.length], isBot: bot,
+      bandId: EXTRA_BANDS[k % EXTRA_BANDS.length], connected: k !== 6, alive: k !== 9, lp: k === 9 ? 0 : 6 + ((k * 7) % 30), shopLevel: 1 + (k % 6),
+      boardCount: 3 + (k % 6), ready: k % 3 === 0, bonds: [], fieldId: `n:p${i + 1}`, status: k === 9 ? 'dead' : k % 3 === 0 ? 'ready' : 'acting',
+    };
+    if (k === 12) p.pendingDeath = true;
+    out.push(p);
+  }
+  return out;
+}
+
+// ?variant=emotestorm — every seat keeps sending (a burst of the same emote from several seats, then a steady stream), like a
+// 20-player room in the last seconds of a prep
+let stormTimer = 0;
+function startEmoteStorm() {
+  clearInterval(stormTimer);
+  const ids = ['autochess_battle_happy', 'slug_autochess_battle_thanks', 'autochess_battle_call', 'autochess_battle_nice_cooperate',
+    'autochess_battle_fooldoctor_05', 'autochess_battle_foolamiya_03', 'autochess_battle_foolwisdel_01'];
+  const send = (playerId, id) => { const now = Date.now(); store.set((s) => ({ emotes: [...s.emotes.slice(-39), { seq: now + Math.random(), playerId, id, at: now }] })); };
+  const seats = () => (S?.pub?.players || []).filter((p) => p.playerId !== ME && p.alive !== false).map((p) => p.playerId);
+  seats().slice(0, 5).forEach((pid) => send(pid, ids[0]));
+  let n = 0;
+  stormTimer = setInterval(() => {
+    const all = seats();
+    if (!all.length || ++n > 80) { clearInterval(stormTimer); return; }
+    send(all[Math.floor(rnd() * all.length)], ids[Math.floor(rnd() * ids.length)]);
+  }, 220);
+}
+
 function refreshPrivate() {
   const p = S.priv;
   p.deployCount = p.board.filter((x) => x.kind === 'chess').length;
@@ -202,6 +240,9 @@ function buildState() {
     ready: [false, true, false, false][i], bonds: [], fieldId: `n:${p.playerId}`, status: ['acting', 'ready', 'acting', 'acting'][i],
   }));
   players[3].connected = false;
+  // ?variant=players20 — an experimental 20-seat room (pub.playerCapacity 20): AI seats, a long name, an offline, a dead and
+  // a rescue-pending teammate, a few without a band yet
+  if (VARIANTS.has('players20')) players.push(...extraPlayers(players.length, 20));
   // boss-round prep (最终攻势 prep on the own half of the boss field): `boss` = the left half; `bossR` = seats swapped so
   // I am the second of the first pair → the mirrored right half (server pairPlayers: alive players by seat, in pairs)
   if (VARIANTS.has('bossR')) { players[0].seat = 1; players[1].seat = 0; }
@@ -211,6 +252,9 @@ function buildState() {
     phase: PHASE.PREP, round: 6, lastRound: 14, bossRound: 14, hiddenRound: 15, deadline: Date.now() + 74000, serverNow: Date.now(), modeId: 'mode_multi_hard', difficulty: 'HARD',
     stageId: STAGE_ID, factions: ['FLY', 'TIMES', 'SPECIAL'], disabledBonds: [...disabled], bannedChess: banned, bossId: 'boss_5',
     hiddenBossId: 'boss_8', teamLp: null, bossHp: null, draft: null, sp: null, players, fields: [],
+    // the twenty-seat rule's fixed pools of four by seat (server/match/pool.js createPoolGroups fixedChunks)
+    ...(VARIANTS.has('players20') ? { playerCapacity: 20, poolGroups: [0, 1, 2, 3, 4].map((g) => ({ id: g + 1, scale: 1,
+      playerIds: players.filter((p) => Math.floor(p.seat / 4) === g).map((p) => p.playerId) })) } : null),
   };
   if (VARIANTS.has('boss') || VARIANTS.has('bossR')) pub.round = pub.bossRound;
   S = { stage, pub, priv, layers: {}, battle: null, pool, requests: [] };
@@ -281,6 +325,7 @@ function mockLoadout(board, slots) {
 // ---- phases ---------------------------------------------------------------------------------------------------------
 function setPhase(phase, variant) {
   stopBattle();
+  clearInterval(stormTimer);
   buildState();
   for (const v of (variant || '').split(',').filter(Boolean)) VARIANTS.add(v);
   if (VARIANTS.has('reward') && !S.priv.shop.rewardOffer) S.priv.shop.rewardOffer = { tier: 5, slots: shuffle(visibleChess(5)).slice(0, 3).map((c) => ({ kind: 'chess', id: c.chessId, price: 0, sold: false })) };
@@ -780,6 +825,9 @@ function applyUiVariants() {
       store.set({ emotes: [{ seq: now, playerId: 'p3', id: 'autochess_battle_nice_cooperate', at: now }, { seq: now + 1, playerId: 'ai_2', id: 'slug_autochess_battle_thanks', at: now }] });
     }, 300);
   }
+  if (VARIANTS.has('emotestorm')) setTimeout(startEmoteStorm, 600);
+  // ?variant=roster — open a roster that starts folded (phones, rosters of more than four)
+  if (VARIANTS.has('roster')) clickSel('.team.is-folded .team__toggle', 400);
   if (VARIANTS.has('settings')) clickSel('.gm__gear', 400);
   if (VARIANTS.has('collapsed')) clickSel('.funds__collapse', 400);
   // the first tap on a shop card selects it and opens its detail (there is no ⓘ corner)
@@ -803,6 +851,8 @@ const SWITCH = [
   ['FINAL_ASSAULT', PHASE.FINAL_ASSAULT, ''], ['FA overtime soon', PHASE.FINAL_ASSAULT, 'overtime'], ['FA draining', PHASE.FINAL_ASSAULT, 'drain'],
   ['HIDDEN_CORE', PHASE.HIDDEN_CORE, ''], ['COMBAT solo (pause)', PHASE.COMBAT, 'solo'], ['FA solo paused', PHASE.FINAL_ASSAULT, 'solo,paused'],
   ['RESULT win', PHASE.RESULT, ''], ['RESULT lose', PHASE.RESULT, 'defeat'],
+  ['PREP 20 players', PHASE.PREP, 'players20'], ['PREP 20 + roster + emote storm', PHASE.PREP, 'players20,roster,emotestorm'],
+  ['COMBAT 20 players', PHASE.COMBAT, 'players20'],
 ];
 function Switcher() {
   const cur = store.get().match.public?.phase;

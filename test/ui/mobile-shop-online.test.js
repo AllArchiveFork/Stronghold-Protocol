@@ -45,5 +45,7 @@ test('mobile offers have their own size floor and scrolling, without changing th
 test('phone lobby never hides the existing online-session count', () => {
   const css = read('public/css/devices.css') + read('public/css/screens/lobby.css');
   assert.doesNotMatch(css, /[^{}]*\.online-players[^{}]*\{[^}]*display:\s*none/);
-  assert.match(css, /\.lobby-screen \.online-players \{ display: inline-flex; position: absolute; top: 100%; left: 16px;/);
+  // the count sits in the status strip under the top bar on every screen (screens/lobby.js .lobby-status)
+  assert.match(read('public/js/screens/lobby.js'), /<div class="lobby-status">[\s\S]*?<\$\{OnlinePlayers\} \/>/);
+  assert.match(css, /\.lobby-status \.online-players \{ font-size: var\(--lb-fs-sm\); min-height: 32px; \}/);
 });
