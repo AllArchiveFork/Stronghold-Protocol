@@ -138,8 +138,13 @@ test('lost validation after remote preparation cannot commit or leak a published
 
 test('prebinding has a bounded allocation deadline and no visible partial game', async t => {
   const f = await fixture(t, { allocationMs: 25 });
-  for (const p of f.peers) p.playersReady = false;
-  await assert.rejects(f.platform.prepare(spec()), code('CANCELLED'));
+  for (const p of f.peers) {
+    p.playersReady = false;
+    const call = p.client.call;
+    p.client.call = async (op, payload) => { const out = await call(op, payload); return op === 'status' && payload.assignmentId ? { ...out, playersConnected: 2 } : out; };
+  }
+  // the deadline names itself (not a generic cancellation), with the step it stopped at and the last bound count
+  await assert.rejects(f.platform.prepare(spec()), e => code('TIMEOUT')(e) && e.step === 'bind' && e.playersConnected === 2);
   assert.equal(f.platform.contexts.size, 0);
   assert.equal(f.platform.directory.rooms.size, 0);
   assert.ok(f.frames.every(({ frame }) => frame.t !== 'cluster.commit'));

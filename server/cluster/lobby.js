@@ -20,6 +20,11 @@ const synchronous = value => {
   return value;
 };
 const sameSet = (a, b) => a.size === b.size && [...a].every(value => b.has(value));
+// Allocation failures a player can simply retry — a member's game channel did not bind within the allocation window, or a
+// member was momentarily unreachable when routed — say so; any other non-protocol failure stays INTERNAL. Every failed
+// start is logged with its step (logStartFailure).
+const RETRYABLE_START = new Set(['TIMEOUT', 'PLAYER_OFFLINE']);
+const startError = error => isErrCode(error?.code) ? error.code : RETRYABLE_START.has(error?.code) ? ERR.START_RETRY : ERR.INTERNAL;
 
 function matchDTO(room, seed, snapshotHz) {
   return {
@@ -189,7 +194,7 @@ export class ClusterLobby extends Lobby {
     const dto = matchDTO(room, seed, this.opts.snapshotHz);
     // Diagnostics only: each admission re-check is one timed synchronous phase.
     const valid = () => { const at = this.metrics.start(); try { return check(); } finally { this.metrics.end('match.valid', at); } };
-    const plan = { room, oldRooms, sessions, key, keys, dto, controller: new AbortController(), valid,
+    const plan = { room, oldRooms, sessions, key, keys, dto, controller: new AbortController(), valid, startedAt: this.now(),
       aborted: false, published: false, remoteCommitted: false, transferred: false, rollbackDone: false,
       handle: null, remoteCleanup: null, proxy: null, ctx: null, basePublish: null, release: null,
       spec: structuredClone({ assignmentId: randomBytes(16).toString('hex'), build: this.platform.build, protocol: this.platform.protocol, ...dto }),
@@ -296,8 +301,24 @@ export class ClusterLobby extends Lobby {
       } catch { return false; }
     };
     plan = this.newPlan(room, initial.oldRooms, sessions, room.ownerKey, initial.keys, valid, context.signal);
-    await this.preparePlan(plan);
+    try { await this.preparePlan(plan); }
+    catch (error) { this.logStartFailure('matchmaking', room, plan, error); throw error; }
     return { code, commit: () => this.commitPlan(plan), publish: () => this.publishPlan(plan), abort: () => plan.abort() };
+  }
+
+  /**
+   * One line per failed start (no names): the reason code, the remote step it stopped at and how many players had bound
+   * (RemoteGamePlatform.prepare), the plan's age and what the player was told. Never changes the reply.
+   */
+  logStartFailure(kind, room, plan, error) {
+    try {
+      const seats = plan?.dto?.seats || [], players = seats.filter(s => !s.isBot).length;
+      const reason = typeof error?.code === 'string' ? error.code : error?.name || 'Error';
+      const step = typeof error?.step === 'string' ? ` at ${error.step}` : '';
+      const bound = Number.isSafeInteger(error?.playersConnected) ? `, ${error.playersConnected}/${players} bound` : '';
+      const age = Number.isFinite(plan?.startedAt) ? `, ${Math.round(this.now() - plan.startedAt)}ms` : '';
+      this.log.warn(`[lobby] ${room.code} match start failed (${kind}, ${seats.length} seats, ${players} players): ${reason}${step}${bound}${age} -> ${startError(error)}`);
+    } catch { /* diagnostics only */ }
   }
 
   setExperimental(session, msg) {
@@ -340,7 +361,7 @@ export class ClusterLobby extends Lobby {
     plan.timer = setTimeout(() => plan.abort(), this.queue.allocationMs); plan.timer.unref?.();
     plan.promise = (async () => {
       try { await this.preparePlan(plan); this.commitPlan(plan); this.publishPlan(plan); return OK; }
-      catch (error) { plan.abort(); return fail(isErrCode(error?.code) ? error.code : ERR.INTERNAL); }
+      catch (error) { plan.abort(); this.logStartFailure('manual', room, plan, error); return fail(startError(error)); }
       finally {
         clearTimeout(plan.timer); plan.detach();
         if (this.manualPending.get(room.code) === plan) this.manualPending.delete(room.code);

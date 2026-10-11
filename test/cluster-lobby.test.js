@@ -6,6 +6,7 @@ import { ClusterLobby } from '../server/cluster/lobby.js';
 import { Lobby } from '../server/lobby.js';
 import { SessionRegistry } from '../server/net.js';
 import { ERR, MATCHMAKING_VERSION } from '../shared/constants.js';
+import { AllocationError } from '../server/cluster/directory.js';
 
 function deferred() {
   let resolve, reject;
@@ -630,4 +631,23 @@ test('an encoded end receipt (the sink single parse) ends the match exactly like
   }
   assert.deepEqual(outcomes[1], outcomes[0]);
   assert.equal(outcomes[0].releases, 1);
+});
+
+test('a start whose players did not bind in time says so and is logged with its step; other faults stay INTERNAL', async t => {
+  const h = harness(t), players = h.group(), room = h.privateRoom(players), warnings = [];
+  h.lobby.log.warn = message => warnings.push(message);
+  const attempt = async (error) => {
+    const reply = h.lobby.start(players[0]);
+    h.calls.at(-1).work.reject(error);
+    return reply;
+  };
+  assert.deepEqual(await attempt(Object.assign(new AllocationError('TIMEOUT'), { step: 'bind', playersConnected: 3 })), { error: ERR.START_RETRY });
+  assert.match(warnings[0], new RegExp(`^\\[lobby\\] ${room.code} match start failed \\(manual, 4 seats, 4 players\\): TIMEOUT at bind, 3/4 bound, \\d+ms -> START_RETRY$`));
+  assert.deepEqual(await attempt(new AllocationError('PLAYER_OFFLINE')), { error: ERR.START_RETRY });
+  assert.deepEqual(await attempt(new AllocationError('NO_NODE')), { error: ERR.INTERNAL });
+  assert.match(warnings[2], /: NO_NODE, \d+ms -> INTERNAL$/);
+  assert.equal(warnings.length, 3);
+  assert.ok(warnings.every(line => players.every(p => !line.includes(p.name))), 'no player names in the log');
+  assert.equal(h.lobby.roomOf(players[0]), room, 'the room stays open for the retry');
+  assert.equal(room.match, null);
 });

@@ -112,12 +112,16 @@ export async function startGameNode({ host = '127.0.0.1', port = 0, nodeId, gene
     const value = normalizeGameLoad({ label: publicGameLabel(publicSlot), status: nodeReady() ? 'ready' : 'unavailable', ...load });
     return normalizeClusterLoad({ scope: 'game', nodes: [value] });
   };
+  const playersOf = handle => handle.seats.filter(s => !s.isBot).map(s => gameHost.member(handle.assignmentId, s.playerId)).filter(Boolean);
   const playersReady = handle => {
-    const players = handle.seats.filter(s => !s.isBot).map(s => gameHost.member(handle.assignmentId, s.playerId)).filter(Boolean);
+    const players = playersOf(handle);
     return players.length > 0 && players.every(member => member.role === 'player' && member.connected);
   };
+  // Diagnostics for the coordinator's allocation log: how many of the players have bound so far.
+  const playersConnected = handle => playersOf(handle).filter(member => member.role === 'player' && member.connected).length;
   const smallHandle = handle => handle && ({ assignmentId: handle.assignmentId, roomCode: handle.roomCode, nodeId, generation,
     actorGeneration: handle.generation, build: handle.build, protocol: handle.protocol, state: handle.state, playersReady: playersReady(handle),
+    playersConnected: playersConnected(handle),
     published: publications.get(handle.assignmentId)?.published === true,
     preparedAt: handle.preparedAt, expiresAt: handle.expiresAt, committedAt: handle.committedAt, endedAt: handle.endedAt });
   const memberView = (assignmentId, sessionId) => {

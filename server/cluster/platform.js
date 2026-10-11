@@ -257,7 +257,9 @@ export class RemoteGamePlatform {
     const onAbort = () => { controller.abort(); this.abortContext(ctx); };
     signal?.addEventListener('abort', onAbort, { once: true });
     ctx.detachSignal = () => signal?.removeEventListener('abort', onAbort);
-    const timer = setTimeout(onAbort, this.allocationMs);
+    // Diagnostics only: the step a failure stopped at, and how many players had bound when the node last answered.
+    ctx.step = 'node-prepare'; ctx.playersConnected = null; ctx.timedOut = false;
+    const timer = setTimeout(() => { ctx.timedOut = true; onAbort(); }, this.allocationMs);
     timer.unref?.();
     try {
       ctx.remoteCreated = true; // A timed-out reply may still have created the actor.
@@ -265,15 +267,19 @@ export class RemoteGamePlatform {
       if (!this.valid(ctx) || !this.peerIdentity(ctx, prepared) || prepared.state !== 'prepared'
         || !Number.isSafeInteger(prepared.actorGeneration) || prepared.actorGeneration < 1) throw cancelled();
       ctx.actorGeneration = prepared.actorGeneration;
+      ctx.step = 'route';
       for (const id of ctx.members.keys()) if (!this.control(ctx, 'cluster.prepare', id) && ctx.members.get(id) === 'player') throw new AllocationError('PLAYER_OFFLINE');
+      ctx.step = 'bind';
       while (true) {
         if (!this.valid(ctx)) throw cancelled();
         const status = await node.client.call('status', { assignmentId: spec.assignmentId }, { signal: controller.signal });
         if (!this.peerIdentity(ctx, status) || status.state !== 'prepared') throw new AllocationError('NODE_IDENTITY');
+        if (Number.isSafeInteger(status.playersConnected)) ctx.playersConnected = status.playersConnected;
         if (status.playersReady === true) break;
         await pause(this.pollMs, controller.signal);
       }
       if (!this.valid(ctx)) throw cancelled();
+      ctx.step = 'node-commit';
       const started = await node.client.call('commit', { assignmentId: spec.assignmentId }, { signal: controller.signal });
       if (!this.valid(ctx) || !this.peerIdentity(ctx, started) || started.state !== 'committed') throw new AllocationError('START_FAILED');
       ctx.state = 'prepared';
@@ -301,7 +307,13 @@ export class RemoteGamePlatform {
         abort: () => this.abortContext(ctx) });
     } catch (e) {
       await this.abortContext(ctx);
-      throw e;
+      // This allocation's own deadline aborted whichever step was waiting (an RPC, the poll pause, the validity check):
+      // name it, so the lobby can tell an unbound player from an internal fault. A specific allocation error stays.
+      const error = ctx.timedOut && !(e instanceof AllocationError && e.code !== 'CANCELLED') ? new AllocationError('TIMEOUT') : e;
+      if (error && typeof error === 'object') {
+        try { Object.assign(error, { step: ctx.step, playersConnected: ctx.playersConnected }); } catch { /* frozen: no diagnostics */ }
+      }
+      throw error;
     } finally { clearTimeout(timer); }
   }
 

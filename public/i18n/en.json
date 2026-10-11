@@ -386,6 +386,7 @@
   "临时整备区不为空": "Temporary Bench is not empty",
   "你已被淘汰": "You have been eliminated",
   "服务器内部错误": "Internal server error",
+  "有玩家连接未就绪，请重试": "A player's connection is not ready yet. Please try again.",
   "请求超时，请重试": "Request timed out. Please try again.",
   "未连接到服务器": "Not connected to the server",
   "连接已断开，请重试": "Connection lost. Please try again.",
