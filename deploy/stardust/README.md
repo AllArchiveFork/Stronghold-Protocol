@@ -63,7 +63,7 @@ docker build --network=none --pull=false \
 
 ## 不可降低的安全合同
 
-1. 保持共享口令、昵称校验、CSRF、可信 Host/Origin、登录限速、private/no-store 与 TLS 安全头。只为精确根路径 `/healthz` 的 GET/HEAD 关闭请求门禁；内部 status/RPC、health 别名及 game/coordinator/ingress/resolver 监听仍不公开。
+1. 保持共享口令、昵称校验、CSRF、可信 Host/Origin、登录限速、private/no-store（私有代码为 private/no-cache 重新验证）与 TLS 安全头。只为精确根路径 `/healthz` 的 GET/HEAD 关闭请求门禁；内部 status/RPC、health 别名及 game/coordinator/ingress/resolver 监听仍不公开。
 2. 允许匿名 CORS `*` 的公开资源仅为审核过的 assets/fonts/vendor 与 PRTS 稳定库/字体，不启用 credentials；精确 `/healthz` 是无 CORS 的诊断例外。业务 JS/CSS、data、认证/API/WS 不能因静态分流变为公开资源。
 3. game 镜像、私有码、generated renderer index、依赖、公开素材、音频 alias、所有活动 provider pin 和同版本 fallback 必须配套。immutable 目录不覆写；回滚成对恢复。
 4. 主机策略默认仅真实 Node MainThread `nice=-20`、普通 `SCHED_OTHER` + reset-on-fork，其他 Worker/V8/libuv/辅助线程均为 0。不 nice 整个进程，不授容器 `CAP_SYS_NICE`，不加 CPU/内存 hard cap；保留 PIDs、read-only、cap-drop、no-new-privileges 等保护。

@@ -262,12 +262,14 @@ def security_headers(marker, *, profile='beta'):
     maps = profiles.get_profile(profile).security_map
     # Exact stock Beta security expressions. Defining location add_header suppresses
     # inheritance, so repeat ALL stock security headers but NEVER business ACAO.
+    # Private code revalidates (ETag/304, gated on every request): no-store made every
+    # page load download all code again.
     return [
         '    add_header Strict-Transport-Security "max-age=31536000" always;',
         '    add_header X-Content-Type-Options nosniff always;',
         '    add_header X-Frame-Options $' + maps + '_frame always;',
         '    add_header Referrer-Policy same-origin always;',
-        '    add_header Cache-Control "private, no-store" always;',
+        '    add_header Cache-Control "private, no-cache" always;',
         '    add_header Content-Security-Policy $' + maps + '_csp always;',
         '    add_header X-Robots-Tag "noindex, nofollow" always;',
         '    add_header X-Ark-Code-Source "' + marker + '" always;',

@@ -74,6 +74,7 @@ for (const [profile, name, upstream, statusPath] of [
     'proxy_send_timeout 3s;', 'proxy_read_timeout 3s;', 'proxy_intercept_errors off;', 'proxy_next_upstream off;']) assert.ok(route.includes(directive), directive);
   assert.doesNotMatch(route, /proxy_method|content_by_lua|return 200|Access-Control-Allow-Origin|proxy_pass.*\$/);
   assert.match(text, /add_header Cache-Control (?:\$ark_proto_cache|"private, no-store") always;/);
+  if (text.includes('$ark_proto_cache {')) assert.ok(text.includes('~^(200|304):/(js|css|sim|shared|data|i18n)/ "private, no-cache";'), 'private code revalidates');
   assert.match(text, /add_header Allow \$ark_(?:proto|beta)_health_allow always;/);
   assert.match(text, /~\^\/healthz:\(\?!GET\$\|HEAD\$\) "GET, HEAD";/);
   assert.match(text, /location ~ "\^\/.*healthz\|control\|_material.*return 404;/);

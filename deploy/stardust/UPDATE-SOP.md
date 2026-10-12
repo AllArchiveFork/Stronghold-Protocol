@@ -83,7 +83,7 @@ HTML、资源 map 和 allowlist 在 auth 启动时加载，替换宿主文件不
 
 - 逐组件 schema：simple game/auth 为 HTTP200 且 `ok:true`；resolver 在**容器内部 loopback**检查 HTTP200、合法 JSON 和清单计数，不要求不存在的 `ok`。宿主经端口转发的 resolver probe 可能被拒绝，不能据此降低保护。集群按角色检查，game 认证 status、coordinator 控制健康、ingress 合法 Origin WS，不能统判 all(health.ok)。
 - 固定镜像/源码/资源、每角色 generation/lease/priority 与 manifest 精确一致；记录失败服务/字段。新 generation 的 restart0 不擦除先前失败/回滚记录。
-- 正常 TLS、登录/CSRF/授权/退出、可信 Host/Origin、匿名/无效凭据私有请求拒绝、内部端点隐藏、安全头和 private/no-store 保持。内存授权 Cookie 检查不冒称真实口令录入，Cookie/秘密不输出落盘。
+- 正常 TLS、登录/CSRF/授权/退出、可信 Host/Origin、匿名/无效凭据私有请求拒绝、内部端点隐藏、安全头和 private/no-store（私有代码为 private/no-cache 重新验证）保持。内存授权 Cookie 检查不冒称真实口令录入，Cookie/秘密不输出落盘。
 - 真实浏览器检查同版 Preact/hooks、字体、Spine、模型/音频、邀请/匹配、实际购买部署、Worker/试算与同身份重连；只清理自己的测试房间。未获授权不在运行环境创建玩家/测试对局、生产压测、Inspector、heapdump 或 busy 注入。
 - 实际通过、失败、skip、配置备份和阶段回执放 ignored `.claude/releases/` 或仓库外私有归档，遵循 [releases/README.md](releases/README.md)。不在公开文档存管理坐标、日志、用户截图、历史授权或活动计数。
 

@@ -112,7 +112,7 @@ test('only tracked JS/CSS snapshots are staged with exact MIME/gate/fallback and
     assert.ok(body.includes(`alias /www/sites/ark-proto-beta.stardust.matce.cn/localcode/${f.revision}${url};`));
     assert.match(body, /types \{ \}/);
     assert.ok(body.includes(`default_type ${url.startsWith('/js/') ? 'application/javascript' : 'text/css'};`));
-    assert.match(body, /add_header Cache-Control "private, no-store" always;/);
+    assert.match(body, /add_header Cache-Control "private, no-cache" always;/);
     assert.match(body, /add_header X-Content-Type-Options "nosniff" always;/);
     assert.match(body, /add_header X-Ark-Code-Source "edge" always;/);
     assert.match(body, /disable_symlinks on;/); assert.match(body, /expires off;/); assert.match(body, /etag on;/);

@@ -172,7 +172,7 @@ http {{
                 connection.close()
 
         def check_private(headers, marker):
-            expected = {'cache-control': 'private, no-store', 'strict-transport-security': 'max-age=31536000',
+            expected = {'cache-control': 'private, no-cache', 'strict-transport-security': 'max-age=31536000',
                         'x-content-type-options': 'nosniff', 'x-frame-options': 'SAMEORIGIN',
                         'referrer-policy': 'same-origin', 'content-security-policy': "default-src 'none'",
                         'x-robots-tag': 'noindex, nofollow', 'x-ark-code-source': marker}

@@ -161,7 +161,7 @@ export function localcodeInclude({ namespace, source, files }) {
     text += '    disable_symlinks on;\n    types { }\n';
     text += `    default_type ${mime};\n`;
     text += '    expires off;\n    etag on;\n';
-    text += '    add_header Cache-Control "private, no-store" always;\n';
+    text += '    add_header Cache-Control "private, no-cache" always;\n';
     text += '    add_header X-Content-Type-Options "nosniff" always;\n';
     text += '    add_header X-Ark-Code-Source "edge" always;\n}\n';
   }

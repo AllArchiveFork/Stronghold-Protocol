@@ -44,7 +44,8 @@ Lua仅用于公开 `/assets/`、`/media/` locations：
 | 已知OpenI签名302 | `public, max-age <= min(60, Expires-now-30)`，不足1秒则no-store |
 | 不匹配目标、未知/重复query、不足签名期限、公开错误、OPTIONS | `no-store` |
 | 现有named upstream-error fallback | 保留保守 `private, no-store`，不为命中率放宽 |
-| 认证、业务代码/data、私有401/403等 | 原门禁及 `private, no-store` 不变 |
+| 业务代码/data（js/css/shared/sim/data/i18n 的200/304） | 原门禁及 `private, no-cache`（ETag重新验证） |
+| 认证、HTML、API、私有401/403等 | 原门禁及 `private, no-store` 不变 |
 
 OpenI目标只接受原Signature V2字段与固定HTTP wrapper `sp_request=cors|display`；不泛化为任意查询字段。公开响应保留/去重 `Vary: Origin, Sec-Fetch-Mode`，且只有一个ACAO `*`、没有Allow-Credentials。已知OPTIONS继续原resolver204，允许GET/HEAD/OPTIONS及Range等原preflight字段；未知OPTIONS404。GET/HEAD之外（OPTIONS除外）405，未知或非法路径404。
 

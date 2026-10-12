@@ -185,17 +185,24 @@ test('REAL Beta isolated stock Nginx TLS, gate, localcode fallback and WS bounda
       assert.match(response.headers['cache-control'], /private, no-store/);
       assert.equal(response.headers['x-content-type-options'], 'nosniff');
     };
+    // Edge code revalidates (ETag/304) instead of no-store; everything else above keeps no-store.
+    const codeHeaders = response => {
+      assert.equal(response.headers['access-control-allow-origin'], undefined);
+      assert.equal(response.headers['access-control-allow-credentials'], undefined);
+      assert.equal(response.headers['cache-control'], 'private, no-cache');
+      assert.equal(response.headers['x-content-type-options'], 'nosniff');
+    };
     let etag;
     await t.test('exact edge body and marker; valid GET/HEAD/304/206 retain private headers', async () => {
       const get = await request('/js/local.js', { headers: { cookie } });
-      assert.equal(get.status, 200); assert.equal(get.body, DummyBody); privateHeaders(get);
+      assert.equal(get.status, 200); assert.equal(get.body, DummyBody); codeHeaders(get);
       assert.equal(get.headers['x-ark-code-source'], 'edge'); etag = get.headers.etag; assert.ok(etag);
       const head = await request('/js/local.js', { method: 'HEAD', headers: { cookie } });
-      assert.equal(head.status, 200); assert.equal(head.body, ''); assert.equal(Number(head.headers['content-length']), Buffer.byteLength(DummyBody)); privateHeaders(head);
+      assert.equal(head.status, 200); assert.equal(head.body, ''); assert.equal(Number(head.headers['content-length']), Buffer.byteLength(DummyBody)); codeHeaders(head);
       const conditional = await request('/js/local.js', { headers: { cookie, 'if-none-match': etag } });
-      assert.equal(conditional.status, 304); assert.equal(conditional.body, ''); privateHeaders(conditional);
+      assert.equal(conditional.status, 304); assert.equal(conditional.body, ''); codeHeaders(conditional);
       const partial = await request('/js/local.js', { headers: { cookie, range: 'bytes=0-9' } });
-      assert.equal(partial.status, 206); assert.equal(partial.body, DummyBody.slice(0, 10)); privateHeaders(partial);
+      assert.equal(partial.status, 206); assert.equal(partial.body, DummyBody.slice(0, 10)); codeHeaders(partial);
       assert.equal(partial.headers['content-range'], `bytes 0-9/${Buffer.byteLength(DummyBody)}`);
     });
     await t.test('anonymous/expired/forged gate rejects edge AND missing-localcode GET/HEAD/conditional/range before content', async () => {

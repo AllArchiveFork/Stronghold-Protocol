@@ -80,6 +80,9 @@ class PrivateCodeTests(unittest.TestCase):
         # route's methods; location-level add_header blocks inheritance and private code never emits it.
         headers = [line.strip() for line in stock.splitlines() if line.strip().startswith('add_header ')
                    and not line.strip().startswith(('add_header Access-Control-Allow-Origin', 'add_header Allow '))]
+        # Private code revalidates (ETag/304, still gated) instead of the vhost's no-store.
+        self.assertIn('add_header Cache-Control "private, no-store" always;', headers)
+        headers = [h.replace('"private, no-store"', '"private, no-cache"') for h in headers]
         for directive in headers:
             with self.subTest(header=directive):
                 self.assertEqual(include.count(directive), 7)
@@ -333,7 +336,8 @@ class RuntimeStaticTests(unittest.TestCase):
         self.assertNotIn('README', include)
         self.assertEqual(include.count('default_type application/json;'), 2)
         self.assertEqual(include.count('gzip on;'), 5)
-        self.assertEqual(include.count('add_header Cache-Control "private, no-store" always;'), 9 + 6)
+        self.assertEqual(include.count('add_header Cache-Control "private, no-cache" always;'), 9 + 6)
+        self.assertNotIn('no-store', include)
         self.assertNotIn('Access-Control-Allow-Origin "', include)
         self.assertNotIn('auth_request off', include)
 

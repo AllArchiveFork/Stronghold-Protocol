@@ -33,7 +33,7 @@ node deploy/stardust/tools/prepare-localcode-release.mjs \
 ```
 
 - 输出父目录已存在且 `NEW_STAGE` 不存在；工具验证实际 Git blob、精确库存和 SHA，不激活服务。落盘位置使用 `<BETA_LOCALCODE_ROOT>/<commit>/`，只经生成的精确 location 供给。
-- 命中、HEAD、条件请求/Range、缺失回源都保留门禁和浏览器 `private,no-store`；不把 `?v=` 当可信版本。
+- 命中、HEAD、条件请求/Range都保留门禁，浏览器 `private, no-cache`（ETag/304重新验证）；缺失回源保留 `private,no-store`；不把 `?v=` 当可信版本。
 - named fallback 在 Beta vhost 定义，继续门禁且只指向同候选 Beta backend，不能掉入 Formal upstream。
 - HTML、shared/sim/data、`/data.js`、`/client-build`、API/WS/auth 不落盘缓存。`/js/data.js` 是 tracked loader，不等于生成 shim `/data.js`。
 - root hooks adapter 取同候选 Beta game 原件；其他库/字体/美术按配套清单，不能混 Formal 的 Preact 身份。

@@ -103,7 +103,7 @@ python3 -I /opt/ark-cluster-formal/tools/cluster-private-code.py \
   --manifest "$SOURCE_MANIFEST" --manifest-sha256 "$FULL_SOURCE_MANIFEST_SHA256" --build "$FULL_COMMIT"
 ```
 
-每个alias、未知prefix和缺文件fallback仍auth_request/GET|HEAD/private-no-store/no business ACAO，所有stock安全表达式重复但不发明CSP。vhost须保持Origin与/localcode封锁，不重复加载旧exactlocation。输出仅staged/activated:false；安装流程另做同版本Nginx语法、平滑reload及配套切换。
+每个alias、未知prefix和缺文件fallback仍auth_request/GET|HEAD/private-no-cache（ETag重新验证）/no business ACAO，所有stock安全表达式重复但不发明CSP。vhost须保持Origin与/localcode封锁，不重复加载旧exactlocation。输出仅staged/activated:false；安装流程另做同版本Nginx语法、平滑reload及配套切换。
 
 ## 本地检查入口
 

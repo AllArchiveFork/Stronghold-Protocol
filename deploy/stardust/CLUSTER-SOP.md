@@ -25,7 +25,7 @@
 
 ## 门禁、密钥与公开范围
 
-TLS、共享口令、每次私有请求门禁、可信 Host/Origin、CSRF、登录限速、安全头和 private/no-store 继续有效。多入口同一 profile 使用可互认签名与同源 Cookie；Formal/Beta 使用独立签名 key、Origin、进程/房间/队列，不互相 fallback。
+TLS、共享口令、每次私有请求门禁、可信 Host/Origin、CSRF、登录限速、安全头和 private/no-store（私有代码为 private/no-cache 重新验证）继续有效。多入口同一 profile 使用可互认签名与同源 Cookie；Formal/Beta 使用独立签名 key、Origin、进程/房间/队列，不互相 fallback。
 
 游戏票据/RPC 使用独立节点密钥，不能借用 auth signing key/verifier。秘密只在受保护 runtime/secret mount，不进入源码、镜像层、配置样例、日志、URL query、Cookie 或证据。玩家不得选择任意 IP/URL/上游；目标只来自受审查固定配置。票据绑定 session/room/assignment/node/role/build/protocol，严格 TTL 和有界 clock skew，不信任客户端时间。
 
