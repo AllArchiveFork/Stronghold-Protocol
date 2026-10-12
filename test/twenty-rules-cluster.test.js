@@ -44,11 +44,13 @@ for (const capacity of [8, 12, 16, 20]) for (const family of ['bounty', 'supply'
     match.setDeadline(0); match.round = 3; match.enterSpDraft(); const draft = match.sp;
     assert.equal(match.publicView().sp.allowRepeat, true); assert.equal(draft.cards.length, 6);
     const firstCard = draft.cards[0];
-    const firstStock = firstCard.kind === 'item' ? Math.floor(match.itemPool.left(firstCard.id) / match.itemPool.need(firstCard.id)) : Infinity;
+    // equipment stock is per chess-pool group (Match itemPoolFor): each group's seats take card 0 up to its own stock
+    const firstPicks = [...Map.groupBy(match.order, ps => ps.itemPool)].reduce((n, [stock, seats]) => n + Math.min(seats.length,
+      firstCard.kind === 'item' ? Math.floor(stock.left(firstCard.id) / stock.need(firstCard.id)) : Infinity), 0);
     const select = () => {
       const id = match.spTurn();
       if (!match.spCardAvailable(firstCard)) {
-        assert.equal(firstCard.kind, 'item'); assert.equal(match.itemPool.canGain(firstCard.id), false);
+        assert.equal(firstCard.kind, 'item'); assert.equal(match.itemPoolFor(id).canGain(firstCard.id), false);
         assert.equal(host.handle(spec.assignmentId, id, { t: 'g.choice', idx: 0 }, channels.get(id)).error, ERR.SOLD_OUT);
         assert.equal(draft.picks[id], undefined, 'exhausted equipment cannot consume an actor confirmation');
       }
@@ -67,7 +69,7 @@ for (const capacity of [8, 12, 16, 20]) for (const family of ['bounty', 'supply'
     await until(() => match.phase === 'PREP');
     assert.equal(Object.keys(draft.picks).length, capacity);
     assert.equal(draft.picks[draft.order[0]], 0); assert.equal(draft.picks[draft.order[1]], 0, 'same index remains legal within its real stock');
-    assert.equal(Object.values(draft.picks).filter(idx => idx === 0).length, Math.min(capacity, firstStock));
+    assert.equal(Object.values(draft.picks).filter(idx => idx === 0).length, firstPicks);
     if (firstCard.kind !== 'item') assert.ok(Object.values(draft.picks).every(idx => idx === 0));
     for (const [id, c] of channels) {
       const personal = c.messages.filter(m => m.t === 'm.private');
@@ -116,7 +118,9 @@ for (const [capacity, count] of [[4, 4], [8, 2], [8, 5], [12, 5], [16, 5], [20, 
     }
     await until(() => match.phase === 'BATTLE_CHECK'); match.setDeadline(0); match.round = 3; match.enterSpDraft();
     const draft = match.sp, firstCard = draft.cards[0];
-    const firstStock = firstCard.kind === 'item' ? Math.floor(match.itemPool.left(firstCard.id) / match.itemPool.need(firstCard.id)) : Infinity;
+    // equipment stock is per chess-pool group (Match itemPoolFor): each group's seats take card 0 up to its own stock
+    const firstPicks = [...Map.groupBy(match.order, ps => ps.itemPool)].reduce((n, [stock, seats]) => n + Math.min(seats.length,
+      firstCard.kind === 'item' ? Math.floor(stock.left(firstCard.id) / stock.need(firstCard.id)) : Infinity), 0);
     assert.equal(draft.cards.length, 6); assert.equal(match.publicView().sp.allowRepeat === true, repeat);
     const first = f.channels.get(match.spTurn()); assert.equal((await first.request({ t: 'g.choice', idx: 0 })).t, 'ok');
     assert.equal((await first.request({ t: 'g.choice', idx: 0 })).code, ERR.ALREADY);
@@ -129,7 +133,7 @@ for (const [capacity, count] of [[4, 4], [8, 2], [8, 5], [12, 5], [16, 5], [20, 
     while (match.spTurn()) {
       const id = match.spTurn(), c = f.channels.get(id);
       if (!match.spCardAvailable(firstCard)) {
-        if (repeat) { assert.equal(firstCard.kind, 'item'); assert.equal(match.itemPool.canGain(firstCard.id), false); }
+        if (repeat) { assert.equal(firstCard.kind, 'item'); assert.equal(match.itemPoolFor(id).canGain(firstCard.id), false); }
         assert.equal((await c.request({ t: 'g.choice', idx: 0 })).code, ERR.SOLD_OUT);
         assert.equal(draft.picks[id], undefined, 'exhausted stock leaves the resumed owner confirmation available');
       }
@@ -143,7 +147,7 @@ for (const [capacity, count] of [[4, 4], [8, 2], [8, 5], [12, 5], [16, 5], [20, 
     assert.equal(Object.keys(draft.picks).length, count);
     if (repeat) {
       assert.equal(draft.picks[draft.order[0]], 0); assert.equal(draft.picks[draft.order[1]], 0, 'same index survives owner reconnect within stock');
-      assert.equal(Object.values(draft.picks).filter(idx => idx === 0).length, Math.min(count, firstStock));
+      assert.equal(Object.values(draft.picks).filter(idx => idx === 0).length, firstPicks);
     } else assert.equal(new Set(Object.values(draft.picks)).size, count);
     await until(() => spec.seats.every(s => f.channels.get(s.playerId).log.some(m => m.t === 'm.private')));
     for (const [id, c] of f.channels) {

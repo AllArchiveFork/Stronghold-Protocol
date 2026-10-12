@@ -83,7 +83,7 @@
 .gtop__budget {
   grid-column: 1 / -1; justify-self: center;
   display: flex; flex-wrap: wrap; justify-content: center; gap: .04rem .2rem; max-width: 100%;
-  font-size: max(calc(.14 * var(--t)), 12px); line-height: 1.4; color: var(--text-md);
+  font-size: max(calc(.14 * var(--t)), calc(12px * var(--ui))); line-height: 1.4; color: var(--text-md);
   text-align: center; text-shadow: 0 1px 3px rgba(0, 0, 0, .9);
 }
 .gtop__budget span { overflow-wrap: anywhere; }
@@ -250,7 +250,7 @@
 
 /* ---- bond strip ---------------------------------------------------------------------------------------- */
 .gm__bonds { position: absolute; left: 1.56rem; top: 1.36rem; right: 5.2rem; pointer-events: none;
-  display: flex; align-items: flex-start; gap: max(.1rem, 8px); }
+  display: flex; align-items: flex-start; gap: max(.1rem, calc(8px * var(--ui))); }
 /* Only the bond discs (and the +N chip) take the pointer: the strip's box spans the width under the top bar, where the
    top board row's units stand (row 12 at 16:9 / 21:9 / 720p / phones, the boss field's row 5 in a boss prep) — it used
    to swallow the taps and drags on them (review of user playtest #2 item 8: every own unit reachable). */
@@ -263,7 +263,7 @@
 .gm__bonds .bonds-toggle { pointer-events: auto; flex: none; display: inline-flex; align-items: center; justify-content: center;
   min-width: 44px; min-height: 44px; padding: 0; color: var(--text-hi); background: transparent; border: 0; cursor: pointer;
   opacity: .55; transition: opacity var(--t-fast) var(--ease-out), color var(--t-fast) var(--ease-out); line-height: 1; }
-.bonds-toggle .icon { width: max(.22rem, 18px); height: max(.22rem, 18px); filter: drop-shadow(0 0 2px rgba(0, 0, 0, .85)); }
+.bonds-toggle .icon { width: max(.22rem, calc(18px * var(--ui))); height: max(.22rem, calc(18px * var(--ui))); filter: drop-shadow(0 0 2px rgba(0, 0, 0, .85)); }
 .bonds-toggle[aria-expanded="false"] { opacity: .8; }
 .bonds-toggle:hover, .bonds-toggle:focus-visible { opacity: 1; color: var(--mint-500); }
 .bonds-toggle:focus-visible { outline: 2px solid var(--mint-500); outline-offset: -4px; }
@@ -273,16 +273,16 @@
 /* a watched teammate's bonds (DESIGN §20.15): an amber "👁 name" pill in front of the discs, amber rings. Horizontal at
    every width with a pixel floor (a vertical .12rem name was ~6-8 px per glyph on desktop / tablet, ~5 px on phones
    where 1rem is clamped at 40 px); centred on the discs, clear of the team panel below */
-.bstrip__owner { align-self: center; flex: none; display: inline-flex; flex-direction: row; align-items: center; gap: max(.04rem, 3px);
-  padding: max(.03rem, 2px) max(.06rem, 4px); border: 1px solid rgba(246, 163, 41, .5); background: rgba(40, 26, 6, .7); }
-.bstrip__owner .micro { color: var(--amber); font-size: max(.15rem, 10px); letter-spacing: .04em; max-width: max(1.3rem, 72px);
+.bstrip__owner { align-self: center; flex: none; display: inline-flex; flex-direction: row; align-items: center; gap: max(.04rem, calc(3px * var(--ui)));
+  padding: max(.03rem, calc(2px * var(--ui))) max(.06rem, calc(4px * var(--ui))); border: 1px solid rgba(246, 163, 41, .5); background: rgba(40, 26, 6, .7); }
+.bstrip__owner .micro { color: var(--amber); font-size: max(.15rem, calc(10px * var(--ui))); letter-spacing: .04em; max-width: max(1.3rem, calc(72px * var(--ui)));
   overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.bstrip__eye { color: var(--amber); font-size: max(.17rem, 11px); flex: none; }
-.bstrip--empty .bstrip__owner .micro { max-width: max(1.6rem, 80px); }
+.bstrip__eye { color: var(--amber); font-size: max(.17rem, calc(11px * var(--ui))); flex: none; }
+.bstrip--empty .bstrip__owner .micro { max-width: max(1.6rem, calc(80px * var(--ui))); }
 .bstrip--empty.is-other { border-color: rgba(246, 163, 41, .5); }
 @media (max-width: 767px) {
-  .bstrip__owner .micro { font-size: max(.12rem, 9px); }
-  .bstrip__eye { font-size: max(.15rem, 10px); }
+  .bstrip__owner .micro { font-size: max(.12rem, calc(9px * var(--ui))); }
+  .bstrip__eye { font-size: max(.15rem, calc(10px * var(--ui))); }
 }
 .bstrip.is-other .bond__core { box-shadow: 0 0 0 1px rgba(246, 163, 41, .45); }
 .bstrip__more { align-self: center; font-size: .16rem; color: var(--text-lo); padding: .04rem .08rem; border: 1px solid var(--line-2); background: rgba(8, 11, 10, .7); }
@@ -325,7 +325,7 @@
 .gm__effects { position: absolute; right: .3rem; top: 2.4rem; }
 /* 准备就绪 refused (the temp row holds pieces): its reason shows under the button and pushes the ready count down —
    the effects column follows, or the count runs into it on phones */
-.gm.has-readywhy .gm__effects { top: calc(2.4rem + max(.3rem, 16px)); }
+.gm.has-readywhy .gm__effects { top: calc(2.4rem + max(.3rem, calc(16px * var(--ui)))); }
 .effects { display: flex; flex-direction: column; align-items: flex-end; gap: .08rem; }
 .effect {
   position: relative; width: .5rem; height: .5rem; display: grid; place-items: center;
@@ -513,26 +513,30 @@
 /* 文字大小 (ui/settings.js): four steps, so its buttons are narrower than the two- and three-step groups' — at .8rem each
    the group would be wider than the row's 1fr column on a phone (1rem = 40 px) */
 .set-seg.set-textsize button { min-width: .62rem; }
+.set-seg.set-uiscale { display: grid; grid-template-columns: repeat(3, minmax(.56rem, 1fr)); }
+.set-seg.set-uiscale button { min-width: 0; padding-inline: .06rem; }
+.set-seg.set-uiscale button:nth-child(3n) { border-right: 0; }
+.set-seg.set-uiscale button:nth-child(-n+3) { border-bottom: 1px solid var(--line-2); }
 .set-seg button:last-child { border-right: 0; }
 .set-seg button.is-on { background: var(--mint-500); color: var(--text-on-mint); font-weight: 700; }
 .set-hint { margin-top: .06rem; font-size: calc(.14 * var(--t)); color: var(--text-dim); line-height: 1.8; }
 .set-hint kbd, .lvcard__key, .toolbtn kbd { font-family: var(--font-num); font-size: .11rem; border: 1px solid var(--line-2); padding: 0 .04rem; color: var(--text-lo); background: rgba(0, 0, 0, .3); }
 /* Shared interface/voice preferences in the lobby and settings. */
-.language-options { display: flex; flex-direction: column; gap: max(.14rem, 10px); min-width: 0; }
-.language-options__row { grid-template-columns: minmax(0, 1fr); gap: max(.1rem, 8px); }
-.language-options__row .set-row__label { flex-wrap: wrap; white-space: normal; font-size: max(calc(.18 * var(--t)), 14px); }
+.language-options { display: flex; flex-direction: column; gap: max(.14rem, calc(10px * var(--ui))); min-width: 0; }
+.language-options__row { grid-template-columns: minmax(0, 1fr); gap: max(.1rem, calc(8px * var(--ui))); }
+.language-options__row .set-row__label { flex-wrap: wrap; white-space: normal; font-size: max(calc(.18 * var(--t)), calc(14px * var(--ui))); }
 .language-options__row .set-row__label .icon { width: 16px; height: 16px; }
 .language-options__row .micro, .language-dialog .modal__head .micro { font-size: 10px; }
 .language-options__row .set-seg { grid-column: 1; max-width: 100%; }
 .voice-language-toggle { width: 100%; }
-.voice-language-toggle button { flex: 1; min-width: 0; min-height: 44px; display: flex; align-items: center; justify-content: center; gap: 8px; padding-inline: 12px; font-size: max(calc(.16 * var(--t)), 14px); }
+.voice-language-toggle button { flex: 1; min-width: 0; min-height: 44px; display: flex; align-items: center; justify-content: center; gap: 8px; padding-inline: 12px; font-size: max(calc(.16 * var(--t)), calc(14px * var(--ui))); }
 .voice-language-code { font-family: var(--font-num); font-size: 11px; opacity: .7; }
-.language-options__hint { font-size: max(calc(.16 * var(--t)), 13px); line-height: 1.65; }
-.language-dialog { width: min(8rem, calc(100vw - 32px)); }
+.language-options__hint { font-size: max(calc(.16 * var(--t)), calc(13px * var(--ui))); line-height: 1.65; }
+.language-dialog { width: min(8rem, calc(100vw - calc(32px * var(--ui)))); }
 .language-dialog .modal__body { overflow-y: auto; }
-.lobby-screen .language-dialog .modal__actions .btn { min-height: 44px; font-size: max(calc(.17 * var(--t)), 14px); }
+.lobby-screen .language-dialog .modal__actions .btn { min-height: 44px; font-size: max(calc(.17 * var(--t)), calc(14px * var(--ui))); }
 .language-options .lang-select, .language-options .lang-select select { width: 100%; min-height: 44px; }
-.language-options .lang-select select { font-size: max(calc(.16 * var(--t)), 14px); }
+.language-options .lang-select select { font-size: max(calc(.16 * var(--t)), calc(14px * var(--ui))); }
 .voice-language-toggle button:focus-visible { outline: 2px solid var(--mint-400); outline-offset: -3px; }
 /* 快捷键 (ui/settings.js HotkeySection): each shortcut with its key — click the key, press the new one; two columns,
    one under 768 px (phones in landscape) */
@@ -563,9 +567,9 @@
 .set-diag__url { min-width: 0; font-size: calc(.13 * var(--t)); color: var(--text-dim); overflow-wrap: anywhere; -webkit-user-select: all; user-select: all; }
 .set-diag__battle-hint { margin-top: -.06rem; }
 .set-diag__text {
-  box-sizing: border-box; width: 100%; height: max(2rem, 140px); min-height: 120px; resize: vertical;
-  padding: max(.1rem, 8px) max(.12rem, 10px);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: max(.13rem, 11px); line-height: 1.5;
+  box-sizing: border-box; width: 100%; height: max(2rem, calc(140px * var(--ui))); min-height: 120px; resize: vertical;
+  padding: max(.1rem, calc(8px * var(--ui))) max(.12rem, calc(10px * var(--ui)));
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: max(.13rem, calc(11px * var(--ui))); line-height: 1.5;
   color: var(--text-hi); background: rgba(4, 10, 8, .55); border: 1px solid var(--line-2); border-radius: 2px; outline: none;
   white-space: pre-wrap; overflow-wrap: anywhere; overflow-y: auto;
 }
@@ -574,8 +578,8 @@
 .sp-coarse .set-diag__text { font-size: 16px; }
 @media (max-width: 767px) { .set-keys__list { grid-template-columns: minmax(0, 1fr); } }
 @media (max-height: 600px) and (pointer: coarse), (max-height: 600px) and (any-pointer: coarse) {
-  .set-key { height: max(.38rem, 30px); }
-  .set-keys__more > summary { padding: max(.06rem, 8px) 0; }
+  .set-key { height: max(.38rem, calc(30px * var(--ui))); }
+  .set-keys__more > summary { padding: max(.06rem, calc(8px * var(--ui))) 0; }
 }
 
 /* ---- exit / away ------------------------------------------------------------------------------------------------------ */

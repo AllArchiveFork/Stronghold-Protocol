@@ -246,7 +246,7 @@ export function ChoiceView({ pub, sp, myId, solo, personal = false, busyIdx = nu
               </span>
             </span>
             <${RichText} text=${r.desc} class="spcard__desc" />
-            ${card.soldOut && !taker ? html`<span class="spcard__busy" role="status">${t('库存不足')}</span>` : null}
+            ${card.soldOut && !taker ? html`<span class="spcard__busy" role="status">${t('全队库存已用完')}</span>` : null}
             ${r.tier ? html`<${TierChip} tier=${r.tier} size="md" class="spcard__tier" />` : null}
             ${taker ? html`<span class="spcard__taker" title=${t('{name} 已选择', { name: taker.name })}><${PlayerAvatar} player=${taker} size="sm" /></span>` : null}
             ${pickers.length ? html`<span class="spcard__pickers" data-picked-count=${pickers.length} title=${t('{name} 已选择', { name: takerName })}><${Icon} name="check" />${t('{name} 已选择', { name: takerName })}</span>` : null}

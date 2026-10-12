@@ -35,7 +35,7 @@ describe('community UI: lobby header and shared DIY details', { skip: !enabled }
       await page.waitForSelector('.spcard.is-armed');
       await page.evaluate(() => window.__exhaustStock());
       await page.waitForFunction(() => document.querySelector('.spcard').disabled && !document.querySelector('.spcard.is-armed'));
-      assert.match(await page.$eval('.spcard', e => e.textContent), /库存不足/);
+      assert.match(await page.$eval('.spcard', e => e.textContent), /全队库存已用完/);
       assert.equal(await page.evaluate(() => window.__picks?.length || 0), 0);
       await page.screenshot({ path: new URL('../e2e/out/shared-stock-unavailable.png', import.meta.url).pathname });
       await page.click('.spcard:nth-child(2)'); await page.click('.spcard:nth-child(2)');

@@ -71,7 +71,7 @@ export class PlayerEconomy {
   }
 
   _rollItemSlot() {
-    const id = this.pool.rollItem(this.m.rngShop, this.shop.level, this.m.itemPool);
+    const id = this.pool.rollItem(this.m.rngShop, this.shop.level, this.itemPool);
     return id ? { kind: 'item', id, basePrice: this.gd.itemPrice(id), frozen: false, sold: false } : null;
   }
 
@@ -176,7 +176,7 @@ export class PlayerEconomy {
    */
   outOfStock(slot) {
     if (!slot || slot.sold || slot.kind !== 'item') return false;
-    return !!this.gd.item(slot.id) && !this.m.itemPool.canGain(slot.id);
+    return !!this.gd.item(slot.id) && !this.itemPool.canGain(slot.id);
   }
 
   /** The out-of-stock flags m.private last carried, as one string (Match.flush re-sends m.private when they move). */

@@ -67,7 +67,9 @@ for (const capacity of [4, 8, 12, 16, 20]) for (const family of capacity === 4 ?
     const sp = await members[0].waitFor('m.public', m => m.phase === 'SP_DRAFT', 6000);
     assert.equal(sp.sp.allowRepeat === true, repeat); assert.equal(sp.sp.cards.length, 6); assert.equal(sp.sp.family, family);
     const draft = match.sp, firstCard = draft.cards[0];
-    const firstStock = firstCard.kind === 'item' ? Math.floor(match.itemPool.left(firstCard.id) / match.itemPool.need(firstCard.id)) : Infinity;
+    // equipment stock is per chess-pool group (Match itemPoolFor): each group's seats take card 0 up to its own stock
+    const firstPicks = [...Map.groupBy(match.order, ps => ps.itemPool)].reduce((n, [stock, seats]) => n + Math.min(seats.length,
+      firstCard.kind === 'item' ? Math.floor(stock.left(firstCard.id) / stock.need(firstCard.id)) : Infinity), 0);
     assert.equal((await byId.get(draft.order[1]).request({ t: 'g.choice', idx: 0 })).code, ERR.NOT_YOUR_TURN);
     const first = byId.get(match.spTurn());
     assert.equal((await first.request({ t: 'g.choice', idx: 6 })).code, ERR.BAD_TARGET);
@@ -77,7 +79,7 @@ for (const capacity of [4, 8, 12, 16, 20]) for (const family of capacity === 4 ?
     const select = async () => {
       const pid = match.spTurn(), c = byId.get(pid);
       if (!match.spCardAvailable(firstCard)) {
-        if (repeat) { assert.equal(firstCard.kind, 'item'); assert.equal(match.itemPool.canGain(firstCard.id), false); }
+        if (repeat) { assert.equal(firstCard.kind, 'item'); assert.equal(match.itemPoolFor(pid).canGain(firstCard.id), false); }
         assert.equal((await c.request({ t: 'g.choice', idx: 0 })).code, ERR.SOLD_OUT);
         assert.equal(draft.picks[pid], undefined, 'a failed stock/taken check never consumes the confirmation');
       }
@@ -99,7 +101,7 @@ for (const capacity of [4, 8, 12, 16, 20]) for (const family of capacity === 4 ?
     assert.equal(Object.keys(draft.picks).length, capacity);
     if (repeat) {
       assert.equal(draft.picks[draft.order[0]], 0); assert.equal(draft.picks[draft.order[1]], 0, 'same band and same index are permitted within stock');
-      assert.equal(Object.values(draft.picks).filter(idx => idx === 0).length, Math.min(capacity, firstStock));
+      assert.equal(Object.values(draft.picks).filter(idx => idx === 0).length, firstPicks);
       if (firstCard.kind !== 'item') assert.equal(new Set(Object.values(draft.picks)).size, 1);
     } else assert.equal(new Set(Object.values(draft.picks)).size, capacity);
     for (const c of members) assert.equal((await c.request({ t: 'g.ready', ready: true })).t, 'ok');

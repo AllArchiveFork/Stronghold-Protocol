@@ -5,7 +5,7 @@
 import { PHASE, ERR } from '../../../shared/constants.js';
 import { createRng, deriveSeed } from '../../sim/rng.js';
 import { setupMatchWaves } from '../waves.js';
-import { drawDisabledBonds, SharedPool, createPoolGroups } from '../pool.js';
+import { drawDisabledBonds, SharedPool, createItemPools, createPoolGroups } from '../pool.js';
 import { OK, fail } from './common.js';
 
 export class MatchSetupVote {
@@ -110,6 +110,9 @@ export class MatchSetupVote {
     this.pool = pool;
     this.poolGroups = poolGroups;
     this.playerPools = playerPools;
+    // the equipment stock follows the new groups (Match constructor; ownership is read live, nothing to carry over)
+    this.playerItemPools = createItemPools(this.gd, poolGroups, (id) => this.players.get(id));
+    this.itemPool = this.playerItemPools.get(poolGroups[0].playerIds[0]);
     this._botPath = null;
     for (const [i, ps] of this.order.entries()) {
       ps.diyStock = stocks[i].stock;

@@ -324,9 +324,10 @@ function bountyDraftCards(gd, rng, n, sch, round) {
 
 /**
  * The 机密商店 cards (choices.json `shopDraft`, module header): every slot drawn on its own — a tier (or `coin`, the
- * 盟约之币) by the slot's weights, then an item of that tier by `itemWeights` (1 when unlisted; an empty tier falls back to
- * the nearest lower one, then any) — so one item can fill two slots. Positions shuffled; `n` < the slots (solo) keeps
- * `n` of them. Null without a usable `shopDraft` or at a round its `rounds` (when given) does not list.
+ * 盟约之币; another tier-I item once no stock holds one) by the slot's weights, then an item of that tier by `itemWeights`
+ * (1 when unlisted; an empty tier falls back to the nearest lower one, then any) — so one item can fill two slots.
+ * Positions shuffled; `n` < the slots (solo) keeps `n` of them. Null without a usable `shopDraft` or at a round its
+ * `rounds` (when given) does not list.
  */
 export function shopDraftCards(gd, rng, n, round = null, itemAvailable = null) {
   const spec = gd.choices.shopDraft;
@@ -345,7 +346,9 @@ export function shopDraftCards(gd, rng, n, round = null, itemAvailable = null) {
     const kinds = Object.entries(slot).filter(([k]) => k === 'coin' ? !!coin : Number.isInteger(Number(k)));
     const kind = weightedPick(rng, kinds);
     if (kind == null) continue;
-    const list = kind === 'coin' ? [coin] : ofTier(Number(kind));
+    // a coin slot whose 盟约之币 no stock holds any more draws another item of the coin's tier (I) instead of a card that
+    // could only be shown as sold out
+    const list = kind !== 'coin' ? ofTier(Number(kind)) : free([coin]).length ? [coin] : ofTier(gd.item(coin).tier || 1);
     const id = weightedPick(rng, list.map((x) => [x, Object.hasOwn(w, x) ? w[x] : 1]));
     if (id) out.push(itemCard(gd, id));
   }
@@ -457,7 +460,7 @@ function applyDefault(m, ps, card) {
     switch (b.key) {
       case 'global_special_choice_gain_equip': {
         for (let i = 0; i < count; i++) {
-          const id = m.rollItemId({ pool: bs.pool });
+          const id = m.rollItemId({ pool: bs.pool, player: ps });
           if (id) ps.acquireItem(id, { source: 'choice' });
         }
         handled = true;

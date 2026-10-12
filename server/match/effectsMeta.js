@@ -587,9 +587,9 @@ export function makeCtx(m, ps, source, hook, ev = null) {
       const extra = typeof ps.diyStockEntries === 'function' ? ps.diyStockEntries() : null;
       return ps.pool.roll(m.rngMeta, { maxTier: Number.isInteger(opts.maxTier) ? opts.maxTier : 6, tier: Number.isInteger(opts.tier) ? opts.tier : null, filter: f, extra, ignoreCounts: opts.ignoreCounts === true });
     },
-    rollItem: (opts = {}) => m.rollItemId(opts),
+    rollItem: (opts = {}) => m.rollItemId({ ...opts, player: ps }),
     /** Whether the shared shop stock has room for one more `itemId` (always true for an uncapped item). */
-    itemInStock: (itemId) => !!gd.item(itemId) && m.itemPool.canGain(itemId),
+    itemInStock: (itemId) => !!gd.item(itemId) && ps.itemPool.canGain(itemId),
     /**
      * Roll a choices.json pool: equip pools → { kind: 'item', id }; chess pools (items / weighted / shopEligible with
      * tier, minTier, bond, golden) → { kind: 'chess', id, golden } (a pool chess needs a free copy). null when empty.

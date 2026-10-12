@@ -170,7 +170,8 @@ export class MatchViews {
       const s = this.sp;
       v.sp = {
         family: s.family, name: s.name, desc: s.desc, eventId: s.eventId,
-        cards: s.cards.map(c => ({ ...cardView(c), soldOut: c.kind === 'item' && !this.itemPool.canGain(c.id) })), order: s.order.slice(),
+        // an item card's stock is the picking seat's (its chess-pool group's: Match itemPoolFor)
+        cards: s.cards.map(c => ({ ...cardView(c), soldOut: c.kind === 'item' && !this.spItemAvailable(c.id, this.spTurn()) })), order: s.order.slice(),
         turn: this.spTurn(), picks: { ...s.picks }, taken: { ...s.taken }, untimed: !!s.untimed,
         ...(this.capacityExperiment ? { allowRepeat: true } : {}),
       };

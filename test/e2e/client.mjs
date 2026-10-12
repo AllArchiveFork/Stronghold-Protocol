@@ -126,8 +126,9 @@ export async function startRealServer(opts = {}) {
  * hidden — no animation frames, so the Pixi view and visibility checks stall).
  */
 export class Client {
-  constructor(puppeteer, base, label, { w = 1920, h = 1080, prefix = 'coop' } = {}) {
-    Object.assign(this, { puppeteer, base, label, w, h, prefix, problems: [], log: [], shots: [] });
+  /** `settings`: sp.pref.settings seeded before every page load (e.g. { uiScale: '100' }). */
+  constructor(puppeteer, base, label, { w = 1920, h = 1080, prefix = 'coop', settings = null } = {}) {
+    Object.assign(this, { puppeteer, base, label, w, h, prefix, settings, problems: [], log: [], shots: [] });
   }
 
   async open(query = '') {
@@ -148,6 +149,9 @@ export class Client {
     });
     page.on('response', (r) => { if (r.status() >= 400) this.problems.push(`http ${r.status()}: ${r.url()}`); });
     page.on('dialog', (d) => d.dismiss().catch(() => {}));
+    if (this.settings) {
+      await page.evaluateOnNewDocument((s) => { try { localStorage.setItem('sp.pref.settings', JSON.stringify(s)); } catch { /* ignore */ } }, this.settings);
+    }
     await page.goto(`${this.base}/${query}`, { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => !!globalThis.__SP__ && !!document.querySelector('.screen'), { timeout: 30000 });
   }

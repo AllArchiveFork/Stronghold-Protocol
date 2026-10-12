@@ -160,7 +160,7 @@ describe('文字大小: the CSS text root', () => {
 
   test('theme.css defines --t for 小 and every step, and nothing else defines it', () => {
     assert.match(theme, /:root \{ --t: 1rem; \}/, '小 = the design\'s own sizes');
-    for (const [attr, value] of [['md', /--t: max\(1rem, 64px\)/], ['lg', /--t: max\(calc\(1rem \* 1\.15\), 76px\)/], ['xl', /--t: max\(calc\(1rem \* 1\.3\), 88px\)/]]) {
+    for (const [attr, value] of [['md', /--t: max\(1rem, calc\(64px \* var\(--ui\)\)\)/], ['lg', /--t: max\(calc\(1rem \* 1\.15\), calc\(76px \* var\(--ui\)\)\)/], ['xl', /--t: max\(calc\(1rem \* 1\.3\), calc\(88px \* var\(--ui\)\)\)/]]) {
       assert.match(theme, new RegExp(`:root\\[data-text="${attr}"\\] \\{ ${value.source}; \\}`), `the ${attr} step`);
     }
     for (const { rel, src } of sheets) {
@@ -223,7 +223,7 @@ describe('文字大小: the CSS text root', () => {
   test('the in-match HUD, the board-pinned text and the iOS zoom guards stay as they were', () => {
     const byRel = new Map(sheets.map((s) => [s.rel, s.src]));
     const plain = [
-      ['screens/game-panels.css', /\.sitag \{[^}]*font-size: max\(\.12rem, 9px\)/, '.sitag'],
+      ['screens/game-panels.css', /\.sitag \{[^}]*font-size: max\(\.12rem, calc\(9px \* var\(--ui\)\)\)/, '.sitag'],
       ['screens/game-panels.css', /\.tempnote__title \{[^}]*font-size: \.15rem/, '.tempnote__title'],
       ['screens/game-panels.css', /\.uframe__label \{[^}]*font-size: \.14rem/, '.uframe__label'],
       ['screens/game-panels.css', /\.spcard__desc \{ flex: none; font-size: \.2rem/, '.spcard__desc (7 clamped lines)'],

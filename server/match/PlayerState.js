@@ -140,6 +140,8 @@ export class PlayerState {
    * @param {{ seat: number, playerId: string, name: string, isBot: boolean, connected: boolean, loadout?: any, ops?: any, notOwned?: any, diy?: any, skins?: any }} seat
    */
   get pool() { return this.m.poolFor(this); }
+  /** This seat's equipment stock (Match itemPoolFor: its chess-pool group's). */
+  get itemPool() { return this.m.itemPoolFor(this); }
 
   constructor(m, seat) {
     this.m = m;

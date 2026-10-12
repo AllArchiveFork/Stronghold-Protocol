@@ -165,7 +165,7 @@ for (const [capacity, count] of [[8, 2], [8, 5], [8, 6], [8, 7], [8, 8], [12, 9]
       const preferred = s.idx % 6;
       if (!m.spCardAvailable(s.cards[preferred])) {
         assert.equal(s.cards[preferred].kind, 'item');
-        assert.equal(m.itemPool.canGain(s.cards[preferred].id), false);
+        assert.equal(ps.itemPool.canGain(s.cards[preferred].id), false);
         assert.equal(m.pickCard(ps, preferred).error, 'SOLD_OUT');
         assert.equal(s.picks[ps.playerId], undefined, 'an exhausted attempt never consumes the player confirmation');
       }

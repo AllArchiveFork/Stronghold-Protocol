@@ -18,7 +18,7 @@ export class MatchSpDraft {
   enterSpDraft() {
     const alive = this.alivePlayers();
     const draft = generateDraft(this.gd, this.rngDraft, this.round, { stageId: this.stageId,
-      bondAvailable: (bondId) => this.bondLive(bondId), itemAvailable: id => this.itemPool.canGain(id) });
+      bondAvailable: (bondId) => this.bondLive(bondId), itemAvailable: id => this.spItemAvailable(id) });
     if (!draft || !alive.length) { this.enterPrep(); return; }
     this.phase = PHASE.SP_DRAFT;
     let order = alive.map((p) => p.playerId);
@@ -39,18 +39,30 @@ export class MatchSpDraft {
     return s.order[s.idx] ?? null;
   }
 
-  spCardAvailable(card) {
+  /** `player`: the seat about to pick (default: the one whose turn it is) — an item card checks that seat's stock. */
+  spCardAvailable(card, player = this.spTurn()) {
     return !!card && (this.capacityExperiment || this.sp?.taken[card.idx] == null)
-      && (card.kind !== 'item' || this.itemPool.canGain(card.id));
+      && (card.kind !== 'item' || this.spItemAvailable(card.id, player));
+  }
+
+  /**
+   * Whether an item card can still be taken: from `player`'s equipment stock (Match itemPoolFor), or — no picker: the
+   * draw itself, the public view after the last turn — from the stock of any alive seat (one group: the match's stock).
+   */
+  spItemAvailable(id, player = null) {
+    if (player) return this.itemPoolFor(player).canGain(id);
+    return this.alivePlayers().some((p) => this.itemPoolFor(p).canGain(id));
   }
 
   startSpTurn() {
     const s = this.sp;
     this.cancel(this._turnTimer);
     this._turnTimer = null;
+    // a seat whose equipment stock holds none of the cards is passed over (an experimental room's other groups may
+    // still pick; in a one-stock match nobody after it can, so the draft ends as before)
     while (s.idx < s.order.length) {
       const ps = this.players.get(s.order[s.idx]);
-      if (ps && ps.alive && s.picks[ps.playerId] == null) break;
+      if (ps && ps.alive && s.picks[ps.playerId] == null && s.cards.some(c => this.spCardAvailable(c, ps))) break;
       s.idx++;
     }
     const available = s.cards.filter(c => this.spCardAvailable(c)).map(c => c.idx);
@@ -101,7 +113,7 @@ export class MatchSpDraft {
 
   _applyCard(ps, idx) {
     const s = this.sp;
-    if (!s || s.picks[ps.playerId] != null || !this.spCardAvailable(s.cards[idx])) return;
+    if (!s || s.picks[ps.playerId] != null || !this.spCardAvailable(s.cards[idx], ps)) return;
     const card = this.capacityExperiment ? structuredClone(s.cards[idx]) : s.cards[idx];
     if (!card) return;
     s.picks[ps.playerId] = idx;
@@ -187,28 +199,32 @@ export class MatchSpDraft {
     return b.id;
   }
 
-  /** Random item id: a choices.json server pool ({ pool }), a tier, or ≤ maxTier shop-eligible items. */
-  rollItemId({ pool = null, tier = null, maxTier = 6, shopLevel = 6 } = {}) {
+  /**
+   * Random item id: a choices.json server pool ({ pool }), a tier, or ≤ maxTier shop-eligible items — among those the
+   * drawing seat's equipment stock (`player`, Match itemPoolFor) still holds.
+   */
+  rollItemId({ pool = null, tier = null, maxTier = 6, shopLevel = 6, player = null } = {}) {
     const pools = this.gd.choices.pools && typeof this.gd.choices.pools === 'object' ? this.gd.choices.pools : {};
     const p = typeof pool === 'string' && Object.hasOwn(pools, pool) ? pools[pool] : null;
     const rng = this.rngMeta;
+    const stock = this.itemPoolFor(player);
     const tierList = (lo, hi) => { const out = []; for (let t = lo; t <= hi; t++) for (const id of this.gd.shopItemsByTier[t] || []) out.push(id); return out; };
     if (p && p.kind === 'equip') {
       if (Array.isArray(p.weighted) && p.weighted.length) {
-        const pairs = p.weighted.filter((x) => Array.isArray(x) && this.gd.item(x[0]) && this.itemPool.canGain(x[0]));
-        return this.itemPool.pick(rng, pairs.map(x => x[0]), new Map(pairs));
+        const pairs = p.weighted.filter((x) => Array.isArray(x) && this.gd.item(x[0]) && stock.canGain(x[0]));
+        return stock.pick(rng, pairs.map(x => x[0]), new Map(pairs));
       }
       if (Array.isArray(p.items) && p.items.length) {
         const items = p.items.filter((id) => this.gd.item(id));
-        return this.itemPool.pick(rng, items);
+        return stock.pick(rng, items);
       }
       let list;
       if (Array.isArray(p.tiers) && p.tiers.length) list = p.tiers.flatMap((t) => this.gd.shopItemsByTier[t] || []);
       else list = tierList(1, p.maxTier === 'shopLevel' ? Math.max(1, Math.min(6, shopLevel)) : 6);
-      return this.itemPool.pick(rng, list);
+      return stock.pick(rng, list);
     }
     const list = Number.isInteger(tier) ? tierList(tier, tier) : tierList(1, Math.max(1, Math.min(6, maxTier)));
-    return this.itemPool.pick(rng, list);
+    return stock.pick(rng, list);
   }
 
   /**
@@ -225,7 +241,7 @@ export class MatchSpDraft {
     if (!p || typeof p !== 'object') return null;
     const lvl = Math.max(1, Math.min(6, Number.isInteger(shopLevel) ? shopLevel : 6));
     if (p.kind === 'equip') {
-      const id = this.rollItemId({ pool: poolId, shopLevel: lvl });
+      const id = this.rollItemId({ pool: poolId, shopLevel: lvl, player });
       return id ? { kind: 'item', id } : null;
     }
     if (p.kind !== 'chess') return null;

@@ -1,6 +1,6 @@
 // Shop displays reserve no stock (server/match/pool.js): when another player takes the last copies of the equipment on a
 // player's shop card, that player's m.private is re-sent with the card marked `soldOut` (economy.js outOfStock,
-// messaging.js _markStockChanges), the bar refuses it as 库存不足 before any request, and the server still refuses it.
+// messaging.js _markStockChanges), the bar refuses it as 全队库存已用完 before any request, and the server still refuses it.
 // An operator card is never marked: since 0.2.5 one already shown stays purchasable and overdraws its pool (#498).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -25,7 +25,7 @@ test('equipment whose stock another player took is marked on the card, refused, 
   assert.equal(h.allTo('p_0', 'm.private').length, before + 1, "p_0's m.private is re-sent");
   const view = h.lastTo('p_0', 'm.private');
   assert.equal(view.shop.slots[i].soldOut, true);
-  assert.equal(shopBlockReason('buy', { priv: view, editable: true, slot: view.shop.slots[i] }), '库存不足');
+  assert.equal(shopBlockReason('buy', { priv: view, editable: true, slot: view.shop.slots[i] }), '全队库存已用完');
   const money = a.funds;
   assert.equal(a.buy(i).error, 'SOLD_OUT'); assert.equal(a.funds, money); assert.equal(a.shop.slots[i].sold, false);
   m.markPrivate(b); m.flush();

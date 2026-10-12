@@ -34,6 +34,9 @@ test('phone online count and full-size shops stay visible, touchable and reconne
     browser = await puppeteer.launch({ executablePath: process.env.CHROME_PATH || '/usr/bin/google-chrome', headless: true,
       args: ['--no-sandbox', '--mute-audio', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
     page = await browser.newPage();
+    // 界面大小 at 100 %: the pixel floors checked here are the design's 100 % sizes; the phone default 80 % scales them
+    // by --ui (test/ui/ui-scale.e2e.test.js, test/ui/ui-scale.test.js)
+    await page.evaluateOnNewDocument(() => { try { localStorage.setItem('sp.pref.settings', JSON.stringify({ uiScale: '100' })); } catch { /* ignore */ } });
     page.on('pageerror', error => report.pageErrors.push(error.message));
     await page.setRequestInterception(true);
     page.on('request', req => {
@@ -180,7 +183,9 @@ test('phone online count and full-size shops stay visible, touchable and reconne
     await desktop.waitForSelector('.dband'); await desktop.click('.dband'); await clickText('.draft-detail__btns button', '确认选择');
     await desktop.waitForSelector('.shopbar__cards .scard');
     report.desktopShop = await desktop.$eval('.shopbar__cards .scard', el => { const r = el.getBoundingClientRect(); return { width: r.width, height: r.height, overflow: document.documentElement.scrollWidth - innerWidth }; });
-    assert.equal(report.desktopShop.width, 156); assert.equal(report.desktopShop.height, 224); assert.equal(report.desktopShop.overflow, 0);
+    // the full-size desktop card (156 × 224); its px are multiplied by --ui (1 on a desktop), which may leave float dust
+    assert.ok(Math.abs(report.desktopShop.width - 156) < 0.01 && Math.abs(report.desktopShop.height - 224) < 0.01, JSON.stringify(report.desktopShop));
+    assert.equal(report.desktopShop.overflow, 0);
     await desktop.screenshot({ path: out + '/desktop-shop.png' }); report.screens.push(out + '/desktop-shop.png');
     await desktopContext.close();
     assert.deepEqual(report.pageErrors, []); assert.equal(report.externalRequests, 0); report.ok = true;

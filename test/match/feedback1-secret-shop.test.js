@@ -140,3 +140,26 @@ test('机密商店 outside R11 (标准 R3 / R9, 险境 R3 / R6 / R9 — no scree
     }
   }
 });
+
+test('机密商店 with no 盟约之币 left in any stock: its coin slots draw another tier-I item, every other card stays', () => {
+  const gd = new GameData(DATA, 'mode_multi_hard');
+  const noCoin = (id) => id !== COIN;
+  let shops = 0;
+  let swapped = 0;
+  for (let seed = 1; shops < 300 && seed < 5000; seed++) {
+    const open = generateDraft(gd, createRng(seed * 104729 + 7), 11, { stageId: 'act2autochess_m01' });
+    if (open.family !== 'shop') continue;
+    const out = generateDraft(gd, createRng(seed * 104729 + 7), 11, { stageId: 'act2autochess_m01', itemAvailable: noCoin });
+    shops++;
+    assert.equal(out.family, 'shop');
+    assert.equal(out.cards.length, 6);
+    assert.ok(out.cards.every((c) => c.id !== COIN), 'no card that could only show as sold out');
+    // the same draws: where the open shop holds a coin this one holds a tier-I item, the rest is unchanged
+    open.cards.forEach((c, i) => {
+      if (c.id !== COIN) assert.equal(out.cards[i].id, c.id);
+      else { assert.equal(DATA.items[out.cards[i].id].tier, 1); swapped++; }
+    });
+  }
+  assert.equal(shops, 300);
+  assert.ok(swapped >= shops, 'every shop had at least its fixed coin slot');
+});

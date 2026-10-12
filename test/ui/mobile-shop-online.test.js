@@ -36,7 +36,7 @@ test('absent or unlaid-out shop rows retain the rem fallback, and the height bud
 
 test('mobile offers have their own size floor and scrolling, without changing the global layout root', () => {
   const css = read('public/css/devices.css');
-  assert.match(css, /\.gm \.shopbar \.scard \{ flex: none; width: max\(1\.56rem, 80px\); height: max\(2\.24rem, 112px\); \}/);
+  assert.match(css, /\.gm \.shopbar \.scard \{ flex: none; width: max\(1\.56rem, calc\(80px \* var\(--ui\)\)\); height: max\(2\.24rem, calc\(112px \* var\(--ui\)\)\); \}/);
   assert.match(css, /\.gm \.shopbar__cards, \.gm \.shopbar__rwcards \{[^}]*overflow-x: auto;[^}]*touch-action: pan-x;/);
   assert.match(css, /\.gm \.shopbar__row \{ max-width: 100%; min-width: 0;/);
   assert.match(read('public/css/theme.css'), /font-size: clamp\(40px, min\(calc\(100vw \/ 19\.2\), calc\(100svh \/ 10\.8\)\), 240px\);/);

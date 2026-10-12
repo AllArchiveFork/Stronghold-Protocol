@@ -26,6 +26,9 @@ test('mobile lobby, same-pool count and every expanded roster seat remain operab
     browser = await puppeteer.launch({ executablePath: process.env.CHROME_PATH || '/usr/bin/google-chrome', headless: true,
       args: ['--no-sandbox', '--mute-audio', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
     const page = await browser.newPage();
+    // 界面大小 at 100 %: the pixel floors checked here are the design's 100 % sizes; the phone default 80 % scales them
+    // by --ui (test/ui/ui-scale.e2e.test.js, test/ui/ui-scale.test.js)
+    await page.evaluateOnNewDocument(() => { try { localStorage.setItem('sp.pref.settings', JSON.stringify({ uiScale: '100' })); } catch { /* ignore */ } });
     page.on('pageerror', e => report.errors.push(e.message));
     await page.setRequestInterception(true);
     page.on('request', req => {

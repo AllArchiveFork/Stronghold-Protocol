@@ -143,11 +143,15 @@ async function place(c, chessId) {
   await c.page.waitForFunction((n0) => (globalThis.__SP__.store.get().match.private?.board || []).length > n0, { timeout: 8000 }, n0);
 }
 
+// 界面大小 at 100 %: the phone's pixel floors checked here are the design's 100 % sizes; the phone default 80 % scales
+// them by --ui (test/ui/ui-scale.e2e.test.js, test/ui/ui-scale.test.js)
+const AT_100 = { uiScale: '100' };
+
 /** Two humans in a co-op room with `bots` AI seats: the host on a 1280×720 desktop, the guest on the user's phone
  *  (756×366 CSS px, touch), through the briefing and the band draft. */
 async function coopMatch(P, base, { bots = 1, prefix }) {
   const host = new Client(P, base, 'host', { prefix: `${prefix}-host`, w: 1280, h: 720 });
-  const guest = new Client(P, base, 'guest', { prefix: `${prefix}-phone`, w: 756, h: 366 });
+  const guest = new Client(P, base, 'guest', { prefix: `${prefix}-phone`, w: 756, h: 366, settings: AT_100 });
   await host.open();
   await host.enter('凯尔希');
   await host.click('.mode-card', '同盟模拟');
@@ -241,7 +245,7 @@ describe('DESIGN §20.15 — the bond strip shows the watched teammate\'s bonds 
     const P = (await import('puppeteer-core')).default;
     const host = new Client(P, srv.base, 'host', { prefix: 'watch-bonds', w: 1280, h: 720 });
     // the guest deploys on a desktop-sized window (the phone's shop bar covers the bench), then turns into the phone
-    const guest = new Client(P, srv.base, 'guest', { prefix: 'watch-bonds-phone', w: 1280, h: 720 });
+    const guest = new Client(P, srv.base, 'guest', { prefix: 'watch-bonds-phone', w: 1280, h: 720, settings: AT_100 });
     try {
       await host.open();
       await host.enter('凯尔希');

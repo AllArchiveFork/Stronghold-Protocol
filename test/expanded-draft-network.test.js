@@ -49,7 +49,7 @@ for (const family of ['bounty', 'supply', 'shop', 'tactic']) test(`actual twenty
     const preferred = i % 6, client = byId.get(playerId);
     if (!match.spCardAvailable(draft.cards[preferred])) {
       assert.equal(draft.cards[preferred].kind, 'item');
-      assert.equal(match.itemPool.canGain(draft.cards[preferred].id), false);
+      assert.equal(match.itemPoolFor(playerId).canGain(draft.cards[preferred].id), false);
       assert.equal((await client.request({ t: 'g.choice', idx: preferred })).code, ERR.SOLD_OUT);
       assert.equal(draft.picks[playerId], undefined, 'an exhausted request consumes no manual pick');
     }

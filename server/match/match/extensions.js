@@ -19,6 +19,15 @@ export class MatchExtensions {
     return pool;
   }
 
+  /** The equipment stock a seat draws from: its chess-pool group's (pool.js createItemPools). */
+  itemPoolFor(player) {
+    const id = typeof player === 'string' ? player : player?.playerId;
+    const pool = this.playerItemPools.get(id);
+    if (pool) return pool;
+    if (this.poolGroups.length > 1) throw new TypeError('player item stock required');
+    return this.itemPool;
+  }
+
   sendEncoded(playerId, type, data) {
     if (this.disposed || !['m.field', 'b.snap', 'b.ev', 'b.damage', 'm.damage'].includes(type) || typeof data !== 'string') return false;
     const ps = this.players.get(playerId) || this.spectators.get(playerId);

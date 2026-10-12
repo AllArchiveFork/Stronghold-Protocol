@@ -208,10 +208,14 @@ export class SharedPool {
 /** Shared equipment stock, derived from actual ownership. Merges, equips and returns cannot lose a reservation:
  * normal equipment occupies one, upgraded equipment two. Shop/choice displays reserve nothing. Source: the original
  * experiment BV1eLXXBqEgF, 1:30 and 2:30. [ASSUMED] An item that is consumed/destroyed or removed by elimination no
- * longer occupies stock, consistently with the video's ownership model; this is not a per-match purchase limit. */
+ * longer occupies stock, consistently with the video's ownership model; this is not a per-match purchase limit.
+ * `players` are the seats of one chess-pool group (createItemPools); `scale` is that group's pool scale. */
 export class SharedItemPool {
-  constructor(gd, players) { this.gd = gd; this.players = players; }
-  cap(id) { return this.gd.itemPoolCopies(id); }
+  constructor(gd, players, { scale = 1 } = {}) { this.gd = gd; this.players = players; this.scale = scale; }
+  cap(id) {
+    const n = this.gd.itemPoolCopies(id);
+    return n == null || this.scale === 1 ? n : Math.ceil(n * this.scale);
+  }
   need(id) { return this.gd.isGolden(id) ? 2 : 1; }
   held(id) {
     const base = this.gd.baseIdOf(id);
@@ -241,4 +245,16 @@ export class SharedItemPool {
     for (const [id, weight] of pairs) if ((r -= Math.max(0, weight)) < 0) return id;
     return pairs.at(-1)?.[0] || null;
   }
+}
+
+/** Equipment stock per chess-pool group (createPoolGroups): a seat counts only its own group's ownership against the
+ * group's scaled caps, so an experimental room shares equipment the way it shares operators — one stock per group of
+ * seats, per player without a shared pool. An ordinary match has one group: every seat, the measured caps. */
+export function createItemPools(gd, groups, playerOf) {
+  const out = new Map();
+  for (const g of groups) {
+    const pool = new SharedItemPool(gd, () => g.playerIds.map(playerOf).filter(Boolean), { scale: g.scale });
+    for (const id of g.playerIds) out.set(id, pool);
+  }
+  return out;
 }

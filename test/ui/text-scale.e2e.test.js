@@ -16,9 +16,10 @@ const PHONE = { width: 844, height: 390, isMobile: true, hasTouch: true, isLands
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** The settings the mock harness reads: `sp.pref.settings` with one text step (the argument is passed into the page —
- *  evaluateOnNewDocument cannot see a closure). */
+ *  evaluateOnNewDocument cannot see a closure) and 界面大小 at 100 %, so the match root is the clamped 40 px here (the
+ *  phone's default 80 % has its own check: test/ui/ui-scale.e2e.test.js). */
 const seedSettings = (page, textSize) => page.evaluateOnNewDocument((ts) => {
-  try { localStorage.setItem('sp.pref.settings', JSON.stringify({ textSize: ts })); } catch { /* ignore */ }
+  try { localStorage.setItem('sp.pref.settings', JSON.stringify({ textSize: ts, uiScale: '100' })); } catch { /* ignore */ }
 }, textSize);
 
 describe('文字大小 on a phone (headless Chrome)', { skip: !ENABLED && 'set SP_E2E=1 (and have Chrome) to run' }, () => {

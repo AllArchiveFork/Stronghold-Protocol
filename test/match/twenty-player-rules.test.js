@@ -146,7 +146,13 @@ for (const [capacity, count] of [[8, 2], [8, 5], [8, 8], [12, 12], [16, 16], ...
     const audit = attachAudit(m); m.enterSpDraft(); const draft = m.sp;
     assert.equal(draft.cards.length, 6); assert.equal(draft.family, family); assert.equal(m.publicView().sp.allowRepeat, true);
     const options = structuredClone(draft.cards), first = draft.cards[0];
-    const firstStock = first.kind === 'item' ? Math.floor(m.itemPool.left(first.id) / m.itemPool.need(first.id)) : Infinity;
+    // equipment stock is per chess-pool group (Match itemPoolFor): each group's seats can take card 0 up to its own stock
+    const groups = new Map();
+    for (const ps of m.order) {
+      const g = groups.get(ps.itemPool) || { seats: 0, stock: first.kind === 'item' ? Math.floor(ps.itemPool.left(first.id) / ps.itemPool.need(first.id)) : Infinity };
+      g.seats++; groups.set(ps.itemPool, g);
+    }
+    const firstPicks = [...groups.values()].reduce((n, g) => n + Math.min(g.seats, g.stock), 0);
     assert.ok(draft.cards.every((card, i) => card.idx === i));
     if (count > 1) assert.equal(m.pickCard(m.players.get(draft.order[1]), 0).error, ERR.NOT_YOUR_TURN);
     let confirmed = 0;
@@ -154,21 +160,18 @@ for (const [capacity, count] of [[8, 2], [8, 5], [8, 8], [12, 12], [16, 16], ...
       const ps = m.players.get(m.spTurn()); assert.equal(m.pickCard(ps, 6).error, ERR.BAD_TARGET);
       if (!m.spCardAvailable(first)) {
         assert.equal(first.kind, 'item', 'taken metadata alone cannot exhaust repeatable bounty/tactic cards');
-        assert.equal(m.itemPool.canGain(first.id), false);
+        assert.equal(ps.itemPool.canGain(first.id), false);
         assert.equal(m.pickCard(ps, 0).error, ERR.SOLD_OUT);
         assert.equal(draft.picks[ps.playerId], undefined, 'a rejected exhausted card consumes no confirmation');
       }
       const card = draft.cards.find(c => m.spCardAvailable(c));
-      if (!card) {
-        assert.ok(draft.cards.every(c => c.kind === 'item' && !m.itemPool.canGain(c.id)), 'only complete stock exhaustion can end before all picks');
-        break;
-      }
+      assert.ok(card, 'a seat whose stock holds none of the cards is passed over before its turn');
       assert.deepEqual(m.pickCard(ps, card.idx), { ok: true }); assert.equal(draft.picks[ps.playerId], card.idx);
       assert.equal(m.pickCard(ps, card.idx).error, ERR.ALREADY); confirmed++;
     }
     h.sched.advance(0); assert.equal(m.phase, 'PREP');
     assert.equal(Object.keys(draft.picks).length, confirmed);
-    assert.equal(Object.values(draft.picks).filter(idx => idx === 0).length, Math.min(count, firstStock));
+    assert.equal(Object.values(draft.picks).filter(idx => idx === 0).length, firstPicks);
     if (first.kind !== 'item') {
       assert.equal(confirmed, count); assert.ok(Object.values(draft.picks).every(idx => idx === 0), 'unlimited bounty/tactic choices remain fully repeatable');
     }
@@ -224,30 +227,38 @@ for (const capacity of [8, 12, 16, 20]) test(`${capacity}-mode AI seats repeat t
   assert.equal(m.errorCount, 0);
 });
 
-for (const capacity of [8, 12, 16, 20]) test(`${capacity}-mode repeated equipment uses live stock; exhausted humans/AI switch to a remaining legal card`, t => {
+for (const capacity of [8, 12, 16, 20]) test(`${capacity}-mode repeated equipment uses its group's live stock; exhausted humans/AI switch to a remaining legal card`, t => {
   const h = make(t, 3, { bots: 2, experimental: rules(capacity) }), m = h.m;
   m.phase = 'SP_DRAFT'; m.round = 3;
   for (const ps of m.order) ps.lp = 28;
   const pack = 'chess_item_5_07_e_a', fallback = 'chess_item_2_03_e_a';
-  assert.equal(m.itemPool.cap(pack), 2);
-  assert.equal(m.itemPool.cap(fallback), null, 'effect-only gear has no shared cap');
+  // equipment stock follows the chess-pool groups (Match itemPoolFor): five seats share one pool enlarged ×5/4 in the
+  // 8/12/16 modes (商业包装方案 2 → 3), the 20 mode keeps fixed groups of four (seats 0–3 | seat 4, ×1 each)
+  const chunked = capacity === 20, first = m.order[0].itemPool, takers = chunked ? 2 : 3;
+  assert.equal(first.cap(pack), chunked ? 2 : 3);
+  assert.equal(first.cap(fallback), null, 'effect-only gear has no shared cap');
+  assert.equal(m.order[4].itemPool === first, !chunked);
   m.sp = { cards: [pack, fallback].map((id, idx) => ({ idx, id, kind: 'item' })),
     order: m.order.map(p => p.playerId), idx: 0, picks: {}, taken: {}, untimed: true };
   const draft = m.sp;
-  for (const ps of m.order.slice(0, 2)) assert.deepEqual(m.pickCard(ps, 0), { ok: true });
+  for (const ps of m.order.slice(0, takers)) assert.deepEqual(m.pickCard(ps, 0), { ok: true });
   assert.equal(draft.taken[0], m.order[0].playerId, 'taken keeps only first-picker display metadata');
-  assert.deepEqual(Object.values(draft.picks), [0, 0]);
-  assert.equal(m.itemPool.left(pack), 0);
-  const third = m.order[2];
-  assert.equal(m.pickCard(third, 0).error, ERR.SOLD_OUT);
-  assert.equal(draft.picks[third.playerId], undefined, 'an exhausted rejection consumes no pick');
-  assert.equal(m.publicView().sp.cards[0].soldOut, true);
-  assert.deepEqual(m.pickCard(third, 1), { ok: true });
+  assert.equal(first.left(pack), 0);
+  const next = m.order[takers];
+  assert.equal(m.pickCard(next, 0).error, ERR.SOLD_OUT);
+  assert.equal(draft.picks[next.playerId], undefined, 'an exhausted rejection consumes no pick');
+  assert.equal(m.publicView().sp.cards[0].soldOut, true, "the card is marked for the picking seat's group");
+  assert.deepEqual(m.pickCard(next, 1), { ok: true });
   assert.ok(h.run(() => m.phase === 'PREP'), 'automatic picks skip the exhausted repeated card');
   assert.equal(Object.keys(draft.picks).length, 5);
-  assert.deepEqual(Object.values(draft.picks), [0, 0, 1, 1, 1]);
-  assert.ok(m.order.filter(ps => ps.isBot).every(ps => draft.picks[ps.playerId] === 1));
-  assert.equal(m.itemPool.held(pack), m.itemPool.cap(pack));
+  const picks = m.order.map(ps => draft.picks[ps.playerId]);
+  assert.deepEqual(picks.slice(0, 4), chunked ? [0, 0, 1, 1] : [0, 0, 0, 1]);
+  if (chunked) {
+    // the fifth seat draws on its own group's two copies, untouched by the first group's
+    assert.ok([0, 1].includes(picks[4]));
+    assert.equal(m.order[4].itemPool.held(pack), picks[4] === 0 ? 1 : 0);
+  } else assert.equal(picks[4], 1);
+  assert.equal(first.held(pack), first.cap(pack));
   assert.deepEqual(collectViolations(m), []);
   assert.deepEqual(h.logs.error, []);
 });
@@ -283,4 +294,30 @@ test('two battle owners with the same revive strategy each retain their own thre
   for (let i = 0; i < 3; i++) { h.b.kill(b); assert.equal(b.alive, true); }
   h.b.kill(b); assert.equal(b.alive, false);
   assert.deepEqual(h.b.errors, []);
+});
+
+test('equipment stock follows the chess-pool groups: one per group of seats, enlarged with the pool, per player without a shared pool', t => {
+  const coin = 'chess_item_1_03_e_a', slot = { kind: 'item', id: coin, basePrice: 1, sold: false };
+  // an ordinary co-op match: one stock for every seat, the measured cap
+  const coop = make(t, 4, { experimental: undefined }).m;
+  assert.ok(coop.order.every(ps => ps.itemPool === coop.itemPool)); assert.equal(coop.itemPool.cap(coin), 4);
+  // the 20 mode: fixed groups of four — the first group's four coins leave the second group's untouched
+  const m = make(t, 8).m, [a, b] = [m.order[0], m.order[4]];
+  assert.notEqual(a.itemPool, b.itemPool); assert.equal(a.itemPool.cap(coin), 4); assert.equal(b.itemPool.cap(coin), 4);
+  for (const ps of m.order.slice(0, 4)) assert.ok(ps.acquireItem(coin));
+  assert.equal(a.outOfStock(slot), true); assert.equal(b.outOfStock(slot), false);
+  assert.ok(b.acquireItem(coin)); assert.equal(b.itemPool.held(coin), 1); assert.equal(a.itemPool.held(coin), 4);
+  assert.equal(a.acquireItem(coin), null, "the first group's stock refuses a fifth");
+  assert.deepEqual(collectViolations(m), []);
+  // six seats of the 8 mode share one pool enlarged ×6/4: 盟约之币 4 → 6
+  const six = make(t, 6, { experimental: rules(8) }).m;
+  assert.equal(six.poolGroups.length, 1); assert.equal(six.itemPool.cap(coin), 6);
+  // no shared pool: every seat its own stock
+  const solo = make(t, 3, { experimental: rules(8, { disableSharedPool: true }) }).m;
+  assert.equal(new Set(solo.order.map(ps => ps.itemPool)).size, 3);
+  const [p0, p1] = solo.order;
+  for (let i = 0; i < 4; i++) assert.ok(p0.acquireItem(coin));
+  assert.equal(p0.itemPool.held(coin), 4); assert.equal(p0.acquireItem(coin), null);
+  assert.equal(p1.outOfStock(slot), false); assert.ok(p1.acquireItem(coin));
+  assert.deepEqual(collectViolations(solo), []);
 });

@@ -1,5 +1,5 @@
-// Player settings (BGM/SFX/voice volume, the voice dub 语音语言, mute, damage numbers, render quality, 文字大小, the
-// shortcut keys): a tiny observable store persisted in localStorage (`sp.pref.settings`), applied to the audio manager
+// Player settings (BGM/SFX/voice volume, the voice dub 语音语言, mute, damage numbers, render quality, 文字大小, 界面大小,
+// the shortcut keys): a tiny observable store persisted in localStorage (`sp.pref.settings`), applied to the audio manager
 // and to the document on every change, plus the settings modal — which also holds the language switch (ui/lang.js; kept
 // apart in `sp.pref.lang`; under it a note while the current language's pack is a machine translation,
 // `_meta.machineTranslated`) and the 快捷键 section that rebinds the in-match shortcuts (the key map:
@@ -13,15 +13,20 @@
 // settings only inflate the glyphs inside fixed boxes (and page zoom is off: index.html's viewport, ui/device.js).
 // Only font-size declarations read `--t`, so the board, the HUD bands the prep camera keeps clear and the detail
 // card's side do not move — the field is sized from the host element's clientWidth (render/app.js).
+//
+// 界面大小 (uiScale, applied by applyUiScale): the match HUD as a whole — css/theme.css `--ui` scales the layout root and
+// every pixel floor of the match CSS while the match screen is mounted. On a phone (default 80 %) the HUD's bottom band
+// shrinks and the prep camera frames a taller board, so the shop stays open while deploying instead of being folded.
 
 import { useLayoutEffect, useRef, useState } from '../../vendor/hooks.module.js';
 import { html, Modal, Button, Icon, MicroLabel } from './components.js';
 import { GIcon } from './gameComponents.js';
 import { createStore, useStore, loadPref, savePref, store } from '../store.js';
-import { sanitizeSettings, HOTKEY_ACTIONS, DEFAULT_HOTKEYS, hotkeyLabel, rebindHotkey, isDefaultHotkeys, captureHotkey, TEXT_SIZES } from './gameLogic.js';
+import { sanitizeSettings, HOTKEY_ACTIONS, DEFAULT_HOTKEYS, hotkeyLabel, rebindHotkey, isDefaultHotkeys, captureHotkey, TEXT_SIZES, UI_SCALES, uiScaleStep } from './gameLogic.js';
 import { audio } from '../audio.js';
 import { openGuide } from './guide.js';
-import { detectFeatures } from './device.js';
+import { detectFeatures, useMedia } from './device.js';
+import { PHONE_QUERY } from './teamLayout.js';
 import { LanguageSettings } from './languageSettings.js';
 import { voiceLanguageStore, setVoiceLanguage } from './voiceLanguage.js';
 import { t, tc, N_ } from '../../../shared/i18n.js';
@@ -45,16 +50,35 @@ export function applyTextSize(v) {
   if (el) el.dataset.text = TEXT_SIZES.includes(v) ? v : 'sm';
 }
 
+/**
+ * 设置 →「界面大小」: put the step on <html data-ui> — css/theme.css turns it into --ui, the factor of the match's layout
+ * root and of its pixel floors (only while html.sp-in-match is set; 'auto': 80 % on a phone). The prep camera reads the
+ * HUD in pixels when the window resizes (ui/fieldHost.js hudBands), so a change is followed by a resize event once the
+ * new sizes are laid out; the first application (page load) has nothing to re-frame. Values outside UI_SCALES → 'auto'.
+ * @param {string} v
+ */
+export function applyUiScale(v) {
+  const el = globalThis.document?.documentElement;
+  if (!el) return;
+  const next = UI_SCALES.includes(v) ? v : 'auto';
+  if (el.dataset.ui === next) return;
+  const first = el.dataset.ui == null;
+  el.dataset.ui = next;
+  if (!first) globalThis.requestAnimationFrame?.(() => globalThis.dispatchEvent(new Event('resize')));
+}
+
 settingsStore.subscribe((s) => {
   savePref('settings', sanitizeSettings(s));
   audio.setVolumes(s);
   audio.setVoiceLang(s.voiceLang, s.voiceOverrides);
   applyTextSize(s.textSize);
+  applyUiScale(s.uiScale);
 });
 audio.setVolumes(settingsStore.get());
 audio.setVoiceLang(settingsStore.get().voiceLang, settingsStore.get().voiceOverrides);
 // before the first render (main.js boot renders after its imports ran): the stored step is on screen without a flash
 applyTextSize(settingsStore.get().textSize);
+applyUiScale(settingsStore.get().uiScale);
 // Keep the upstream settings field as a mirror, never a second independently selected dub.
 voiceLanguageStore.subscribe(({ language }) => {
   if (settingsStore.get().voiceLang !== language) settingsStore.set({ voiceLang: language });
@@ -101,6 +125,8 @@ const QUALITY = [['high', N_('高')], ['medium', N_('中')], ['low', N_('低')]]
  * raise the text root `--t` (css/theme.css) and with it every readable font-size; the board and the HUD's boxes stay.
  */
 const TEXT_SCALES = [['sm', N_('小')], ['md', N_('中')], ['lg', N_('大')], ['xl', N_('特大')]];
+/** 界面大小's buttons: every UI_SCALES step but 'auto' (shown as the step it resolves to: uiScaleStep). */
+const UI_STEPS = UI_SCALES.filter((id) => id !== 'auto');
 /** The rebindable shortcuts' names (msgids), by action. */
 const HOTKEY_NAMES = { refresh: N_('刷新商店'), freeze: N_('冻结 / 解冻商店'), levelUp: N_('升级调度中心'), retreat: N_('撤退选中干员'),
   sell: N_('出售选中干员'), ready: N_('准备就绪 / 暂停（独立模拟）') };
@@ -242,6 +268,7 @@ export function SettingsModal({ open, onClose }) {
   const s = useSettings();
   const [tested, setTested] = useState(false);
   const [touchUi] = useState(() => detectFeatures().coarse && !detectFeatures().fine);
+  const uiStep = uiScaleStep(s.uiScale, useMedia(PHONE_QUERY));
   return html`<${Modal} open=${open} onClose=${onClose} title=${t('设置')} micro="SETTINGS" width="7.4rem"
                         actions=${html`<${Button} variant="secondary" icon="book" class="set-guide" onClick=${() => openGuide(0)}>${t('玩法说明')}<//>
                         <${Button} variant="primary" icon="check" onClick=${onClose}>${t('完成')}<//>`}>
@@ -270,6 +297,14 @@ export function SettingsModal({ open, onClose }) {
         </div>
       </div>
       <p class="set-hint set-textsize-note">${t('调整界面文字大小，棋盘保持原比例。')}</p>
+      <div class="set-row">
+        <span class="set-row__label">${t('界面大小')}<${MicroLabel}>UI SCALE<//></span>
+        <div class="set-seg set-uiscale" role="radiogroup" aria-label=${t('界面大小')} data-testid="ui-scale">
+          ${UI_STEPS.map((id) => html`<button key=${id} type="button" role="radio" aria-checked=${uiStep === id ? 'true' : 'false'}
+            class=${uiStep === id ? 'is-on' : ''} onClick=${() => updateSettings({ uiScale: id })}>${id}%</button>`)}
+        </div>
+      </div>
+      <p class="set-hint set-uiscale-note">${t('对局界面整体缩放：调小后棋盘更大，商店不用收起也能一边购买一边部署。默认手机 80%，电脑 100%。')}</p>
       <${HotkeySection} keys=${s.keys} touchUi=${touchUi} />
       <${DiagSection} />
       <p class="set-hint">${touchUi ? t('触屏操作：点击单位选中（撤退 / 出售）· 长按单位或卡牌查看详情 · 拖动部署后滑动选择朝向') : t('右键查看详情')}</p>

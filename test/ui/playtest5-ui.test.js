@@ -92,8 +92,8 @@ describe('8: the settings gear is a clean, regular icon', () => {
     const css = read('public/css/devices.css');
     const phone = css.slice(css.indexOf('@media (max-height: 600px) and (pointer: coarse)'));
     const block = phone.slice(0, phone.indexOf('\n}\n'));
-    assert.match(block, /\.gm__gear \{ width: max\(\.56rem, 34px\); height: max\(\.56rem, 34px\); \}/);
-    assert.match(block, /\.gm__corner \.gm__gear \.icon \{ width: max\(\.28rem, 17px\); height: max\(\.28rem, 17px\); \}/);
+    assert.match(block, /\.gm__gear \{ width: max\(\.56rem, calc\(34px \* var\(--ui\)\)\); height: max\(\.56rem, calc\(34px \* var\(--ui\)\)\); \}/);
+    assert.match(block, /\.gm__corner \.gm__gear \.icon \{ width: max\(\.28rem, calc\(17px \* var\(--ui\)\)\); height: max\(\.28rem, calc\(17px \* var\(--ui\)\)\); \}/);
     // desktop: .28rem in a .56rem button — the same half
     assert.match(read('public/css/screens/game.css'), /\.gm__gear \.icon \{ width: \.28rem; height: \.28rem; \}/);
   });

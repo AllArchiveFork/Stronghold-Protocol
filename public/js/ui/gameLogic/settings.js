@@ -22,16 +22,34 @@ import { DEFAULT_HOTKEYS, sanitizeHotkeys } from './shortcuts.js';
  */
 export const TEXT_SIZES = Object.freeze(['sm', 'md', 'lg', 'xl']);
 
+/**
+ * The steps of 设置 →「界面大小」 (uiScale): css/theme.css `--ui`, the factor of the match's layout root and pixel floors
+ * (the lobby and the other screens never scale). 'auto' is 80 % on a phone (UI_SCALE_PHONE; the phone query of
+ * css/devices.css, ui/teamLayout.js PHONE_QUERY) and 100 % elsewhere; the others are the percentage.
+ */
+export const UI_SCALES = Object.freeze(['auto', '70', '80', '90', '100', '110', '120']);
+export const UI_SCALE_PHONE = '80';
+
+/**
+ * The step 界面大小 shows as chosen: the stored one, or what 'auto' resolves to on this device.
+ * @param {string} uiScale @param {boolean} phone
+ */
+export function uiScaleStep(uiScale, phone) {
+  if (uiScale !== 'auto' && UI_SCALES.includes(uiScale)) return uiScale;
+  return phone ? UI_SCALE_PHONE : '100';
+}
+
 /** keys: the in-match shortcuts' key map (ui/gameLogic/shortcuts.js; settings → 快捷键). voiceLang: VOICE_LANGS.
- *  textSize: TEXT_SIZES (css/theme.css `--t`, applied by ui/settings.js applyTextSize). */
-export const DEFAULT_SETTINGS = Object.freeze({ bgm: 0.6, sfx: 0.8, voice: 0.8, voiceLang: 'cn', voiceOverrides: Object.freeze({}), muted: false, damageNumbers: true, officialDamageNumbers: false, quality: 'high', textSize: 'sm', keys: DEFAULT_HOTKEYS });
+ *  textSize: TEXT_SIZES (css/theme.css `--t`, applied by ui/settings.js applyTextSize). uiScale: UI_SCALES (`--ui`,
+ *  applied by ui/settings.js applyUiScale). */
+export const DEFAULT_SETTINGS = Object.freeze({ bgm: 0.6, sfx: 0.8, voice: 0.8, voiceLang: 'cn', voiceOverrides: Object.freeze({}), muted: false, damageNumbers: true, officialDamageNumbers: false, quality: 'high', textSize: 'sm', uiScale: 'auto', keys: DEFAULT_HOTKEYS });
 const QUALITIES = ['high', 'medium', 'low'];
 
 /**
  * Sanitize persisted settings.
  * @param {any} raw
  * @returns {{ bgm: number, sfx: number, voice: number, voiceLang: 'cn'|'jp'|'en', voiceOverrides: Record<string, string>, muted: boolean, damageNumbers: boolean, officialDamageNumbers: boolean, quality: 'high'|'medium'|'low',
- *   textSize: 'sm'|'md'|'lg'|'xl', keys: Record<'refresh'|'freeze'|'levelUp'|'retreat'|'sell'|'ready', string> }}
+ *   textSize: 'sm'|'md'|'lg'|'xl', uiScale: string, keys: Record<'refresh'|'freeze'|'levelUp'|'retreat'|'sell'|'ready', string> }}
  */
 export function sanitizeSettings(raw) {
   const r = isObj(raw) ? raw : {};
@@ -47,6 +65,7 @@ export function sanitizeSettings(raw) {
     officialDamageNumbers: typeof r.officialDamageNumbers === 'boolean' ? r.officialDamageNumbers : false,
     quality: QUALITIES.includes(r.quality) ? r.quality : DEFAULT_SETTINGS.quality,
     textSize: TEXT_SIZES.includes(r.textSize) ? r.textSize : DEFAULT_SETTINGS.textSize,
+    uiScale: UI_SCALES.includes(String(r.uiScale)) ? String(r.uiScale) : DEFAULT_SETTINGS.uiScale,
     keys: sanitizeHotkeys(r.keys),
   };
 }

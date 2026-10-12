@@ -1033,11 +1033,17 @@ interpretation]. Shop/reward displays reserve nothing; rejected exhausted **item
 整备 upgrades the purchased item only when `left` still has the golden's second copy; otherwise the item stays
 normal and the charge remains.
 `m.public.sp.cards[].soldOut` disables duplicates when a preceding choice used the final copy; timer/bot choices
-use the same availability. Non-shop effect-only equipment is unlimited.
+use the same availability. Non-shop effect-only equipment is unlimited. A 机密商店 coin slot draws another tier-I item
+once no stock holds a 盟约之币 (2026-10-12): such a card could only have been shown as sold out. m.private marks an
+equipment card of the shop or an offer whose stock is used up `soldOut` (`outOfStock`; never an operator card since
+0.2.5, #498), and the bar names it 「全队库存已用完」 (others' copies or the player's own).
 
 Operator capacities use measured single-player exceptions and twice those counts in co-op; DIY remains private.
-Fork grouped / player chess pools and the host's `disableSharedPool` option remain; the new `SharedItemPool` accounts
-for equipment across all match players, not per chess-pool group. Expanded `sp.allowRepeat` permits repeated card
+Fork grouped / player chess pools and the host's `disableSharedPool` option remain. Equipment stock follows the same
+groups (owner's decision 2026-10-12, `pool.js createItemPools`, `Match.itemPoolFor` / `ps.itemPool`): an ordinary match
+has one stock for every seat; an experimental room one per group of seats (enlarged ×5/4 or ×6/4 with a 5–6-seat pool),
+and one per player without a shared pool — before, 16 or 20 seats shared four 盟约之币. A draft card's stock is the
+picking seat's; a seat with none of the cards left is passed over. Expanded `sp.allowRepeat` permits repeated card
 indices but never bypasses item availability: `soldOut`, manual picks, timers and bots all re-check the same stock.
 `take(..., { overdraw: true })` records full occupation, including authorized acquisitions beyond capacity.
 Already displayed operator shop offers remain purchasable after exhaustion (路标月报#2 2:50–2:57, #498);
@@ -1048,5 +1054,4 @@ Fixed equipment gifts from `SERVER_GAIN_EQUIP` (卡涅利安、蜜蜡、缪尔�
 including the same families awarded by 变形者. They still occupy ordinary/advanced 1/2 copies and can leave availability
 at zero after a removal. Ordinary shop, reward and random grants retain their limits. `requirePool:false` is not a
 universal equipment bypass. Rockrock/Flametail's measured weighted subsets remain subject to shared availability (§30.2).
-Existing item selection probabilities and explicit grant weights remain unchanged. Since 0.2.5 the fork's shop
-and offer `soldOut` marks (m.private, `outOfStock`) cover equipment only.
+Existing item selection probabilities and explicit grant weights remain unchanged.
