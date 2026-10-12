@@ -215,8 +215,11 @@ export class PlayerAcquire {
    * copy-weighted roll from the shared pool excluding the ones already drawn; a tier left without another chess tops
    * up from the tier below (user playtest #6 item 19: the official promotion reward never offers one operator twice —
    * the user's first-hand report; the normal shop's slots may repeat). The offer reserves no copies (the pick takes one).
-   * The player's slotted 自选 pieces join the draw like in its shop (player/diy.js diyRollEntries: once the 调度中心 is at
-   * the slot's level) — the reward is a temporary refresh of the shop ("临时刷新3名…干员") [ASSUMED].
+   * The player's slotted 自选 pieces of the reward tier join the draw (player/diy.js diyStockEntries: copies left, then
+   * the roll's tier — not the ordinary shop's shopLevel gate). 卫戍协议/帮助 干员晋升 names one temporary refresh one tier
+   * above the 调度中心 and no separate pool; the owner decided on 2026-10-12 that the refresh includes 自选 of the newly
+   * reached tier. 0.2.0 had [ASSUMED] the shop-level gate on this refresh too (DESIGN §25); §30.23 reverses that.
+   * An offer built from explicit `ids` does not roll.
    */
   pushRewardOffer(source = 'merge', { tier = null, ids = null, label = null } = {}) {
     const ro = this.gd.rewardOffer();
@@ -228,7 +231,7 @@ export class PlayerAcquire {
       const fresh = (id) => !list.includes(id);
       for (let i = 0; i < ro.count; i++) {
         let id = null;
-        for (let tt = t; tt >= 1 && !id; tt--) id = this.pool.roll(this.m.rngShop, { tier: tt, filter: fresh, extra: this.diyRollEntries() });
+        for (let tt = t; tt >= 1 && !id; tt--) id = this.pool.roll(this.m.rngShop, { tier: tt, filter: fresh, extra: this.diyStockEntries() });
         if (id) list.push(id);
       }
     }
@@ -284,20 +287,18 @@ export class PlayerAcquire {
    * call, even when an identical normal copy is already owned. The next prep's start runs checkItemMerges. Nothing
    * already equipped is taken off for the fight about to start. Hand and temp both full keeps the 「整备区已满，获得的装备已销毁」
    * outcome. [ASSUMED] every item granted at 休整期结束, not only 维多利亚's 战栗维式重锤 (owner's decision 2026-10-04).
-   * `requirePool: false` (a named free grant: a 特质's / strategy's 「获得N件X」, 画卷's copy — GitHub #488) is not refused
-   * by the shared shop stock, as before 0.2.4 and like an operator grant beyond stock (拟态物质, grantChess). Its
-   * copies still occupy stock until they leave ownership; `overStock` marks a piece granted beyond it (invariants).
    */
   acquireItem(itemId, { source = 'grant', toTemp = false, silent = false, deferMerge = false, requirePool = true } = {}) {
     const rec = this.gd.item(itemId);
     if (!rec) return null;
-    const overStock = !this.m.itemPool.canGain(itemId);
-    if (overStock && requirePool) {
+    // Only the fixed operator-gift families can overdraw. Several unrelated strategy grants also pass
+    // requirePool:false; they must retain their stock limit (for example commercial packaging).
+    const unlimitedGift = !requirePool && this.gd.isUnlimitedGiftItem(itemId);
+    if (!unlimitedGift && !this.m.itemPool.canGain(itemId)) {
       this.m.toast(this, 'warn', '装备库存不足，未获得该装备');
       return null;
     }
     let piece = this.newPiece('item', itemId);
-    if (overStock) piece.overStock = true;
     // A prep-end grant may sit beside an identical copy until the next prep. The invariant counts only copies
     // without this mark, so the fight that is about to start is not reported as a missed merge.
     if (deferMerge) piece.deferMerge = true;
@@ -324,7 +325,6 @@ export class PlayerAcquire {
     const slotOf = consumed.filter((l) => l.area === 'equipped').map((l) => ({ holder: l.holder, idx: l.holder.items.indexOf(l.piece) }));
     for (const l of consumed) if (l.area !== 'new') this._detach(l);
     const golden = this.newPiece('item', rec.upgradeChessId || rec.goldenId);
-    if (consumed.some((l) => l.piece.overStock)) golden.overStock = true;
     if (!this.stow(golden, { allowTemp: true })) {
       const at = slotOf[0];
       if (!at || !this.find(at.holder.uid)) {

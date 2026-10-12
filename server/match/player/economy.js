@@ -4,7 +4,7 @@
 // Installed on PlayerState.prototype by server/match/PlayerState.js (a method container: never instantiated; `this` is
 // the player state).
 
-import { ERR, layerGainRoom } from '../../../shared/constants.js';
+import { ERR, PHASE, layerGainRoom } from '../../../shared/constants.js';
 import { freeSlot } from '../board.js';
 import { OK, fail } from './common.js';
 
@@ -47,6 +47,10 @@ export class PlayerEconomy {
     if (add <= 0) return 0;
     this.layers[bondId] = before + add;
     this.recompute();
+    // A live prep gain, not a view delta: reconnects and combat-result backfill must not replay the cue.
+    if ([PHASE.ROUND_START, PHASE.SP_DRAFT, PHASE.PREP].includes(this.m.phase)) {
+      this.m.sendTo(this.playerId, { t: 'm.layer', playerId: this.playerId, bondId, add });
+    }
     this.m.dispatch(this, 'onLayers', { bondId, from: before, to: before + add, reason });
     return add;
   }
@@ -141,7 +145,9 @@ export class PlayerEconomy {
       const rec = this.gd.chess(slot.id);
       // a DIY slot sells only as this player's own 自选 piece (a slotted slot's record carries `diyFor`)
       if (!rec || (rec.isDiy && !rec.diyFor)) return fail(ERR.BAD_TARGET);
-      if (this.outOfStock(slot)) return fail(ERR.SOLD_OUT);
+      // Already displayed operators stay purchasable after stock runs out (#498; 路标月报#2,
+      // BV1eLXXBqEgF 2:50–2:57: nine owned + four shop offers => thirteen owned).
+      // acquireChess records every copy, including the deficit; future rolls still exclude empty stock.
       if (handFull) return fail(ERR.HAND_FULL);
       this.spend(price);
       slot.sold = true;
@@ -163,19 +169,14 @@ export class PlayerEconomy {
   }
 
   /**
-   * Whether the stock an unsold shop / offer slot draws from can no longer supply it. Displays reserve no copies (pool.js
-   * header), so another player can take the last ones after the roll: the pool — shared, the seat group's, or this
-   * player's 自选 stock (poolOf) — for an operator (an elite needs goldenCopies), the item stock for an item. buy and
-   * pickReward refuse such a slot (SOLD_OUT); m.private marks it `soldOut` so the card says so before the tap.
+   * Whether the equipment stock can no longer supply an unsold item slot of the shop / an offer. Displays reserve no
+   * copies (pool.js header), so another player can take the last ones after the roll; buy and pickReward refuse such a
+   * slot (SOLD_OUT) and m.private marks it `soldOut` so the card says so before the tap. An operator slot never is: an
+   * operator already shown stays purchasable and overdraws its pool (#498, 0.2.5).
    */
   outOfStock(slot) {
-    if (!slot || slot.sold) return false;
-    if (slot.kind === 'item') return !!this.gd.item(slot.id) && !this.m.itemPool.canGain(slot.id);
-    const rec = this.gd.chess(slot.id);
-    if (!rec) return false;
-    const base = this.gd.baseIdOf(slot.id);
-    const pool = this.poolOf(base);
-    return pool.has(base) && pool.left(base) < (rec.isGolden ? this.gd.goldenCopies : 1);
+    if (!slot || slot.sold || slot.kind !== 'item') return false;
+    return !!this.gd.item(slot.id) && !this.m.itemPool.canGain(slot.id);
   }
 
   /** The out-of-stock flags m.private last carried, as one string (Match.flush re-sends m.private when they move). */

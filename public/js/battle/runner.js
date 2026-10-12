@@ -63,9 +63,10 @@
 //                           Panel values/range are sampled once from cached unit stats; later buffs and spawns never
 //                           regenerate them. HP/SP bars still follow the compact snapshots, not this panel cache.
 //   battleRunner.unitIdOf(uid, ownerId, fieldId?) → the id of an own board piece's unit in that battle | null
-//   battleRunner.ownerOps(ownerId, fieldId?) → [{ kind: 'op', ownerId, defId, items?, standInFor? }] that player's
+//   battleRunner.ownerOps(ownerId, fieldId?) → [{ kind: 'op', ownerId, defId, items?, standInFor?, diy? }] that player's
 //                           operators in the battle on screen with their equipment (a teammate's bond popup: the members in
-//                           play, DESIGN §20.15, 变形同构体 wearers included; a 补位 stand-in names the replaced charId) | []
+//                           play, DESIGN §20.15, 变形同构体 wearers included; a 补位 stand-in names the replaced charId,
+//                           a 自选 operator carries its pick like UnitInfo) | []
 //
 // createBattleRunner(deps) builds an instance with injectable net / store / clock / frame scheduler / sim loader
 // (test/match/runner.test.js and test/match/runner-pending.test.js drive it under Node).
@@ -1046,7 +1047,8 @@ export function createBattleRunner(deps) {
         .map((u) => {
           const o = Array.isArray(u.items) && u.items.length ? { kind: 'op', ownerId, defId: u.defId, items: [...u.items] } : { kind: 'op', ownerId, defId: u.defId };
           const si = u.def && typeof u.def.standInFor === 'string' ? u.def.standInFor : null;
-          return si ? { ...o, standInFor: si } : o;
+          const diy = u.def?.diyFor ? u.def.loadout?.diy : null;
+          return { ...o, ...(si ? { standInFor: si } : {}), ...(diy ? { diy: { ...diy } } : {}) };
         });
     },
     /** Re-show the current battle (the game screen remounted). */

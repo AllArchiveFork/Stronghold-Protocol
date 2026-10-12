@@ -222,10 +222,12 @@ for (const independent of [false, true]) test(`exhausted owner stock shared=${!i
     const piece = b.allChess().find(piece => m.gd.baseIdOf(piece.id) === id);
     assert.deepEqual(b.sell(piece.uid), { ok: true }); assert.equal(b.pool.left(id), cap); assert.equal(a.pool.left(id), 0);
   } else {
-    assert.equal(b.buy(0).error, ERR.SOLD_OUT); assert.equal(b.funds, before); assert.equal(b.shop.slots[0].sold, false);
+    // 0.2.5 (#498): an operator already shown stays purchasable on the exhausted shared pool and overdraws it
+    assert.deepEqual(b.buy(0), { ok: true }); assert.equal(b.funds, before - price); assert.equal(b.pool.left(id), 0);
   }
   const held = a.allChess().find(piece => m.gd.baseIdOf(piece.id) === id);
-  assert.deepEqual(a.sell(held.uid), { ok: true }); assert.equal(a.pool.left(id), held.poolCopies || 3);
+  // selling first repays the shared pool's deficit (the copy b bought on it)
+  assert.deepEqual(a.sell(held.uid), { ok: true }); assert.equal(a.pool.left(id), (held.poolCopies || 3) - (independent ? 0 : 1));
   if (independent) assert.equal(b.pool.left(id), cap);
   h.invariants();
 });

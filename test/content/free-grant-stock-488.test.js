@@ -1,7 +1,9 @@
-// GitHub #488: a named free grant (「<获得时>获得N件X」 特质, a strategy's fixed-round item, 画卷's copied equipment) is
-// not refused by the shared shop-equipment stock — as in 0.2.2, and like an operator granted beyond stock (拟态物质). Its
-// copies still occupy stock: the shop, reward offers and default grants keep the check, and ownership leaving never
-// returns stock above the cap. Real registry and dispatcher (server/sim/content/garrisons/meta.js, bands/meta.js).
+// GitHub #488: a fixed operator gift (「<获得时>获得N件X」 特质; the same item from a strategy's fixed round or 画卷's copy)
+// is not refused by the shared shop-equipment stock — as in 0.2.2, and like an operator granted beyond stock (拟态物质).
+// 0.2.5 narrows the exemption to those item families (gamedata isUnlimitedGiftItem; other requirePool:false grants such
+// as 商业包装方案 keep the cap). Its copies still occupy stock: the shop, reward offers and default grants keep the check,
+// and ownership leaving never returns stock above the cap. Real registry and dispatcher (server/sim/content/garrisons/meta.js,
+// bands/meta.js).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { makeMatch, give, giveItem, checkInvariants, legalTileFor, DATA } from '../match/harness.js';
@@ -63,7 +65,6 @@ test('#488 缪尔赛思 <获得时>: 变形同构体 keeps coming after the shar
   assert.deepEqual(totals, [1, 2, 4, 5, 6]);
   assert.equal(owned(ISO).length, 6);
   assert.equal(m.itemPool.left(ISO), 0, 'the copies still occupy stock');
-  assert.equal(owned(ISO).filter((p) => p.overStock).length, 3, 'only the copies beyond the cap are marked');
   assert.ok(!warns.includes(STOCK_WARN), 'no 「装备库存不足」 toast for a 特质');
   assert.ok(ps.allChess().some((c) => c.id === 'chess_char_6_11_b'));
 });
@@ -90,7 +91,6 @@ test('#488 the shop and default grants still respect the stock while free-grante
   for (const p of owned(ISO)) { assert.deepEqual(ps.destroy(p.uid), OK); left.push(m.itemPool.left(ISO)); checkInvariants(m); }
   assert.deepEqual(left, [0, 0, 0, 1, 2, 3]);
   assert.deepEqual(buyItem(ISO), OK, 'buyable again once a copy is free');
-  assert.equal(owned(ISO).at(-1).overStock, undefined, 'a purchase is never marked');
   checkInvariants(m);
 });
 

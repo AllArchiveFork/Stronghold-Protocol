@@ -528,6 +528,8 @@ export const S2C = [
   // retain completed { round, fieldId, battleId, helpers, through } rows. Current field helpers <=2,
   // final uniteResult.helpers aggregates <=4 actual participants; b.result limits remain unchanged.
   'm.public', 'm.private', 'm.field', 'm.toast', 'm.ticker', 'm.emote', 'm.result',
+  // m.layer { playerId, bondId, add } — own live prep layer gain; ephemeral, never replayed on resync.
+  'm.layer',
   // m.unitStats { seq, round, units: [unitStatsEntry] } — the answer to g.unitStats (the requester only)
   'm.unitStats',
   // the AFK rule (挂机移出, server/match/Match.js afkRemoveRounds): m.removed { reason: 'afk', rounds } — to the removed

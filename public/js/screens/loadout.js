@@ -454,6 +454,20 @@ export function importRefusal(kind, ready, status = data.status) {
   return null;
 }
 
+/**
+ * A loadout payload that carries `ops` (including empty `ops`) replaces 潜能 / 练度. 自选 operators are in that list
+ * and only backups.json names them, so the refusal is the 自选编队 one: chess.json and backups.json both loaded.
+ * Null when the payload has no `ops` (an older file leaves the current 练度 alone) or that data is ready (GitHub #538).
+ * @param {Record<string, any> | null | undefined} ops
+ * @param {boolean} ready
+ * @param {(name: string) => string} [status]
+ * @returns {{ text: string, tone: 'warn'|'error' } | null}
+ */
+export function loadoutOpsImportRefusal(ops, ready, status = data.status) {
+  if (ops == null) return null;
+  return importRefusal('diy', ready, status);
+}
+
 /** In place of a tab whose game data did not load (missingGameData): which files, and what to try (GitHub #173). */
 export function DataMissing({ files }) {
   const urls = files.map((name) => `/data/${DATA_FILES[name] || `${name}.json`}`);
@@ -567,6 +581,9 @@ function LoadoutScreen({ st }) {
       const refused = importRefusal(kind, ready);
       if (refused) { toast(refused.text, refused.tone); return; }
     }
+    // a payload with `ops` replaces 潜能 / 练度, 自选 operators included, which only backups.json names (GitHub #538)
+    const opsRefused = loadoutOpsImportRefusal(parsed.patch.ops, ready);
+    if (opsRefused) { toast(opsRefused.text, opsRefused.tone); return; }
     const result = applyOperatorPreset(parsed, { lookup: getChess, data: diyData(), kitted: loadoutStore.get().diyKitted });
     if (!result.ok) { toast(t('导入失败：{error}', { error: t(result.error) }), 'error'); return; }
     setIo(null);
