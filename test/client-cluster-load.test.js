@@ -29,6 +29,33 @@ test('matched heartbeat sanitizes cluster telemetry into the connection snapshot
   assert.equal(f.net.clusterLoad, null);
 });
 
+test('a lobby pong that says clusterLoadSame keeps the summary; pings ask for it while none is held or the dialog is open', () => {
+  const f = fixture();
+  const cluster = { scope: 'cluster', nodes: [{ ...load.nodes[0], label: 'game-01' }] };
+  f.reply({ clusterLoad: cluster });
+  assert.equal(f.net.clusterLoad.scope, 'cluster');
+  f.reply({ clusterLoad: undefined, clusterLoadSame: true });
+  assert.equal(f.net.clusterLoad.nodes[0].label, 'game-01', 'kept');
+  // a game-scope sample is never kept as the lobby's: a pong without a summary clears it as before
+  f.reply({ clusterLoad: load });
+  f.reply({ clusterLoad: undefined, clusterLoadSame: true });
+  assert.equal(f.net.clusterLoad, null);
+  const sent = [];
+  f.net.ws = { readyState: 1, send: raw => sent.push(JSON.parse(raw)), close() {} };
+  f.net._sendPing();
+  assert.equal(sent.at(-1).full, true, 'no lobby summary held: ask for it');
+  f.net.clusterLoad = cluster;
+  f.net._sendPing();
+  assert.equal(Object.hasOwn(sent.at(-1), 'full'), false, 'a held summary is refreshed every CLUSTER_LOAD_EVERY_MS by itself');
+  f.net.watchClusterLoad(true);
+  assert.equal(sent.at(-1).full, true, 'opening the dialog probes at once and asks');
+  f.net._sendPing();
+  assert.equal(sent.at(-1).full, true);
+  f.net.watchClusterLoad(false);
+  f.net._sendPing();
+  assert.equal(Object.hasOwn(sent.at(-1), 'full'), false);
+});
+
 test('disconnect and stale probes clear node telemetry with RTT', () => {
   const f = fixture(); f.reply();
   f.net._setStatus('reconnecting');

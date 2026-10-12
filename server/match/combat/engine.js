@@ -18,12 +18,14 @@ const finite = (n, d = 0) => Number.isFinite(n) ? n : d;
 class EngineRunner extends FieldRunner {
   constructor(m, fields, hooks) {
     super(m, fields, hooks);
+    this.beforeStep = (field) => this.m.engine._beforeStep(field);
     this.afterStep = (field) => this.m.engine._afterStep(field);
   }
   _emitStart(field) { this.m.engine._emitStart(field); }
   _emit(field) { this.m.engine._emit(field); }
   _forceField(field, reason) {
     this.m.engine._saveErrors(field);
+    this.m.engine._noteEnd(field, reason);
     super._forceField(field, reason);
   }
 }
@@ -94,6 +96,9 @@ export class CombatEngine {
         this._error(`battle ${f.fieldId} construct`, e, f.fieldId);
         f.battle = new DeadBattle(spec);
       }
+      // A boss field's record of the pool for local display replicas (b.ext, sim/spec.js ReplayBossPool): `last` = the
+      // pool after this field's previous step, `hp` = the [tick, hp] entries not yet output, `end` = its forced end.
+      if (this.pool && (f.kind === 'boss' || f.kind === 'hidden')) f.ext = { last: this.pool.hp, hp: [], end: null, endOut: false };
       if (this.boss && (f.kind === 'boss' || f.kind === 'hidden')) {
         const b = f.battle;
         try {
@@ -166,8 +171,26 @@ export class CombatEngine {
     } catch (e) { this._error(`field ${f.fieldId} start stats`, e); }
   }
 
+  /**
+   * Right before a boss field's step: the pool when other fields changed it since this field's previous step — the one
+   * input a replica of this field cannot compute itself (sim/spec.js ReplayBossPool). Every boss field keeps its record
+   * from the first tick, watched or not: a browser that starts its replica later replays it from the spec.
+   */
+  _beforeStep(f) {
+    const x = f.ext;
+    if (!x) return;
+    const h = this.pool.hp;
+    if (h !== x.last && !(h !== h && x.last !== x.last)) x.hp.push([(Number(f.battle.tickCount) || 0) + 1, h]);
+  }
+
+  /** A forced end of a boss field (team LP 0, the hard cap, forceField): replicas end after the same step. */
+  _noteEnd(f, reason) {
+    if (f.ext && !f.ext.end && !f.battle.finished) f.ext.end = { tick: Number(f.battle.tickCount) || 0, reason: String(reason) };
+  }
+
   /** Digest a synced field right after its step, before any snapshot of that tick reads lazy stats. */
   _afterStep(f) {
+    if (f.ext) f.ext.last = this.pool.hp;
     if (!this.synced.has(f.fieldId) || f.syncDone) return;
     const b = f.battle;
     if (!isSyncTick(b)) return;
@@ -297,10 +320,20 @@ export class CombatEngine {
         ...(this.damageBoard && sendResult ? { damageRows: f.damageRows } : {}),
       };
     });
+    // the boss pool record since the last output (b.ext): complete through `ticks`
+    const ext = [];
+    for (const f of this.fields) {
+      const x = f.ext;
+      if (!x || (!x.hp.length && (!x.end || x.endOut))) continue;
+      ext.push({ fieldId: f.fieldId, hp: x.hp, ...(x.end && !x.endOut ? { end: x.end } : {}) });
+      x.hp = [];
+      if (x.end) x.endOut = true;
+    }
     const output = {
       ticks: this.runner.ticks, time: this.runner.time, done: this.runner.done,
       fields, effects: this.effects,
       ...(this.syncs.length ? { syncs: this.syncs } : {}),
+      ...(ext.length ? { ext } : {}),
       ...(this.damageBoard ? { damageFrames } : {}),
       boss: this.boss ? {
         maxHp: this.pool.maxHp, hp: this.pool.hp, byPlayer: [...this.pool.byPlayer],

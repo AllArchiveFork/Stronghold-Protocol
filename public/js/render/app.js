@@ -20,7 +20,8 @@
 //                                               mid-battle starts in the current model form)
 //   view.pushSnapshot(snap); view.pushEvents(ev | { ev, gt })  b.snap / b.ev wire frames as received (game time in
 //                                               `gt`; a numeric `t` is accepted for raw Battle snapshots / recordings)
-//                                               — 100 ms interpolation buffer; b.snap `down` keeps knocked-out
+//                                               — an interpolation buffer of 100 ms that grows with the stream's
+//                                               jitter (up to 600 ms, render/interp.js adaptive); b.snap `down` keeps knocked-out
 //                                               operators on the field under a redeploy ring and `elem` draws the
 //                                               element gauges (user playtest #4 items 8 / 9, render/units.js); a
 //                                               'die' with reason FORCED_EXIT (an operator entering 联防 knocked out,
@@ -278,7 +279,9 @@ export async function createFieldView(host, options = {}) {
   // dead units for DIE_ANIM_TIME), which must not bring the view back; a spawn / deploy / live sample clears it
   const gone = new Set();
   const woundUp = new WeakSet(); // atk event tuples whose attack wind-up already started
-  const interp = new SnapshotBuffer({ delay: 0.1, rate: 2 });
+  // streamed fields (a spectator seat, a replica that went back to the stream): the delay follows the network's jitter
+  const interp = new SnapshotBuffer({ delay: 0.1, rate: 2, adaptive: true });
+  let streamDelay = interp.delay;
   const sample = new Map();
   const meleePending = new Map(); // target id → { src, t }
   const consumedIds = new Set();  // battle ids used up by their own effect (fx `consumed`): no death particles
@@ -1850,7 +1853,11 @@ export async function createFieldView(host, options = {}) {
     setLocalFeed(o) {
       const on = !!(o && o.on);
       const speed = Number(o && o.speed) > 0 ? Number(o.speed) : 2;
-      interp.delay = on ? 0.034 : 0.1;
+      // the stream's learned delay is kept for the next streamed field
+      const was = interp.adaptive;
+      if (on && was) streamDelay = interp.delay;
+      interp.adaptive = !on;
+      interp.delay = on ? 0.034 : was ? interp.delay : streamDelay;
       interp.defaultRate = on ? Math.min(20, speed) : 2;
       interp.maxRate = on ? Math.max(8, speed * 1.5) : 8;
       return true;

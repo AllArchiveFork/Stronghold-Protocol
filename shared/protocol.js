@@ -404,7 +404,8 @@ export const C2S = {
   hello: { name: (v) => isStr(v, NAME_MAX_LEN) && v.trim().length > 0, token: (v) => v == null || isStr(v, 64), version: (v) => v == null || isInt(v, 0, 1e6),
     matchmakingVersion: isId, playerCapacityVersion: isId, noReplace: isBool, claimAt: (v) => isNum(v, 0, Number.MAX_SAFE_INTEGER),
     $optional: ['token', 'version', 'matchmakingVersion', 'playerCapacityVersion', 'noReplace', 'claimAt'] },
-  ping: { c: (v) => typeof v === 'number' && Number.isFinite(v) },
+  // full: this ping wants the whole cluster load summary in its pong (server/net.js CLUSTER_LOAD_EVERY_MS)
+  ping: { c: (v) => typeof v === 'number' && Number.isFinite(v), full: isBool, $optional: ['full'] },
   'room.create': { mode: (v) => v === 'solo' || v === 'coop', difficulty: (v) => DIFFICULTIES.includes(v), experimental: isExperimental, $optional: ['experimental'] },
   'room.setExperimental': { experimental: isExperimental },
   'room.join': { code: (v) => isStr(v, ROOM_CODE_LEN + 2) && /^[A-Za-z0-9]+$/.test(v) },
@@ -538,12 +539,14 @@ export const S2C = [
   // (players and spectator seats)
   'm.removed', 'm.notice',
   // client-side combat (DESIGN §14): b.start { battleId, fieldId, kind, spec, authoritative, startAt, serverNow, elapsed,
-  // speed, watch?, local? } · b.pool { hp, max, teamLp, acked: { [fieldId]: cumulative boss damage counted } } ·
+  // speed, watch?, local?, ext? } · b.pool { hp, max, teamLp, acked: { [fieldId]: cumulative boss damage counted } } ·
   // b.end { battleId, fieldId, reason } — reason 'stream': drop that local display replica, the field is streamed now
   'b.start', 'b.pool', 'b.end',
   // server-run combat, local display replicas (g.sim): b.sync { battleId, tick, h, done? } — the Worker battle's state
-  // digest (server/sim/syncHash.js) right after step `tick`; `done`: the step that finished it
-  'b.sync',
+  // digest (server/sim/syncHash.js) right after step `tick`; `done`: the step that finished it · b.ext { battleId, i, to,
+  // hp: [[tick, poolHp]], end?: { tick, reason } } — a boss / hidden replica's shared-pool record from entry `i`, complete
+  // through tick `to` (b.start `ext` carries the record so far; server/sim/spec.js ReplayBossPool)
+  'b.sync', 'b.ext',
   // Complete public round ledger (server combat): m.damage { matchId, round, phase: normal|unite|boss|hidden,
   // status: live|frozen, owners: [{ playerId, name?, seat?, total, otherDamage,
   // operators: [{ key, uid, defId, damage }] }] }. PREP retains frozen previous-round rows; battle start resets.

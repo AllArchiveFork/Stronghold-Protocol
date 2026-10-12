@@ -125,9 +125,10 @@
 //   opts.afkRemoveRounds  integer ≥ 0 (default AFK_REMOVE_ROUNDS = 2; 0 = off): the AFK rule — see the leave policy below
 //   opts.experimental locked room revivalEnabled / disableSharedPool / optional disableDuckLord, false by default
 //   opts.snapshotHz   20 | 10 | 5, server snapshots only
-//   opts.localReplica default true (env SP_LOCAL_REPLICA=0 → false): server-run combat shows a Worker-run normal / 联防
-//                     field to its own players' browsers that declared g.sim { local: true } as a b.start display replica
-//                     checked by b.sync digests, instead of streaming it (localReplica.js; DESIGN §14)
+//   opts.localReplica default true (env SP_LOCAL_REPLICA=0 → false): server-run combat shows a Worker-run field to the
+//                     seated humans' browsers that declared g.sim { local: true } (own, watched or followed; boss / hidden
+//                     ones with the Worker's pool record, b.ext) as a b.start display replica checked by b.sync digests,
+//                     instead of streaming it (localReplica.js; DESIGN §14)
 //   opts.clientCombat  default true (env SP_COMBAT=server → false: the legacy server-run + snapshot streaming mode)
 //   opts.verify        'off' | 'sample' | 'all' (env SP_VERIFY, default 'off'): re-simulate accepted client results
 //                      ('sample': ~1 in 8, in later slices, mismatches logged; 'all': before accepting — the
@@ -187,7 +188,8 @@
 //   combat.js        battle construction, COMBAT (both modes), the per-field results, then 联防 or SETTLE
 //   clientCombat.js  client-side combat bookkeeping: field records, the field clock, authority, b.start, result
 //                    deadlines and releases, server runs, field completion
-//   localReplica.js  server-run combat: local display replicas of the own field (g.sim, b.start, b.sync, stream fallback)
+//   localReplica.js  server-run combat: local display replicas of the field a seat is shown (g.sim, b.start, b.sync, b.ext,
+//                    stream fallback)
 //   reports.js       b.progress / b.result (validation, held boss results), SP_VERIFY
 //   unitePhase.js    联防 (UNITE) in both modes and the leakers' live counts
 //   bossRounds.js    FINAL_ASSAULT / HIDDEN_CORE: boss fields, the shared pool, plausibility budgets, the boss clock,
@@ -468,7 +470,10 @@ export class Match {
     this.runner = null;
     /** playerId → fieldId */
     this.watchers = new Map();
-    /** playerId → { field }: the field record that player's browser runs as a local display replica (localReplica.js) */
+    /**
+     * playerId → { field }: the field record that player's browser shows as a local display replica now (localReplica.js;
+     * a field's `localRuns` keeps every seat that ran it, for its finished view)
+     */
     this.localViews = new Map();
     /** local replicas switched back to the stream, by reason (diagnostics) */
     this.localStats = { diverged: 0, requested: 0, off: 0 };

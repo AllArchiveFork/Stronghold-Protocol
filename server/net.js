@@ -54,6 +54,12 @@ export { sanitizeName } from '../shared/names.js';
 /** Tunables (all overridable through the Network / SessionRegistry constructors). */
 /** Every lobby heartbeat carries the same public cluster summary: normalize it at most once per this many ms. */
 export const CLUSTER_LOAD_CACHE_MS = 1000;
+/**
+ * A connection gets the whole cluster summary (several KB uncompressed with 32 nodes) at most once per this many ms, or
+ * when its ping asks for it (`full: true`: the service dialog is open, or the browser holds no lobby summary); the
+ * pongs between say `clusterLoadSame: true` (the browser keeps the summary it has).
+ */
+export const CLUSTER_LOAD_EVERY_MS = 10_000;
 /** Target spacing of heartbeat slices; at most HEARTBEAT_SLICES_MAX slices per interval (1 below ~1.5 s). */
 export const HEARTBEAT_SLICE_MS = 1000;
 export const HEARTBEAT_SLICES_MAX = 30;
@@ -736,7 +742,12 @@ export class Network {
             this.clusterLoadCache = { at: now, value: normalizeClusterLoad(this.getClusterLoad()) };
           }
           const cluster = this.clusterLoadCache.value;
-          if (cluster !== null) pong.clusterLoad = cluster;
+          if (cluster !== null) {
+            if (msg.full === true || !(now - conn.clusterLoadAt >= 0 && now - conn.clusterLoadAt < CLUSTER_LOAD_EVERY_MS)) {
+              pong.clusterLoad = cluster;
+              conn.clusterLoadAt = now;
+            } else pong.clusterLoadSame = true;
+          }
         } catch { /* diagnostics cannot interrupt heartbeat replies */ }
       }
       if (validRid(rid)) pong.rid = rid;

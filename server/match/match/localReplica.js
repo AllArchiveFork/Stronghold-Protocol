@@ -1,17 +1,21 @@
 // server/match/match/localReplica.js — Match methods: local display replicas under server-run combat (DESIGN §14 "Local
-// display replicas"). A Worker-run normal / 联防 field is shown to a player of that field whose browser declared it can
-// simulate (g.sim { local: true }) as a b.start display replica instead of the b.snap / b.ev stream: the browser runs the
-// BattleSpec the Worker runs, the Worker digests the field state every SYNC_TICKS (server/sim/syncHash.js) and the match
-// forwards it as b.sync, and a browser whose digest differs, or that cannot keep up, asks for the stream again
-// (g.sim { battleId, stream: true }) — from then on that player gets this field streamed like before. The Worker battle
-// stays the only authority: results, layers, LP, the damage board and settlement never read a browser.
-// Watching a teammate, spectator seats, eliminated players and boss / hidden fields (one shared pool across fields) keep
-// the stream. Installed on Match.prototype by server/match/Match.js (a method container: never instantiated).
+// display replicas"). A Worker-run field is shown to a seated human whose browser declared it can simulate
+// (g.sim { local: true }) as a b.start display replica instead of the b.snap / b.ev stream — its own field, a teammate's
+// it watches, the one an eliminated player follows: the browser runs the BattleSpec the Worker runs, the Worker digests
+// the field state every SYNC_TICKS (server/sim/syncHash.js) and the match forwards it as b.sync, and a browser whose
+// digest differs, or that cannot keep up, asks for the stream again (g.sim { battleId, stream: true }) — from then on
+// that player gets this field streamed like before. A boss / hidden field shares one pool with the other fields of its
+// phase: its replica also replays the Worker's record of that pool (b.start `ext`, then b.ext; combat/runner.js extFor,
+// sim/spec.js ReplayBossPool). The Worker battle stays the only authority: results, layers, LP, the boss pool, the damage
+// board and settlement never read a browser. Spectator seats keep the stream.
+// Installed on Match.prototype by server/match/Match.js (a method container: never instantiated).
 
 import { OK } from './common.js';
 
 /** Field kinds a player's browser may run locally: their battles depend on nothing outside their spec. */
 export const LOCAL_KINDS = new Set(['normal', 'unite']);
+/** Field kinds whose replica also needs the Worker's record of the shared boss pool (combat/runner.js extFor). */
+export const POOL_KINDS = new Set(['boss', 'hidden']);
 
 export class MatchLocalReplica {
   /**
@@ -43,38 +47,51 @@ export class MatchLocalReplica {
     return !!v && v.field.fieldId === fieldId && this.watchers.get(pid) === fieldId && this.fields.includes(v.field);
   }
 
-  /** A finished field is offered only to a browser that already runs it (it re-shows its own end). */
+  /**
+   * Whether `ps` may be shown `f` as a local replica. Which field a player may see at all is decided before (g.watch, the
+   * default watch, a resync); this only adds the replica conditions. A finished field is offered only to a browser that
+   * already ran it (it re-shows its own end).
+   */
   _localOk(ps, f) {
-    return !!(this.localReplica && !this.clientCombat && f && f.remote && LOCAL_KINDS.has(f.kind)
+    return !!(this.localReplica && !this.clientCombat && f && f.remote
+      && (LOCAL_KINDS.has(f.kind) || (POOL_KINDS.has(f.kind) && typeof this.runner?.extFor === 'function'))
       && ps && !ps.isBot && !ps.left && !ps.spectator && ps.connected && ps.localSim === true
-      && f.players.includes(ps.playerId) && !(f.streamOnly && f.streamOnly.has(ps.playerId))
-      && (f.live || this.localViews.get(ps.playerId)?.field === f));
+      && this.players.get(ps.playerId) === ps && !(f.streamOnly && f.streamOnly.has(ps.playerId))
+      && (f.live || !!(f.localRuns && f.localRuns.has(ps.playerId))));
   }
 
   /**
-   * Show a player its own field as a local replica: b.start (once per field unless `resend`: a reconnect, a 返回战场 —
-   * the browser keeps the Battle it already runs and only re-shows it). False when the field is streamed to it instead.
+   * Show a player a field as a local replica: b.start (once per field unless `resend`: a reconnect, a 返回战场, watching
+   * it again — the browser keeps the Battle it already runs and only re-shows it). A boss / hidden field's b.start carries
+   * the pool record so far (`ext`). False when the field is streamed to it instead.
    */
   _offerLocal(ps, f, { resend = false } = {}) {
     if (!this._localOk(ps, f)) return false;
     const v = this.localViews.get(ps.playerId);
     if (v && v.field === f && !resend) return true;
+    let ext = null;
+    if (POOL_KINDS.has(f.kind)) {
+      ext = this.runner.extFor(f, ps.playerId);
+      if (!ext) return false;
+    }
     if (!f.battleId) {
       const seq = `${this.battlePrefix}.${this.round}.${++this._battleSeq}`;
       f.battleId = seq.length + 1 + String(f.fieldId).length <= 64 ? `${seq}.${f.fieldId}` : seq;
     }
     this.localViews.set(ps.playerId, { field: f });
+    (f.localRuns || (f.localRuns = new Set())).add(ps.playerId);
     if (!f.startedAt) f.startedAt = this.sched.now();
     return this.sendTo(ps.playerId, {
       t: 'b.start', battleId: f.battleId, fieldId: f.fieldId, kind: f.kind, spec: f.spec, authoritative: false,
       startAt: f.startedAt, serverNow: this.sched.now(), elapsed: Math.round((Number(f.battle.time) || 0) * 1000) / 1000,
-      speed: this.gameSpeed, watch: false, done: !f.live, local: true,
+      speed: this.gameSpeed, watch: !f.players.includes(ps.playerId), done: !f.live, local: true, ...(ext ? { ext } : {}),
     }) !== false;
   }
 
   /** From now on stream `f` to `ps` (its replica diverged, is too slow, or local simulation was switched off). */
   _streamInstead(ps, f, reason) {
     this.localViews.delete(ps.playerId);
+    f.localRuns?.delete(ps.playerId);
     if (!f.streamOnly) f.streamOnly = new Set();
     f.streamOnly.add(ps.playerId);
     this.localStats[reason === 'off' ? 'off' : reason === 'requested' ? 'requested' : 'diverged']++;

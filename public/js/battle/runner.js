@@ -25,10 +25,14 @@
 // spec fast-forwarded to the server's clock (`elapsed`) and never report.
 // Local display replicas under server-run combat (m.public.localReplica, DESIGN §14): once the sim is loaded the runner
 // declares g.sim { local: true } (per match and per connection; localStorage 'sp.localSim' = '0' opts out), and the
-// server then sends the player's own normal / 联防 field as a b.start { local: true } instead of streaming it. The
-// replica digests its state right after every sync step (/sim/syncHash.js) and compares it with the Worker's b.sync; a
-// different digest or end tick, or a replica too slow to keep up (SLOW_TICK_MS), sends g.sim { battleId, stream: true }
-// (or { local: false }) and drops it — the server streams that field from then on. b.end { reason: 'stream' } drops it too.
+// server then sends the field this seat is shown — its own, a teammate's it watches, the one it follows once eliminated —
+// as a b.start { local: true } instead of streaming it. The replica digests its state right after every sync step
+// (/sim/syncHash.js) and compares it with the Worker's b.sync; a different digest or end tick, or a replica too slow to
+// keep up (SLOW_TICK_MS), sends g.sim { battleId, stream: true } (or { local: false }) and drops it — the server streams
+// that field from then on. b.end { reason: 'stream' } drops it too. A boss / hidden replica also replays the Worker's
+// record of the shared pool (b.start `ext`, then b.ext; /sim/spec.js ReplayBossPool): it steps only through the ticks that
+// record covers (`to`), trailing the field clock by an adaptive lag (EXT_LAG_*: the record's lateness over the last
+// EXT_LAG_WINDOW_MS), and ends where the Worker forced the end; a record with a gap or a bad value drops it (stream).
 // A b.start is registered as pending the moment it arrives — before the sim module has loaded, while the Battle is built
 // and caught up silently — so what comes for that battle meanwhile is applied to it in order (PR #266): a b.end takeover
 // stops its reports; a forced / timeout b.end (the first end counts) ends it as soon as the Battle exists, without
@@ -123,6 +127,16 @@ export const SLOW_TICK_MS = 2.5;
 const SLOW_MIN_TICKS = 300;
 /** Digests kept per replica (its own and the server's, awaiting the other side). */
 const SYNC_KEEP = 200;
+/**
+ * A boss / hidden replica trails the field clock by the lateness of the pool record (b.ext `to` behind the replica's own
+ * clock) over the last EXT_LAG_WINDOW_MS plus EXT_LAG_MARGIN_MS, never less than EXT_LAG_MIN_MS nor more than
+ * EXT_LAG_MAX_MS; a later record raises it at once, an earlier one lowers it gently (EXT_LAG_EASE of a tick per record).
+ */
+export const EXT_LAG_MIN_MS = 150;
+export const EXT_LAG_MAX_MS = 3000;
+const EXT_LAG_MARGIN_MS = 60;
+const EXT_LAG_WINDOW_MS = 5000;
+const EXT_LAG_EASE = 0.5;
 
 /** Request failures after which a b.result counts as never delivered (re-sent on resume / b.start). */
 export const LOST_RESULT_CODES = Object.freeze(['DISCONNECTED', 'OFFLINE', 'TIMEOUT']);
@@ -358,6 +372,13 @@ export function createBattleRunner(deps) {
 
   /** Target tick of an entry on its clock. */
   const targetTick = (e, t) => Math.max(0, Math.floor((((t - e.t0) / 1000) * e.speed) / TICK + 1e-9));
+  /** The tick an entry steps to: its clock's, a boss replica's held back by its lag and by what the pool record covers. */
+  const goalTick = (e, t) => {
+    const tt = targetTick(e, t);
+    return e.replay ? Math.max(0, Math.min(tt - Math.round(e.lag), e.replay.to)) : tt;
+  };
+  /** Ticks of a duration at an entry's speed. */
+  const msTicks = (e, ms) => ((ms / 1000) * e.speed) / TICK;
 
   /**
    * Step `n` ticks. `sliced` (a catch-up frame, a hidden-tab step): every EV_SLICE ticks the events drained so far go to
@@ -369,8 +390,18 @@ export function createBattleRunner(deps) {
     let k = 0;
     try {
       for (; k < n && !b.finished; k++) {
+        const pool = e.replay;
+        if (pool) {
+          // a boss replica steps only through what the pool record covers, with the Worker's pool before each step
+          const next = (Number(b.tickCount) || 0) + 1;
+          if (!pool.ready(next)) break;
+          pool.enter(next);
+        }
         b.step();
         if (e.replica && !noteSync(e)) { k++; break; }
+        // the Worker forced this field's end right after this step (team LP 0, the hard cap): after its digest, like it
+        const end = pool && pool.endAfter(Number(b.tickCount) || 0);
+        if (end && !b.finished) b.forceEnd(end.reason);
         if (sliced && (k + 1) % EV_SLICE === 0 && k + 1 < n) {
           const ev = b.drainEvents() || [];
           if (ev.length) e.slices.push({ gt: Number(b.time) || 0, ev });
@@ -435,6 +466,55 @@ export function createBattleRunner(deps) {
     // this replica ended before the server's tick, or went past the server's end without ending
     if ((b.finished && b.tickCount < msg.tick) || (msg.done && b.tickCount > msg.tick)) { toStream(e, msg.tick, 'end'); return; }
     checkSync(e, msg.tick);
+  }
+
+  /** Pool records a boss replica still being built may queue (b.ext before the sim loaded); past it: the stream. */
+  const EXT_QUEUE_MAX = 600;
+
+  /**
+   * Feed a boss replica its pool record (b.start `ext` / b.ext). An end the replica has already stepped to is applied now;
+   * one it stepped past, a gap or a bad value drop it for the stream. False when it was dropped.
+   */
+  function feedExt(e, x) {
+    const pool = e.replay;
+    if (!pool || e.dropped) return false;
+    if (!x || typeof x !== 'object' || !pool.feed(x.i, x.to, x.hp, x.end)) { toStream(e, null, 'ext'); return false; }
+    const b = e.battle;
+    if (pool.end && b && !b.finished) {
+      const at = Number(b.tickCount) || 0;
+      if (at > pool.end.tick) { toStream(e, pool.end.tick, 'end'); return false; }
+      if (at === pool.end.tick) { if (!e.endReason) e.endReason = pool.end.reason; endBattle(e); }
+    }
+    return true;
+  }
+
+  /**
+   * The lag of a boss replica after a b.ext that covers the record through tick `to`: how far `to` trails the replica's
+   * own clock now, its worst over EXT_LAG_WINDOW_MS plus a margin (EXT_LAG_* above) — raised at once, lowered gently.
+   */
+  function noteExt(e, to) {
+    if (e.t0 == null || !Number.isInteger(to)) return;
+    const t = clock();
+    e.lateness.push([t, targetTick(e, t) - to]);
+    while (e.lateness.length > 1 && t - e.lateness[0][0] > EXT_LAG_WINDOW_MS) e.lateness.shift();
+    let worst = -Infinity;
+    for (const l of e.lateness) if (l[1] > worst) worst = l[1];
+    const want = Math.min(msTicks(e, EXT_LAG_MAX_MS), Math.max(msTicks(e, EXT_LAG_MIN_MS), worst + msTicks(e, EXT_LAG_MARGIN_MS)));
+    e.lag = want > e.lag ? want : Math.max(want, e.lag - EXT_LAG_EASE);
+  }
+
+  /** b.ext { battleId, i, to, hp, end? }: more of a boss replica's pool record (one still being built queues it). */
+  function onExt(msg) {
+    if (!msg || typeof msg !== 'object' || typeof msg.battleId !== 'string') return;
+    const e = entries.get(msg.battleId) || pending.get(msg.battleId);
+    if (!e || !e.replica || e.dropped || !bossLike(e)) return;
+    if (!e.replay) {
+      if (e.battle) return;
+      if (e.extQ.length >= EXT_QUEUE_MAX) { toStream(e, null, 'ext'); return; }
+      e.extQ.push(msg);
+      return;
+    }
+    if (feedExt(e, msg)) noteExt(e, msg.to);
   }
 
   /**
@@ -664,7 +744,7 @@ export function createBattleRunner(deps) {
   /** Advance one entry to its clock (bounded); render it when it is on screen. */
   function advance(e, t, render) {
     if (e.battle.finished) { if (!e.done) finished(e); return; }
-    const behind = targetTick(e, t) - (e.battle.tickCount || 0);
+    const behind = goalTick(e, t) - (e.battle.tickCount || 0);
     if (behind <= 0) return;
     const cap = ticksPerFrameCap(e.speed);
     const catchingUp = behind > cap * 4;
@@ -761,6 +841,11 @@ export function createBattleRunner(deps) {
     if (existing) {
       existing.seq = seq;
       if (msg.local && !msg.authoritative) existing.replica = true;
+      // a resent boss replica (a reconnect, 返回战场): the whole pool record again — what it already has is skipped
+      if (msg.local && msg.ext && existing.replica && bossLike(existing)) {
+        if (existing.replay) { if (!feedExt(existing, msg.ext)) return; }
+        else if (!existing.battle) existing.extQ.push(msg.ext);
+      }
       const was = existing.authoritative;
       existing.authoritative = !!msg.authoritative && !existing.resultSent;
       existing.watch = !!msg.watch;
@@ -806,6 +891,9 @@ export function createBattleRunner(deps) {
       // (tick → { h, done }), the server's end tick, the comparisons passed, its step cost (noteSync / onSync / advance)
       replica: !!msg.local && !msg.authoritative, hashes: new Map(), serverHashes: new Map(), serverEnd: null,
       hashDone: false, synced: 0, costMs: 0, costTicks: 0, dropped: false,
+      // a boss / hidden replica: its ReplayBossPool (built with the Battle; the pool records that came before wait in
+      // `extQ`), its lag behind the field clock (ticks) and the recent lateness of the record ([at, ticks]; noteExt)
+      replay: null, extQ: msg.local && !msg.authoritative && msg.ext ? [msg.ext] : [], lag: 0, lateness: [],
       // state-bearing events of the steps run while the tab was hidden (hold(); delivered by the next rendered frame;
       // heldAt = the game time each was drained at), and whether that backlog overflowed (the next frame re-enters the
       // view from the field meta); the event batches of the current sliced step (stepEntry)
@@ -836,8 +924,15 @@ export function createBattleRunner(deps) {
       }
       if (!wanted()) return;
       let battle;
+      let replay = null;
+      if (e.replica && bossLike(e)) {
+        // a boss replica runs only on the Worker's pool record (b.ext); without one it cannot follow its field
+        const boss = e.spec.boss;
+        if (!boss || typeof sim.spec.ReplayBossPool !== 'function') { toStream(e, null, 'ext'); return; }
+        replay = new sim.spec.ReplayBossPool(boss.poolMax, boss.poolHp);
+      }
       try {
-        battle = sim.spec.createBattleFromSpec(e.spec, sim.ds, { logger });
+        battle = sim.spec.createBattleFromSpec(e.spec, sim.ds, replay ? { logger, sharedBoss: replay } : { logger });
       } catch (err) {
         console.warn('[runner] battle construction failed', err);
         recordError('runner', err, 'battle construction failed');
@@ -849,6 +944,13 @@ export function createBattleRunner(deps) {
       e.battle = battle;
       e.meter = sim.spec.attachLpMeter(battle);
       e.t0 = clock() - (e.elapsed / e.speed) * 1000;
+      if (replay) {
+        e.replay = replay;
+        e.lag = msTicks(e, EXT_LAG_MIN_MS);
+        const queued = e.extQ;
+        e.extQ = [];
+        for (const x of queued) if (!feedExt(e, x)) return;
+      }
       // digests that arrived while it was loading: compared as the replica reaches them
       if (lastPool && battle.sharedBoss && typeof battle.sharedBoss.sync === 'function') {
         battle.sharedBoss.sync(lastPool.hp, lastPool.acked ? lastPool.acked[e.fieldId] : undefined);
@@ -856,8 +958,8 @@ export function createBattleRunner(deps) {
       if (e.endReason) endBattle(e);
       // silent catch-up to the field's clock before it is shown (a reconnect / observing a running field) — for the view
       // asked for; a superseded authority catches up in the background (advance)
-      while (!battle.finished && e.seq === startSeq && targetTick(e, clock()) - battle.tickCount > ticksPerFrameCap(e.speed)) {
-        const n = Math.min(PREPARE_SLICE, targetTick(e, clock()) - battle.tickCount);
+      while (!battle.finished && e.seq === startSeq && goalTick(e, clock()) - battle.tickCount > ticksPerFrameCap(e.speed)) {
+        const n = Math.min(PREPARE_SLICE, goalTick(e, clock()) - battle.tickCount);
         stepEntry(e, n);
         if (e.dropped) return;
         try { battle.drainEvents(); } catch { /* ignore */ }
@@ -943,6 +1045,7 @@ export function createBattleRunner(deps) {
     offs.push(net.on('b.pool', onPool));
     offs.push(net.on('b.end', onEnd));
     offs.push(net.on('b.sync', onSync));
+    offs.push(net.on('b.ext', onExt));
     // the session is back (reconnect / resume): results lost with the old socket go out again; a local replica
     // declaration is made again (the server keeps it, a new match does not have it)
     // ('status' also comes with every ping: only a transition to online is a new connection)
@@ -1057,7 +1160,7 @@ export function createBattleRunner(deps) {
     _entries: entries,
     _frame: frame,
     _pump: pump,
-    onStart, onPool, onEnd, onSync, clear, ensureSim, redeliver, setPaused,
+    onStart, onPool, onEnd, onSync, onExt, clear, ensureSim, redeliver, setPaused,
     dispose() { clear(); for (const off of offs) { try { off?.(); } catch { /* ignore */ } } },
   };
 }

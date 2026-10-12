@@ -11,7 +11,8 @@
 // references (stage records, the shared boss pool, the data source) never travel: `stageId` names the stage, `boss`
 // carries the pool numbers at battle start and the side that runs the battle attaches a pool object:
 //   * server: the match's SharedBossPool (or a crediting wrapper on takeover, server/match/finalAssault.js),
-//   * client: a LocalBossPool (below) reconciled with the server's `b.pool` broadcasts.
+//   * client: a LocalBossPool (below) reconciled with the server's `b.pool` broadcasts (client-side combat), or a
+//     ReplayBossPool fed with the Worker's record of the pool (`b.ext`: a local display replica of a server-run field).
 // Determinism: the sim uses no wall clock and no Math.random; the same spec + the same data give the same result on
 // every machine (test/match/clientCombat.test.js compares result digests).
 //
@@ -229,6 +230,74 @@ export class LocalBossPool {
     if (Number.isFinite(h)) this.serverHp = Math.max(0, Math.min(this.maxHp, h));
     const a = Number(ackedCum);
     if (Number.isFinite(a) && a >= 0) this.acked = a;
+  }
+}
+
+/**
+ * A local display replica's view of the shared boss HP pool under server-run combat (DESIGN §14 "Local display replicas",
+ * S→C b.ext). The Worker steps every boss field of the phase in turn against one SharedBossPool, so before a field's step
+ * the pool may hold less than that field left it with: the other fields' hits since. The Worker records exactly those
+ * values for the field — `[tick, hp]`, the pool before step `tick` whenever it differs from the value after the field's
+ * previous step — and the end it forced on the field (`{ tick, reason }` right after step `tick`: team LP 0, the hard
+ * cap, a forced field). Fed with them, the replica's own hits do SharedBossPool's arithmetic on the same values in the
+ * same order, so it plays the Worker's battle bit for bit and its b.sync digests agree.
+ *   feed(i, to, hp, end)  a batch: the field's record from entry `i`, complete through tick `to` (entries already held are
+ *                         skipped); false when it leaves a gap or carries a bad value — the replica cannot follow
+ *   ready(tick)           whether step `tick` may run (everything before it is known)
+ *   enter(tick)           right before step `tick`: take the Worker's pool value when it differed
+ *   endAfter(tick)        the forced end right after step `tick`, or null
+ *   damage(playerId, amount) / hp / maxHp / byPlayer  SharedBossPool's (server/match/finalAssault.js) without onHit
+ */
+export class ReplayBossPool {
+  constructor(maxHp, hp = maxHp) {
+    this.maxHp = Math.max(1, Number(maxHp) || 1);
+    const h = Number(hp);
+    this.hp = Number.isFinite(h) ? Math.max(0, Math.min(this.maxHp, h)) : this.maxHp;
+    /** @type {Map<string, number>} */
+    this.byPlayer = new Map();
+    /** @type {Map<number, number>} tick → the pool before that step */
+    this.entries = new Map();
+    this.count = 0;
+    this.to = 0;
+    /** @type {{ tick: number, reason: string } | null} */
+    this.end = null;
+  }
+
+  feed(i, to, hp, end) {
+    const list = Array.isArray(hp) ? hp : [];
+    if (!Number.isInteger(i) || i < 0 || i > this.count) return false;
+    for (let k = this.count - i; k < list.length; k++) {
+      const e = list[k];
+      if (!Array.isArray(e) || !Number.isInteger(e[0]) || e[0] < 1 || typeof e[1] !== 'number' || !Number.isFinite(e[1])) return false;
+      this.entries.set(e[0], e[1]);
+      this.count++;
+    }
+    if (end && !this.end) {
+      if (!Number.isInteger(end.tick) || end.tick < 0 || typeof end.reason !== 'string') return false;
+      this.end = { tick: end.tick, reason: end.reason };
+    }
+    if (Number.isInteger(to) && to > this.to) this.to = to;
+    return true;
+  }
+
+  ready(tick) { return tick <= this.to && !(this.end && tick > this.end.tick); }
+
+  enter(tick) {
+    const v = this.entries.get(tick);
+    if (v === undefined) return;
+    this.entries.delete(tick);
+    this.hp = v;
+  }
+
+  endAfter(tick) { return this.end && this.end.tick === tick ? this.end : null; }
+
+  damage(playerId, amount) {
+    const a = Number(amount);
+    if (!Number.isFinite(a) || a <= 0 || this.hp <= 0) return 0;
+    const dealt = this.hp - a < BOSS_POOL_MIN_HP ? this.hp : a;
+    this.hp -= dealt;
+    if (playerId != null) this.byPlayer.set(playerId, (this.byPlayer.get(playerId) || 0) + dealt);
+    return dealt;
   }
 }
 

@@ -333,6 +333,8 @@ export function LobbyScreen() {
   const [busy, setBusy] = useState(null);
   const [overlay, setOverlay] = useState(null);
   const [loadOpen, setLoadOpen] = useState(false);
+  // the open service dialog keeps the whole cluster summary on every pong (server/net.js CLUSTER_LOAD_EVERY_MS)
+  useEffect(() => { net.watchClusterLoad?.(loadOpen); return () => net.watchClusterLoad?.(false); }, [loadOpen]);
   const toolsRef = useRef(null);
   const [toolsSide, setToolsSide] = useState('end');
   // measured on the tap (before the menu shows, so it never paints on the wrong side), on toggle and on resize

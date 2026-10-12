@@ -139,6 +139,8 @@ export class FieldRunner {
     this.done = false;
     this.stopped = false;
     this.crashes = 0;
+    /** optional (field) => void, called right before each field's step (CombatEngine: the boss pool record of b.ext) */
+    this.beforeStep = null;
     /** optional (field) => void, called right after each field's step (CombatEngine: local replica digests) */
     this.afterStep = null;
   }
@@ -196,6 +198,8 @@ export class FieldRunner {
     for (const f of this.fields) {
       if (!f.live) continue;
       const b = f.battle;
+      // the pool other fields changed since this field's previous step (CombatEngine: local display replicas, b.ext)
+      if (this.beforeStep) this.beforeStep(f);
       try {
         b.step();
       } catch (e) {

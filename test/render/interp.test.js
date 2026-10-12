@@ -237,3 +237,77 @@ describe('SnapshotBuffer', () => {
     }
   });
 });
+
+describe('SnapshotBuffer adaptive delay (streamed fields)', () => {
+  /**
+   * A 10 Hz stream at 2× (0.2 game s every 0.1 real s) whose snapshot i is held back `late(i)` real s; TCP delivers in
+   * order, so a late one also holds back those behind it. Calls `each(buf, now)` after every arrival.
+   */
+  function stream(buf, n, late = () => 0, { from = 0, at = 0, each = null } = {}) {
+    let prev = -Infinity, now = at;
+    for (let i = 0; i < n; i++) {
+      now = Math.max(at + i * 0.1 + late(i), prev);
+      prev = now;
+      buf.push(snap(from + i * 0.2, [U(1, i * 0.1, 3)]), now);
+      if (each) each(buf, now);
+    }
+    return { now, t: from + (n - 1) * 0.2 };
+  }
+
+  test('off by default: the configured delay stays', () => {
+    const b = new SnapshotBuffer({ delay: 0.1, rate: 2 });
+    stream(b, 60, (i) => (i % 5 === 0 ? 0.3 : 0));
+    assert.equal(b.delay, 0.1);
+  });
+
+  test('a steady stream keeps one interval plus the margin, never below minDelay', () => {
+    const b = new SnapshotBuffer({ delay: 0.1, rate: 2, adaptive: true });
+    stream(b, 80);
+    assert.ok(near(b.delay, 0.12, 0.005), `10 Hz: ${b.delay}`);
+    const f = new SnapshotBuffer({ delay: 0.1, rate: 2, adaptive: true });
+    feed(f, Array.from({ length: 80 }, () => [U(1, 1, 1)]));
+    assert.ok(near(f.delay, 0.1, 1e-9), `20 Hz: the minimum (${f.delay})`);
+  });
+
+  test('jitter raises the delay at once to cover the late snapshots, and the render clock then interpolates', () => {
+    const b = new SnapshotBuffer({ delay: 0.1, rate: 2, adaptive: true, maxExtrapolate: 0 });
+    let past = 0, frames = 0;
+    // every 7th snapshot 250 ms late (about 14%: the 95th percentile is late)
+    stream(b, 300, (i) => (i % 7 === 3 ? 0.25 : 0), {
+      each(buf, now) {
+        for (let k = 0; k < 6; k++) {
+          const at = now + k / 60;
+          const r = buf.update(at);
+          if (at > 8) { frames++; if (r > buf.newestT + 1e-9) past++; }
+        }
+      },
+    });
+    assert.ok(b.delay > 0.3 && b.delay <= 0.6, `delay ${b.delay}`);
+    assert.equal(past, 0, `${past} of ${frames} frames ran past the newest snapshot`);
+  });
+
+  test('a steadier stream lowers it gently, down to the minimum', () => {
+    const b = new SnapshotBuffer({ delay: 0.1, rate: 2, adaptive: true });
+    const end = stream(b, 100, (i) => (i % 4 === 1 ? 0.3 : 0));
+    const high = b.delay;
+    assert.ok(high > 0.35, `${high}`);
+    // the next seconds are steady: the window forgets the late ones after 8 s, then the delay eases by ≤ 50 ms per s
+    stream(b, 90, () => 0, { from: end.t + 0.2, at: end.now + 0.1 });
+    assert.ok(b.delay < high && b.delay >= high - 0.05 * 9.1, `eased to ${b.delay}`);
+    stream(b, 100, () => 0, { from: end.t + 0.2 + 90 * 0.2, at: end.now + 0.1 + 90 * 0.1 });
+    assert.ok(near(b.delay, 0.12, 0.005), `back to ${b.delay}`);
+  });
+
+  test('a gap in the stream (a pause, a hidden tab) and a new battle start the window over without inflating the delay', () => {
+    const b = new SnapshotBuffer({ delay: 0.1, rate: 2, adaptive: true });
+    const end = stream(b, 40);
+    // a 3 s solo pause: the field clock stood still, the arrivals did not
+    stream(b, 40, () => 0, { from: end.t + 0.2, at: end.now + 3 });
+    assert.ok(near(b.delay, 0.12, 0.005), `after a pause ${b.delay}`);
+    // a new battle at another game time: reset() keeps the delay, the clocks are not compared across it
+    b.delay = 0.3;
+    b.reset();
+    stream(b, 3, () => 0, { from: 500, at: end.now + 10 });
+    assert.equal(b.delay, 0.3);
+  });
+});

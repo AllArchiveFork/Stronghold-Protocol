@@ -8,6 +8,17 @@ import { RealScheduler } from '../scheduler.js';
 // Bound each FIFO worker turn, not the active game-time debt. At 2x this covers a 533 ms service cycle.
 export const MAX_WORKER_ADVANCE_TICKS = 32;
 const TERMINAL_SNAPSHOT_RETRY_MS = 1000;
+/** b.ext to one local display replica at most this often (ms; an end or the phase's last reply goes at once). */
+export const EXT_MIN_GAP_MS = 100;
+/** A boss field whose pool record has grown past this many entries is no longer offered locally (the b.start size). */
+export const EXT_START_MAX = 16000;
+
+/** Entries `from`… of a pool record kept flat ([tick, hp, tick, hp, …]: ~16 B an entry) as the wire's [[tick, hp]]. */
+const extPairs = (flat, from) => {
+  const out = [];
+  for (let i = from * 2; i < flat.length; i += 2) out.push([flat[i], flat[i + 1]]);
+  return out;
+};
 
 /** Read-only view of the last accepted worker state, not a resumable simulation snapshot. */
 export class RemoteBattle {
@@ -96,6 +107,8 @@ export class WorkerFieldRunner {
     this.resync = new Map();
     this.damageResync = new Map();
     this.controls = new Map();
+    /** playerId → { fieldId, n, to, at, end }: what that local display replica has of its boss field's pool record */
+    this.extSent = new Map();
     for (const f of fields) f.battle.runner = this;
   }
 
@@ -129,6 +142,7 @@ export class WorkerFieldRunner {
     this.resync.clear();
     this.damageResync.clear();
     this.controls.clear();
+    this.extSent.clear();
     this.held = null;
     this.heldForceSnapshots = false;
     this.terminalSnapshots.clear();
@@ -245,6 +259,16 @@ export class WorkerFieldRunner {
       const msg = { t: 'b.sync', battleId: f.battleId, tick: sync.tick, h: sync.h, ...(sync.done ? { done: true } : {}) };
       for (const pid of this._localViewers(f.fieldId)) this.m.sendTo(pid, msg);
     }
+    // The boss fields' pool record (engine.js _beforeStep): kept whole for replicas that start later, forwarded to the
+    // ones running now — their only input besides the spec (sim/spec.js ReplayBossPool).
+    for (const x of out.ext || []) {
+      const f = this.fields.find((y) => y.fieldId === x.fieldId);
+      if (!f) continue;
+      const log = f.extLog || (f.extLog = { flat: [], end: null });
+      for (const e of x.hp || []) log.flat.push(e[0], e[1]);
+      if (x.end && !log.end) log.end = x.end;
+    }
+    this._sendExt(!!out.done);
     // Replay ordered deltas once, then reconcile the authoritative totals. The main-thread pool is a HUD/stat mirror;
     // no live Battle has access to it. Threshold tickers still observe each hit in the original order.
     for (const effect of out.effects || []) {
@@ -337,6 +361,45 @@ export class WorkerFieldRunner {
       const ps = this.m.players.get(pid) || this.m.spectators.get(pid);
       return ps && ps.connected && !ps.left && !this.m._localShows?.(pid, fieldId);
     });
+  }
+
+  /**
+   * The boss pool record a local display replica of `f` starts from (b.start `ext`), and from then on that player's
+   * b.ext follow it. Null when it is not a boss field of this phase or its record is too long to send (stream it).
+   */
+  extFor(f, pid) {
+    if (!f || (f.kind !== 'boss' && f.kind !== 'hidden') || !this.fields.includes(f) || !this.boss) return null;
+    const log = f.extLog || (f.extLog = { flat: [], end: null });
+    const n = log.flat.length / 2;
+    if (n > EXT_START_MAX) return null;
+    this.extSent.set(pid, { fieldId: f.fieldId, n, to: this.ticks, at: this.m.sched.now(), end: !!log.end });
+    return { i: 0, to: this.ticks, hp: extPairs(log.flat, 0), ...(log.end ? { end: log.end } : {}) };
+  }
+
+  /**
+   * b.ext { battleId, i, to, hp, end? } to the local display replicas of boss fields: the record entries from index `i`
+   * the replica has not had, complete through tick `to` (sent even without entries: the replica may step up to it).
+   */
+  _sendExt(force = false) {
+    if (!this.extSent.size) return;
+    const now = this.m.sched.now();
+    for (const f of this.fields) {
+      if (f.kind !== 'boss' && f.kind !== 'hidden') continue;
+      const log = f.extLog || { flat: [], end: null };
+      const n = log.flat.length / 2;
+      for (const pid of this._localViewers(f.fieldId)) {
+        const s = this.extSent.get(pid);
+        if (!s || s.fieldId !== f.fieldId) continue;
+        const end = !!log.end && !s.end;
+        if (!end && n === s.n && this.ticks === s.to) continue;
+        if (!end && !force && now - s.at < EXT_MIN_GAP_MS) continue;
+        this.m.sendTo(pid, { t: 'b.ext', battleId: f.battleId, i: s.n, to: this.ticks, hp: extPairs(log.flat, s.n), ...(end ? { end: log.end } : {}) });
+        s.n = n;
+        s.to = this.ticks;
+        s.at = now;
+        if (end) s.end = true;
+      }
+    }
   }
 
   /** Connected viewers running this field locally: they get its b.sync digests instead of frames. */

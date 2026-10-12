@@ -130,7 +130,7 @@ test('protocol: g.sim and b.sync; b.start is compressed', () => {
   assert.equal(validateC2S({ t: 'g.sim', battleId: 'a.1.2.n:p_0', stream: true }), null);
   assert.notEqual(validateC2S({ t: 'g.sim', stream: 'yes' }), null);
   assert.notEqual(validateC2S({ t: 'g.sim', tick: -1 }), null);
-  assert.ok(S2C.includes('b.sync'));
+  assert.ok(S2C.includes('b.sync') && S2C.includes('b.ext'));
   assert.equal(isCompressibleType('b.start'), true);
   assert.equal(isCompressibleType('b.sync'), false);
 });
@@ -200,7 +200,7 @@ test('workers: a declared player gets its own field as b.start { local } (no str
   assert.ok(m.lastResults.get('p_0') && !m.lastResults.get('p_0').synthetic, 'the result is the Worker battle');
 });
 
-test('workers: g.sim stream / a reconnect / watching a teammate and back / local off / the kill switch', { timeout: 60_000 }, async (t) => {
+test('workers: g.sim stream / a reconnect / watching a teammate and back / local off / an eliminated follower / the kill switch', { timeout: 60_000 }, async (t) => {
   const pool = await realPool(t);
   {
     const { m, to, fieldFrames } = fixture(t, pool, { speed: 2, timeLimit: 120 });
@@ -216,11 +216,16 @@ test('workers: g.sim stream / a reconnect / watching a teammate and back / local
     assert.equal(again.length, 2);
     assert.equal(again[1].battleId, st0.battleId);
     assert.ok(again[1].elapsed > 0, 'from the field clock');
-    // watching the teammate: its field is streamed; 返回战场 re-shows the own replica
+    // watching the teammate: a local replica of its field too (b.start watch: true, then its digests, never its
+    // stream); 返回战场 re-shows the own replica
     assert.deepEqual(m.handle('p_0', { t: 'g.watch', fieldId: 'n:p_1' }), { ok: true });
-    await until(() => fieldFrames('p_0', 'n:p_1').some(([, x]) => x.t === 'b.snap'), 'teammate stream');
+    const mate = to('p_0', 'b.start')[2];
+    assert.deepEqual([mate.fieldId, mate.local, mate.watch], ['n:p_1', true, true]);
+    assert.deepEqual(mate.spec, m.fields.find((f) => f.fieldId === 'n:p_1').spec);
+    await until(() => to('p_0', 'b.sync').some((x) => x.battleId === mate.battleId), 'the teammate field\'s digests');
+    assert.deepEqual(fieldFrames('p_0', 'n:p_1'), [], 'the watched field is not streamed');
     m.handle('p_0', { t: 'g.watch', fieldId: 'n:p_0' });
-    assert.equal(to('p_0', 'b.start').length, 3);
+    assert.equal(to('p_0', 'b.start').length, 4);
     assert.deepEqual(fieldFrames('p_0', 'n:p_0'), []);
     // the replica diverged: b.end stream, then the field is streamed from its current state on
     assert.deepEqual(m.handle('p_0', { t: 'g.sim', battleId: st0.battleId, stream: true, tick: 120 }), { ok: true });
@@ -232,7 +237,7 @@ test('workers: g.sim stream / a reconnect / watching a teammate and back / local
     const syncsAt = to('p_0', 'b.sync').length;
     // never offered again for this field
     m.handle('p_0', { t: 'g.watch', fieldId: 'n:p_0' });
-    assert.equal(to('p_0', 'b.start').length, 3);
+    assert.equal(to('p_0', 'b.start').length, 4);
     await delay(1200);
     assert.equal(to('p_0', 'b.sync').length, syncsAt, 'no digests for a streamed field');
     // g.sim { local: false } (a slow device): the other player's replica goes back to the stream too
@@ -240,6 +245,21 @@ test('workers: g.sim stream / a reconnect / watching a teammate and back / local
     assert.deepEqual(to('p_1', 'b.end').map((x) => x.reason), ['stream']);
     assert.equal(m.localStats.off, 1);
     await until(() => fieldFrames('p_1', 'n:p_1').some(([, x]) => x.t === 'b.snap'), 'p_1 streamed');
+    m.runner.forceAll('forced');
+  }
+  {
+    // an eliminated player follows a field as a local replica; a spectator seat is always streamed
+    const { m, to, fieldFrames } = fixture(t, pool, { speed: 2, timeLimit: 120 });
+    m.order[1].alive = false;
+    m.handle('p_1', { t: 'g.sim', local: true });
+    m.addSpectator('watcher_0');
+    m.startCombat();
+    const follow = to('p_1', 'b.start');
+    assert.deepEqual(follow.map((x) => [x.fieldId, x.local, x.watch]), [['n:p_0', true, true]]);
+    assert.equal(to('watcher_0', 'b.start').length, 0);
+    await until(() => fieldFrames('watcher_0', 'n:p_0').some(([, x]) => x.t === 'b.snap'), 'the spectator seat is streamed');
+    await until(() => to('p_1', 'b.sync').length >= 1, 'the follower\'s digests');
+    assert.deepEqual(fieldFrames('p_1', 'n:p_0'), []);
     m.runner.forceAll('forced');
   }
   {

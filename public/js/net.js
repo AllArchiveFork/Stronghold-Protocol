@@ -166,6 +166,7 @@ export class Net {
     this.loadState = 'unknown'; // cached server main-thread pressure, independent of network RTT
     this.loadDetails = null;    // whitelisted cached game-process measurements, never raw health data
     this.clusterLoad = null;
+    this.wantClusterLoad = false; // the service status dialog is open: every ping asks for the whole summary
     this.lastError = null;     // last NetError relevant to the connection (e.g. hello rejected)
     this.clockOffset = 0;
     this.clockSynced = false;
@@ -680,13 +681,23 @@ export class Net {
     // Hidden pages still heartbeat, but cannot produce a fresh visible latency measurement.
     if (this.isVisible()) this._pings.set(rid, { c, at, order: ++this._pingOrder });
     while (this._pings.size > MAX_PENDING_PINGS) this._pings.delete(this._pings.keys().next().value);
-    if (!this._sendRaw({ t: 'ping', rid, c })) { this._pings.delete(rid); return; }
+    // the lobby's cluster summary rides on a pong only every CLUSTER_LOAD_EVERY_MS (server/net.js): ask for it while the
+    // service dialog shows it or while this page holds none (a game node ignores the flag)
+    const full = this.wantClusterLoad || !(this.clusterLoad && this.clusterLoad.scope === 'cluster');
+    if (!this._sendRaw(full ? { t: 'ping', rid, c, full: true } : { t: 'ping', rid, c })) { this._pings.delete(rid); return; }
     if (this._unansweredSince == null) this._unansweredSince = at;
   }
 
   /** Force an immediate latency probe (e.g. when the tab regains focus). */
   probe() {
     this._heartbeat();
+  }
+
+  /** While on (the service status dialog is open) every ping asks for the whole cluster load summary; on probes now. */
+  watchClusterLoad(on) {
+    const was = this.wantClusterLoad;
+    this.wantClusterLoad = !!on;
+    if (this.wantClusterLoad && !was) this.probe();
   }
 
   _onPong(msg) {
@@ -700,7 +711,8 @@ export class Net {
     this.ping = Math.round(rtt);
     this.loadState = normalizeServerLoad(msg.loadState);
     this.loadDetails = normalizeLoadDetails(msg.loadDetails);
-    this.clusterLoad = normalizeClusterLoad(msg.clusterLoad);
+    // `clusterLoadSame`: the lobby summary this page already holds is current (a pong without either clears it)
+    if (!(msg.clusterLoadSame === true && this.clusterLoad && this.clusterLoad.scope === 'cluster')) this.clusterLoad = normalizeClusterLoad(msg.clusterLoad);
     const now = this.now();
     if (Number.isFinite(msg.s)) {
       // Detect adjustments during or between probes; offsets from the old epoch cannot be reused.

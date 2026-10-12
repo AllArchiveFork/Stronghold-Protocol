@@ -174,8 +174,9 @@ export class MatchWatch {
       const f = own || this._watchTargetField(ps, this.fields) || this.fields[0];
       if (!f) continue;
       this.watchers.set(ps.playerId, f.fieldId);
-      // the own field of a browser that simulates locally: b.start instead of the stream (localReplica.js)
-      if (ps.connected && !(f === own && this._offerLocal(ps, f))) this._sendField(ps.playerId, f.fieldId);
+      // a browser that simulates locally (the own field, or the one an eliminated human follows): b.start instead of
+      // the stream (localReplica.js)
+      if (ps.connected && !this._offerLocal(ps, f)) this._sendField(ps.playerId, f.fieldId);
     }
   }
 

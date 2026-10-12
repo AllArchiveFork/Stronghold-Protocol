@@ -3,7 +3,7 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import WebSocket from 'ws';
+import WebSocket, { WebSocketServer } from 'ws';
 import { startServer } from '../server/index.js';
 import { NET_DEFAULTS, encode, send, sendRaw } from '../server/net.js';
 import { resolveWsCompression, isCompressibleType } from '../server/wsCompression.js';
@@ -14,9 +14,7 @@ const TYPES = ['m.public', 'm.private', 'm.unitStats', 'm.field', 'm.damage', 'b
 const ENCODED = ['m.field', 'm.damage', 'b.damage', 'b.snap', 'b.ev'];
 const EXPECTED_OPTIONS = {
   threshold: 0,
-  serverNoContextTakeover: false,
   clientNoContextTakeover: true,
-  serverMaxWindowBits: 15,
   concurrencyLimit: 8,
   zlibDeflateOptions: { level: 6, memLevel: 5 },
 };
@@ -225,9 +223,36 @@ describe('WebSocket compression policy', { concurrency: false }, () => {
   });
 
   test('only state frames and the battle stream are compressible; credentials and control stay plain', () => {
-    for (const type of TYPES) assert.equal(isCompressibleType(type), true, type);
+    for (const type of [...TYPES, 'b.start', 'b.ext']) assert.equal(isCompressibleType(type), true, type);
     for (const type of ['b.sync', 'welcome', 'hello', 'pong', 'ok', 'error', 'room.state', 'lobby.presence', 'presence.state', 'queue.state', 'm.result', 'm.toast', 'm.ticker', 'b.result', 'constructor', '__proto__', 'hasOwnProperty', '', undefined, null, 1, {}]) {
       assert.equal(isCompressibleType(type), false, 'non-allowlisted type stays uncompressed');
+    }
+  });
+
+  test('any client offer shape negotiates instead of failing the upgrade (server side parameters are the client\'s)', { timeout: 10000 }, async () => {
+    const wss = new WebSocketServer({ host: '127.0.0.1', port: 0, perMessageDeflate: resolveWsCompression('on') });
+    await new Promise((resolve) => wss.once('listening', resolve));
+    const url = `ws://127.0.0.1:${wss.address().port}/`;
+    try {
+      // a browser's offer, no server parameters, a server window below 15, no server context takeover, both
+      for (const offer of [{}, { clientMaxWindowBits: true }, { serverMaxWindowBits: 10 }, { serverNoContextTakeover: true },
+        { serverNoContextTakeover: true, serverMaxWindowBits: 9 }]) {
+        const ws = new WebSocket(url, { perMessageDeflate: offer });
+        let header = '';
+        ws.once('upgrade', (res) => { header = String(res.headers['sec-websocket-extensions'] || ''); });
+        const status = await new Promise((resolve) => {
+          ws.once('open', () => resolve(101));
+          ws.once('unexpected-response', (req, res) => resolve(res.statusCode));
+          ws.once('error', () => resolve('error'));
+        });
+        assert.equal(status, 101, JSON.stringify(offer));
+        assert.equal(ws.extensions, 'permessage-deflate', JSON.stringify(offer));
+        assert.match(header, /(?:^|;)\s*client_no_context_takeover(?:;|$)/, 'the client context is still never kept');
+        ws.terminate();
+      }
+    } finally {
+      for (const client of wss.clients) client.terminate();
+      await new Promise((resolve) => wss.close(resolve));
     }
   });
 
@@ -293,7 +318,8 @@ describe('native WebSocket compression through the complete server', { concurren
         // The server keeps its deflate context across messages; the browser does not need to.
         assert.doesNotMatch(client.extensionHeader, /server_no_context_takeover/);
         assert.match(client.extensionHeader, /(?:^|;)\s*client_no_context_takeover(?:;|$)/);
-        assert.match(client.extensionHeader, /(?:^|;)\s*server_max_window_bits=15(?:;|$)/);
+        // no server_max_window_bits: the full 32 KiB window (RFC 7692 §7.1.2.1) for a browser that did not ask for less
+        assert.doesNotMatch(client.extensionHeader, /server_max_window_bits/);
       } else assert.equal(client.extensionHeader, '');
       const welcome = await hello(client);
       const room = await roomFor(srv, client);

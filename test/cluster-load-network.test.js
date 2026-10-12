@@ -7,6 +7,7 @@ import { startCoordinator } from '../server/cluster/coordinator.js';
 import { startGameNode } from '../server/cluster/game-node.js';
 import { startIngress } from '../server/cluster/ingress.js';
 import { startServer } from '../server/index.js';
+import { CLUSTER_LOAD_EVERY_MS } from '../server/net.js';
 import { MATCHMAKING_VERSION } from '../shared/constants.js';
 import { publicGameLabel } from '../shared/cluster-load.js';
 
@@ -81,7 +82,8 @@ test('one browser WS switches from all sixteen cached game summaries to only its
   assert.equal(Object.hasOwn(inMatch, 'health'), false);
   await conn.request('g.leave');
   await until(() => f.coordinator.platform.directory.bySession(conn.playerId) === null);
-  const returned = await conn.request('ping', { c: 3 });
+  // back in the lobby the browser holds a game-scope sample, so its ping asks for the whole summary (public/js/net.js)
+  const returned = await conn.request('ping', { c: 3, full: true });
   assert.equal(returned.clusterLoad.scope, 'cluster'); assert.equal(returned.clusterLoad.nodes.length, 16);
   assert.equal(conn.frames.some(message => message.t.startsWith('cluster.')), false);
 });
@@ -115,11 +117,30 @@ test('lobby heartbeats share one normalized cluster summary per second instead o
   const conn = await client(server.url);
   t.after(async () => { conn.socket.terminate(); await server.close(); });
   const pongs = [];
-  for (let c = 1; c <= 3; c++) pongs.push(await conn.request('ping', { c }));
+  for (let c = 1; c <= 3; c++) pongs.push(await conn.request('ping', c === 3 ? { c, full: true } : { c }));
   assert.equal(calls, 1);
-  assert.ok(pongs.every(pong => pong.clusterLoad.nodes.length === 32));
+  assert.equal(pongs[0].clusterLoad.nodes.length, 32);
   assert.deepEqual(pongs[2].clusterLoad, pongs[0].clusterLoad);
   await new Promise(resolve => setTimeout(resolve, 1050));
   await conn.request('ping', { c: 4 });
   assert.equal(calls, 2);
+});
+
+test('a connection gets the whole cluster summary once per CLUSTER_LOAD_EVERY_MS or when it asks; the pongs between are small', async t => {
+  const getClusterLoad = () => ({ scope: 'cluster', nodes: Array.from({ length: 32 }, (_, i) => ({ label: publicGameLabel(i + 1), status: 'ready', loadState: 'normal', loadDetails: details })) });
+  const server = await startServer({ port: 0, host: '127.0.0.1', quiet: true, combatWorkers: 0, trialWorkers: 0, getClusterLoad });
+  const conn = await client(server.url), other = await client(server.url);
+  t.after(async () => { conn.socket.terminate(); other.socket.terminate(); await server.close(); });
+  const first = await conn.request('ping', { c: 1 });
+  assert.equal(first.clusterLoad.nodes.length, 32);
+  assert.equal(Object.hasOwn(first, 'clusterLoadSame'), false);
+  const next = await conn.request('ping', { c: 2 });
+  assert.equal(Object.hasOwn(next, 'clusterLoad'), false);
+  assert.equal(next.clusterLoadSame, true);
+  assert.ok(JSON.stringify(next).length < 400, `a heartbeat between summaries stays small (${JSON.stringify(next).length} B)`);
+  const asked = await conn.request('ping', { c: 3, full: true });
+  assert.equal(asked.clusterLoad.nodes.length, 32);
+  // per connection: another browser still gets its own first summary
+  assert.equal((await other.request('ping', { c: 1 })).clusterLoad.nodes.length, 32);
+  assert.equal(CLUSTER_LOAD_EVERY_MS, 10_000);
 });
