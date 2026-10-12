@@ -2,20 +2,21 @@
 // reconnect credentials stay in memory, and wire observations retain only counts/flags.
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
+import { randomBytes } from 'node:crypto';
 import WebSocket from 'ws';
 import { startServer } from '../server/index.js';
 import { NET_DEFAULTS, encode, send, sendRaw } from '../server/net.js';
 import { resolveWsCompression, isCompressibleType } from '../server/wsCompression.js';
 import { PROTOCOL_VERSION, MATCHMAKING_VERSION } from '../shared/constants.js';
 
-const TYPES = ['m.public', 'm.private', 'm.unitStats', 'm.field', 'm.damage', 'b.damage'];
-/** Frames the lobby sends already encoded (sendEncodedToPlayer): two eligible, the high-rate battle stream plain. */
+const TYPES = ['m.public', 'm.private', 'm.unitStats', 'm.field', 'm.damage', 'b.damage', 'b.snap', 'b.ev'];
+/** Frames the lobby sends already encoded (sendEncodedToPlayer), state and battle stream alike. */
 const ENCODED = ['m.field', 'm.damage', 'b.damage', 'b.snap', 'b.ev'];
 const EXPECTED_OPTIONS = {
-  threshold: 512,
-  serverNoContextTakeover: true,
+  threshold: 0,
+  serverNoContextTakeover: false,
   clientNoContextTakeover: true,
-  serverMaxWindowBits: 12,
+  serverMaxWindowBits: 15,
   concurrencyLimit: 8,
   zlibDeflateOptions: { level: 6, memLevel: 5 },
 };
@@ -223,9 +224,9 @@ describe('WebSocket compression policy', { concurrency: false }, () => {
     }
   });
 
-  test('only the large, low-rate state types are compressible; the battle stream stays plain', () => {
+  test('only state frames and the battle stream are compressible; credentials and control stay plain', () => {
     for (const type of TYPES) assert.equal(isCompressibleType(type), true, type);
-    for (const type of ['b.snap', 'b.ev', 'welcome', 'hello', 'pong', 'ok', 'error', 'room.state', 'lobby.presence', 'presence.state', 'queue.state', 'm.result', 'm.toast', 'm.ticker', 'b.result', 'constructor', '__proto__', 'hasOwnProperty', '', undefined, null, 1, {}]) {
+    for (const type of ['b.sync', 'welcome', 'hello', 'pong', 'ok', 'error', 'room.state', 'lobby.presence', 'presence.state', 'queue.state', 'm.result', 'm.toast', 'm.ticker', 'b.result', 'constructor', '__proto__', 'hasOwnProperty', '', undefined, null, 1, {}]) {
       assert.equal(isCompressibleType(type), false, 'non-allowlisted type stays uncompressed');
     }
   });
@@ -289,9 +290,10 @@ describe('native WebSocket compression through the complete server', { concurren
       const client = await connect(support);
       assert.equal(client.ws.extensions, compressed ? 'permessage-deflate' : '');
       if (compressed) {
-        assert.match(client.extensionHeader, /(?:^|;)\s*server_no_context_takeover(?:;|$)/);
+        // The server keeps its deflate context across messages; the browser does not need to.
+        assert.doesNotMatch(client.extensionHeader, /server_no_context_takeover/);
         assert.match(client.extensionHeader, /(?:^|;)\s*client_no_context_takeover(?:;|$)/);
-        assert.match(client.extensionHeader, /(?:^|;)\s*server_max_window_bits=12(?:;|$)/);
+        assert.match(client.extensionHeader, /(?:^|;)\s*server_max_window_bits=15(?:;|$)/);
       } else assert.equal(client.extensionHeader, '');
       const welcome = await hello(client);
       const room = await roomFor(srv, client);
@@ -321,7 +323,15 @@ describe('native WebSocket compression through the complete server', { concurren
       assert.equal((await receivedFrame(client, 'm.public', sequence)).frame.rsv1, compressed);
       const stream = fixture('b.ev', ++sequence);
       srv.lobby.broadcastRoom(room, stream);
-      assert.equal((await receivedFrame(client, 'b.ev', sequence)).frame.rsv1, false, 'a large broadcast battle event stays plain');
+      assert.equal((await receivedFrame(client, 'b.ev', sequence)).frame.rsv1, compressed, 'a broadcast battle event uses the same policy');
+      // Context takeover: content the previous frame already carried costs almost nothing the second time (random hex
+      // only halves on its own).
+      const blob = randomBytes(2048).toString('hex');
+      assert.equal(send(client.serverWs, { t: 'm.public', testSequence: ++sequence, blob }), true);
+      const firstWire = (await receivedFrame(client, 'm.public', sequence)).frame.wireBytes;
+      assert.equal(send(client.serverWs, { t: 'm.public', testSequence: ++sequence, blob }), true);
+      const againWire = (await receivedFrame(client, 'm.public', sequence)).frame.wireBytes;
+      if (compressed) assert.ok(firstWire > 1500 && againWire < 200, `repeat costs ${againWire} B after ${firstWire} B`);
       // Do not let the 512-byte threshold mask a welcome-policy regression.
       const largeWelcome = { t: 'welcome', testSequence: ++sequence, token: '0'.repeat(32), padding: 'synthetic-welcome-only-'.repeat(100) };
       assert.equal(send(client.serverWs, largeWelcome), true);
@@ -331,7 +341,7 @@ describe('native WebSocket compression through the complete server', { concurren
       const small = { t: 'm.damage', testSequence: ++sequence, round: 1, owners: [] };
       assert.ok(Buffer.byteLength(encode(small)) < 512);
       assert.equal(srv.lobby.sendEncodedToPlayer(room, welcome.playerId, 'm.damage', encode(small)), true);
-      assert.equal((await receivedFrame(client, 'm.damage', sequence)).frame.rsv1, false, 'small allowlisted frames stay below the threshold');
+      assert.equal((await receivedFrame(client, 'm.damage', sequence)).frame.rsv1, compressed, 'small allowlisted frames share the context too');
       client.transmit({ t: 'ping', c: 42, rid: 102 });
       assert.equal((await client.waitFor('pong', (msg) => msg.rid === 102)).msg.c, 42);
     });
@@ -381,7 +391,7 @@ describe('native WebSocket compression through the complete server', { concurren
     assert.equal(srv.lobby.sendEncodedToPlayer(room, welcome.playerId, 'b.snap', encode(fixture('b.snap', 501))), false);
     assert.equal(queuedSends, beforeSoft, 'soft-dropped snapshots never enter ws compression/send');
     assert.equal(srv.lobby.sendEncodedToPlayer(room, welcome.playerId, 'b.ev', encode(fixture('b.ev', 502))), true);
-    assert.equal((await receivedFrame(client, 'b.ev', 502)).frame.rsv1, false, 'the battle stream stays plain');
+    assert.equal((await receivedFrame(client, 'b.ev', 502)).frame.rsv1, true, 'the battle stream is compressed too');
     assert.equal(srv.lobby.sendEncodedToPlayer(room, welcome.playerId, 'm.damage', encode(fixture('m.damage', 504))), true);
     assert.equal((await receivedFrame(client, 'm.damage', 504)).frame.rsv1, true, 'reliable state frames are still compressed');
     queued = NET_DEFAULTS.hardBufferBytes + 1;

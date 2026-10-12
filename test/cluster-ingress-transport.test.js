@@ -12,7 +12,7 @@ import { Network, SessionRegistry, sendEncodedParts, sendRaw } from '../server/n
 import { PROTOCOL_VERSION } from '../shared/constants.js';
 
 const ORIGIN = 'https://ingress-transport.invalid';
-const ELIGIBLE = ['m.public', 'm.private', 'm.unitStats', 'm.field', 'm.damage', 'b.damage'];
+const ELIGIBLE = ['m.public', 'm.private', 'm.unitStats', 'm.field', 'm.damage', 'b.damage', 'b.snap', 'b.ev'];
 const until = async (check, label, ms = 4000) => {
   const end = Date.now() + ms;
   while (!check()) { if (Date.now() >= end) throw new Error(`transport fixture deadline: ${label}`); await new Promise(r => setTimeout(r, 5)); }
@@ -126,16 +126,14 @@ async function fixture(t, mode) {
 }
 
 for (const mode of ['direct', 'link']) {
-  test(`[${mode}] large state frames are compressed, the battle stream and control frames stay plain, bytes arrive unchanged`, async t => {
+  test(`[${mode}] state frames and the battle stream are compressed, control frames stay plain, bytes arrive unchanged`, async t => {
     const f = await fixture(t, mode);
     assert.equal(f.browser.extensions, 'permessage-deflate');
     const welcome = f.received.findIndex(b => JSON.parse(b).t === 'welcome');
     assert.equal(f.wire[welcome].rsv1, false, 'the credential-bearing welcome stays plain');
     let at = f.received.length, seq = 0;
     const sent = [];
-    for (const type of [...ELIGIBLE, 'b.snap', 'b.ev']) { const text = big(type, ++seq); sent.push([type, text]); f.game(text); }
-    const small = JSON.stringify({ t: 'm.damage', seq: ++seq, round: 1, owners: [] });
-    sent.push(['m.damage(small)', small]); f.game(small);
+    for (const type of [...ELIGIBLE, 'b.sync']) { const text = big(type, ++seq); sent.push([type, text]); f.game(text); }
     const got = await f.next(at, sent.length);
     sent.forEach(([type, text], i) => {
       const { data, frame } = got[i], bytes = Buffer.from(text);
@@ -163,7 +161,7 @@ for (const mode of ['direct', 'link']) {
     assert.ok(f.toGame[0].equals(Buffer.from(intent)));
   });
 
-  test(`[${mode}] order holds across compressed and plain frames, and a burst leaves in few socket writes`, async t => {
+  test(`[${mode}] order holds across compressed and plain frames, and a plain burst leaves in few socket writes`, async t => {
     const f = await fixture(t, mode);
     const socket = f.serverSide._socket;
     let writes = 0;
@@ -172,17 +170,17 @@ for (const mode of ['direct', 'link']) {
       socket[name] = function (...args) { writes++; return original.apply(this, args); };
     }
     let at = f.received.length;
-    const burst = Array.from({ length: 40 }, (_, i) => JSON.stringify({ t: i % 2 ? 'b.snap' : 'b.ev', seq: i, units: [[i, 1, 2, 3]] }));
+    const burst = Array.from({ length: 40 }, (_, i) => JSON.stringify({ t: i % 2 ? 'b.sync' : 'm.ticker', seq: i, units: [[i, 1, 2, 3]] }));
     for (const text of burst) f.game(text);
     const plain = await f.next(at, burst.length);
     assert.deepEqual(plain.map(x => JSON.parse(x.data).seq), burst.map((_, i) => i));
     assert.ok(writes <= 5, `40 frames of one turn were coalesced (${writes} writes)`);
     at = f.received.length;
-    const mixed = Array.from({ length: 60 }, (_, i) => (i % 7 === 3 ? big('m.public', i) : JSON.stringify({ t: ['b.ev', 'b.snap', 'm.damage'][i % 3], seq: i })));
+    const mixed = Array.from({ length: 60 }, (_, i) => (i % 7 === 3 ? big('m.public', i) : JSON.stringify({ t: ['b.ev', 'b.sync', 'm.ticker'][i % 3], seq: i })));
     for (const text of mixed) f.game(text);
     const got = await f.next(at, mixed.length);
     assert.deepEqual(got.map(x => JSON.parse(x.data).seq), mixed.map((_, i) => i), 'delivery order is the send order');
-    assert.deepEqual(got.map(x => x.frame.rsv1), mixed.map((_, i) => i % 7 === 3));
+    assert.deepEqual(got.map(x => x.frame.rsv1), mixed.map((_, i) => i % 7 === 3 || i % 3 === 0));
     assert.equal(f.serverSide.bufferedAmount, 0);
   });
 

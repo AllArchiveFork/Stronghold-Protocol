@@ -1,16 +1,19 @@
 // Bounded, opt-in WS compression. Credentials and unknown/control messages stay uncompressed.
+// Server→browser frames share one deflate context per connection (context takeover, 32 KiB window, ~144 KiB of zlib
+// state per socket): a state snapshot or battle frame mostly repeats the previous one, so it costs a fraction of its
+// own size. Only allowlisted frames ever enter that context — never welcome (credential) or control messages.
 const OPTIONS = Object.freeze({
-  threshold: 512,
-  serverNoContextTakeover: true,
+  threshold: 0,
+  serverNoContextTakeover: false,
   clientNoContextTakeover: true,
-  serverMaxWindowBits: 12,
+  serverMaxWindowBits: 15,
   concurrencyLimit: 8,
   zlibDeflateOptions: Object.freeze({ level: 6, memLevel: 5 }),
 });
 
-// Only the large, low-rate state frames. The high-rate battle stream (b.snap/b.ev, ~15 frames per watcher per second,
-// mostly under 1 KiB) stays plain: per-message deflate of those cost more CPU than the few bytes it saved.
-const COMPRESSIBLE = new Set(['m.public', 'm.private', 'm.unitStats', 'm.field', 'm.damage', 'b.damage', 'b.start']);
+// State frames and the battle stream. Deflating each small b.snap/b.ev on its own cost more CPU than it saved; with the
+// shared context they shrink several-fold for little CPU.
+const COMPRESSIBLE = new Set(['m.public', 'm.private', 'm.unitStats', 'm.field', 'm.damage', 'b.damage', 'b.start', 'b.snap', 'b.ev']);
 
 export function resolveWsCompression(mode = 'off') {
   if (mode === 'off') return false;

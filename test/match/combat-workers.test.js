@@ -997,7 +997,7 @@ test('workers: encoded transport preserves room/seat admission, connection and b
   for (const [type, wire] of Object.entries(wires)) {
     assert.equal(send(type), true);
     assert.equal(sent.at(-1), wire, 'the original wire string is passed unchanged');
-    assert.equal(sendOptions.at(-1).compress, ['m.field', 'm.damage', 'b.damage'].includes(type), 'only allowlisted encoded state types opt into compression; b.snap/b.ev stay plain');
+    assert.equal(sendOptions.at(-1).compress, ['m.field', 'm.damage', 'b.damage', 'b.snap', 'b.ev'].includes(type), 'allowlisted encoded state and battle-stream types opt into compression');
   }
   const accepted = sent.length;
   assert.equal(send('b.snap', 'outsider'), false);
