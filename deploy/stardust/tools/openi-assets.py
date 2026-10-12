@@ -42,9 +42,10 @@ FALLBACK_ORIGIN = "https://ark-asset.hanabi-ai.cn:25442"
 CREDENTIALS = Path("/root/.openi/token.json")
 CACHE_CONTROL = "public, max-age=31536000, immutable"
 MIME_OVERRIDES = {".mp3": "audio/mpeg", ".webp": "image/webp", ".skel": "application/octet-stream",
-                  ".atlas": "text/plain", ".obj": "text/plain", ".json": "application/json"}
+                  ".atlas": "text/plain", ".obj": "text/plain", ".json": "application/json",
+                  ".bin": "application/octet-stream"}
 # Only the fixed prepared art/media formats, not fonts, vendor, scripts or data.
-ASSET_EXTENSIONS = {".png", ".webp", ".mp3", ".skel", ".atlas", ".obj", ".json"}
+ASSET_EXTENSIONS = {".png", ".webp", ".mp3", ".skel", ".atlas", ".obj", ".json", ".bin"}
 AUDIO_EXTENSIONS = {"", ".mp3", ".m4a", ".aac", ".ogg", ".oga", ".opus", ".wav"}
 
 
@@ -190,6 +191,8 @@ def prepare(stage, prefix):
             require(not path.startswith("assets/audio/"), "unexpected-audio-format")
             # JSON is only allowed for the prepared local model/map material metadata.
             require(ext != ".json" or path.startswith("assets/local/"), "non-art-json")
+            # .bin is only the 0.2.5 battlefield scene geometry (assets/local/scene/<stage>/scene.bin).
+            require(ext != ".bin" or path.startswith("assets/local/scene/"), "non-scene-bin")
             name = prefix + "/" + path
         relative_path(name)
         mime = MIME_OVERRIDES.get(ext) or mimetypes.guess_type(path)[0] or "application/octet-stream"

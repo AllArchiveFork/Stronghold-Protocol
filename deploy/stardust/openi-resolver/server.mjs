@@ -11,10 +11,10 @@ const DATASET = 'Stardust_minus/arknight_assets';
 const DEFAULT_MANIFEST = '/run/config/openi-assets.json';
 export const MAX_MANIFEST_ENTRIES = 100000;
 export const MAX_MANIFEST_BYTES = 64 * 1024 * 1024;
-export const MAX_OPENI_MIRRORS = 3;
+export const MAX_OPENI_MIRRORS = 4;
 const ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,95}$/;
 const CONTROLS = /[\u0000-\u001f\u007f-\u009f]/;
-const EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif', 'atlas', 'skel', 'obj', 'mtl', 'json',
+const EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif', 'atlas', 'skel', 'obj', 'mtl', 'json', 'bin',
   'mp3', 'm4a', 'aac', 'ogg', 'oga', 'opus', 'wav']);
 const QUERY_KEYS = new Set(['AWSAccessKeyId', 'Expires', 'Signature', 'response-content-disposition']);
 

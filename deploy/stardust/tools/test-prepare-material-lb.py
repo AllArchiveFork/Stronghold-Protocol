@@ -204,6 +204,19 @@ location / {{ return 404; }}
         self.assertEqual(header_data['entries'], {row['requestPath']: {
             'fileName': row['fileName'], 'modelscope': data['paths'][row['requestPath']]} for row in openi['entries']})
 
+    def test_scene_geometry_bin_is_an_assets_object(self):
+        # 0.2.5 battlefield scenes fetch assets/local/scene/<stage>/scene.bin; the Lua templates list `bin` too.
+        openi, models = fixture()
+        scene = {'requestPath': '/assets/local/scene/act1autochess_m01/scene.bin',
+                 'fileName': 'releases/' + TOOL.RELEASE + '/assets/local/scene/act1autochess_m01/scene.bin',
+                 'bytes': 2108116, 'sha256': 'c' * 64, 'mime': 'application/octet-stream'}
+        openi['entries'].append(scene)
+        models['entries'].append({**scene, 'fileName': TOOL.MODEL_PREFIX + '/' + scene['fileName'].split('/', 2)[2]})
+        files = TOOL.render(openi, models, CONTAINER)
+        self.assertIn(TOOL.MODEL_REVISION, json.loads(files['routes.json'])['paths'][scene['requestPath']])
+        for name in ('access.lua', 'header.lua'):
+            self.assertIn(b'json = true, bin = true,', files[name])
+
     def test_header_is_fixed_json_reader_not_an_executable_inventory(self):
         files = TOOL.render(*fixture(), CONTAINER)
         header = files['header.lua'].decode()
@@ -557,10 +570,14 @@ location / {{ return 404; }}
                          TOOL.MODEL_BASE + 'assets/other/pixel.png')
         self.assertIn(b'["old-mirror"] = true', files['header.lua'])
 
-    def test_three_reviewed_mirrors_keep_exact_targets_and_reject_four(self):
-        self.assertEqual(TOOL.MAX_OPENI_MIRRORS, 3)
+    def test_four_reviewed_mirrors_keep_exact_targets_and_reject_five(self):
+        self.assertEqual(TOOL.MAX_OPENI_MIRRORS, 4)
         openi, models = fixture()
-        mirrors = [TOOL.RELEASE, 'old-second-fixture', 'v023-delta-fixture']
+        scene = {'requestPath': '/assets/test/scene.bin', 'fileName': 'releases/' + TOOL.RELEASE + '/assets/test/scene.bin',
+                 'bytes': 9, 'sha256': 'd' * 64, 'mime': 'application/octet-stream'}
+        openi['entries'].append(scene)
+        models['entries'].append({**scene, 'fileName': TOOL.MODEL_PREFIX + '/assets/test/scene.bin'})
+        mirrors = [TOOL.RELEASE, 'old-second-fixture', 'v023-delta-fixture', 'v025-delta-fixture']
         openi['mirrorReleases'] = mirrors
         for mirror, row in zip(mirrors, openi['entries']):
             row['fileName'] = 'releases/' + mirror + '/' + row['fileName'].split('/', 2)[2]
@@ -571,8 +588,8 @@ location / {{ return 404; }}
         for mirror, row in zip(mirrors, openi['entries']):
             self.assertEqual(headers['entries'][row['requestPath']]['fileName'], row['fileName'])
             self.assertIn(('[' + json.dumps(mirror) + '] = true').encode(), files['header.lua'])
-        self.assertNotIn(b'fourth-fixture', files['header.lua'])
-        openi['mirrorReleases'] = mirrors + ['fourth-fixture']
+        self.assertNotIn(b'fifth-fixture', files['header.lua'])
+        openi['mirrorReleases'] = mirrors + ['fifth-fixture']
         with self.assertRaises(ValueError): TOOL.render(openi, models, CONTAINER)
 
     def test_three_mirror_validation_does_not_allow_arbitrary_hosts_roots_or_objects(self):

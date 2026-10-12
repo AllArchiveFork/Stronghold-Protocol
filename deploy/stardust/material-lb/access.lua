@@ -3,7 +3,7 @@ local key = "ark_material_lb_20261006_model60_v3"
 local modelscope_bases = __MATERIAL_LB_MODELSCOPE_BASES__
 local openi_only = __MATERIAL_LB_OPENI_ONLY__
 local extensions = { png = true, jpg = true, jpeg = true, webp = true, gif = true,
-    atlas = true, skel = true, obj = true, mtl = true, json = true,
+    atlas = true, skel = true, obj = true, mtl = true, json = true, bin = true,
     mp3 = true, m4a = true, aac = true, ogg = true, oga = true, opus = true, wav = true }
 local function public_path(value)
     if type(value) ~= "string" or value:sub(1, 1) ~= "/" or #value < 2 or #value > 2049

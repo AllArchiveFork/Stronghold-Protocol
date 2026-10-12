@@ -45,9 +45,9 @@ test('manifest accepts the old limit plus one and the exact bounded next-release
   assert.throws(() => validateManifest(manifest(MAX_MANIFEST_ENTRIES + 1)), { code: 'CONFIG' });
 });
 
-test('large three-mirror inputs still reject a fourth mirror, duplicate paths, private namespaces and conflicting bytes', () => {
+test('large mirror inputs still reject a fifth mirror, duplicate paths, private namespaces and conflicting bytes', () => {
   for (const change of [
-    input => input.mirrorReleases.push('fourth-mirror'),
+    input => input.mirrorReleases.push('fourth-mirror', 'fifth-mirror'),
     input => { input.entries.at(-1).requestPath = input.entries[0].requestPath; },
     input => { input.entries.at(-1).requestPath = '/data/assets.json'; },
     input => { input.entries.at(-1).fileName = input.entries[0].fileName; },

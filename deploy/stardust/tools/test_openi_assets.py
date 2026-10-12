@@ -201,6 +201,17 @@ class AssetsTest(unittest.TestCase):
         self.assertFalse(any("fonts" in e or "vendor" in e for e in entries))
         self.assertEqual(self.plan().fingerprint, plan.fingerprint)
 
+    def test_scene_geometry_bin_only_under_local_scene(self):
+        # 0.2.5 battlefield scenes: scene.bin is the one binary format, and only for assets/local/scene/<stage>/.
+        self.add_file("assets/local/scene/act1autochess_m01/scene.bin", b"scene geometry")
+        self.save_manifest()
+        entries = {e["requestPath"]: e for e in self.plan().manifest["entries"]}
+        self.assertEqual(entries["/assets/local/scene/act1autochess_m01/scene.bin"]["mime"], "application/octet-stream")
+        self.add_file("assets/ui/blob.bin", b"not a scene")
+        self.save_manifest()
+        with self.assertRaisesRegex(tool.ToolError, "non-scene-bin"):
+            self.plan()
+
     def test_legacy_stage_keeps_release_fallback_and_cli_default(self):
         plan = tool.prepare(self.stage, None)
         self.assertEqual(plan.prefix, "releases/v012-openi-20261004")

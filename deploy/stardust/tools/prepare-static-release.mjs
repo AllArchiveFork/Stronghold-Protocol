@@ -17,7 +17,7 @@ export const FONT_CSS_SHA256 = 'af82f8e4bffb870d1bb1b574815ad863fe7bcb047633554b
 export const FONT_CSS_RELATIVE_SHA256 = '528a8e05114949c51768002d2665203de13f6e71e1028b8a8ddb5d76e0e21193';
 const FONT_FILES = ['bender-regular.woff2', 'bender-regular.otf', 'bender-light.woff2', 'bender-light.ttf',
   'novecento-wide-normal.woff2', 'novecento-wide-normal.otf'];
-const ART_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.atlas', '.skel', '.obj', '.mtl', '.json']);
+const ART_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.atlas', '.skel', '.obj', '.mtl', '.json', '.bin']);
 export const AUDIO_MIME = Object.freeze({ '.mp3': 'audio/mpeg', '.m4a': 'audio/mp4', '.aac': 'audio/aac',
   '.ogg': 'audio/ogg', '.oga': 'audio/ogg', '.opus': 'audio/ogg', '.wav': 'audio/wav' });
 const hash = (data) => createHash('sha256').update(data).digest('hex');
@@ -202,6 +202,8 @@ export async function prepareStaticRelease({ source = REPO, output, release, sou
   for (const ref of refs) if (!byPath.has(ref)) fail(`Manifest references missing/empty resource: ${ref}`);
   for (const { path } of files) {
     if (path.startsWith('assets/') && !(ART_EXTS.has(extname(path)) || AUDIO_EXTS.includes(extname(path)))) fail(`Refusing non-art/code file under assets: ${path}`);
+    // .bin is only the 0.2.5 battlefield scene geometry (assets/local/scene/<stage>/scene.bin).
+    if (extname(path) === '.bin' && !path.startsWith('assets/local/scene/')) fail(`Refusing non-scene binary under assets: ${path}`);
     if (path.startsWith('fonts/') && !['fonts/fonts.css', ...FONT_FILES.map((f) => 'fonts/' + f)].includes(path)) fail(`Unexpected font file: ${path}`);
   }
   for (const name of FONT_FILES) if (!byPath.has('fonts/' + name)) fail(`Missing font: ${name}`);

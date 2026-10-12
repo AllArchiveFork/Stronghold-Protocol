@@ -54,7 +54,7 @@ local function relative(value)
     return true
 end
 local extensions = { png = true, jpg = true, jpeg = true, webp = true, gif = true,
-    atlas = true, skel = true, obj = true, mtl = true, json = true,
+    atlas = true, skel = true, obj = true, mtl = true, json = true, bin = true,
     mp3 = true, m4a = true, aac = true, ogg = true, oga = true, opus = true, wav = true }
 local function public_path(value)
     if type(value) ~= "string" or value:sub(1, 1) ~= "/" or not relative(value:sub(2)) then return false end

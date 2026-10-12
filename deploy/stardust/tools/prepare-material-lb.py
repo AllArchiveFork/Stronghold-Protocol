@@ -21,14 +21,14 @@ FALLBACK = FALLBACK_ORIGIN + '/releases/' + RELEASE
 OSS_ORIGIN = 'https://obs.cn-south-222.ai.pcl.cn'
 MODEL_BASE = 'https://modelscope.cn/datasets/' + MODEL_REPO + '/resolve/' + MODEL_REVISION + '/' + MODEL_PREFIX + '/'
 CONTAINER_PREFIX = '/www/sites/ark-proto.stardust.matce.cn/material-lb/'
-EXTENSIONS = {'png', 'jpg', 'jpeg', 'webp', 'gif', 'atlas', 'skel', 'obj', 'mtl', 'json',
+EXTENSIONS = {'png', 'jpg', 'jpeg', 'webp', 'gif', 'atlas', 'skel', 'obj', 'mtl', 'json', 'bin',
               'mp3', 'm4a', 'aac', 'ogg', 'oga', 'opus', 'wav'}
 TEMPLATES = Path(__file__).resolve().parent.parent / 'material-lb'
 ENTRY_KEYS = {'requestPath', 'fileName', 'bytes', 'sha256', 'mime'}
 RELEASE_ID = re.compile(r'[A-Za-z0-9][A-Za-z0-9_-]{0,95}')
 OPENI_ONLY_ALLOWLIST = frozenset({'/assets/skins/char_340_shwaz_snow_1/illustration.png'})
 MAX_MODEL_PREFIXES = 8
-MAX_OPENI_MIRRORS = 3
+MAX_OPENI_MIRRORS = 4
 MAX_ENTRIES = 100000
 MODELSCOPE_WEIGHTS = (60, 100)
 SIGNED_TTL_RANGE = (600, 3600)

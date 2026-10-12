@@ -212,6 +212,20 @@ test('missing manifest references, empty files and changed CSS fail before outpu
   }
 });
 
+test('0.2.5 battlefield scenes: scene.bin under assets/local/scene is published; any other .bin is refused', async (t) => {
+  const f = await fixture(t);
+  await put(join(f.source, 'public/assets/local/scene/act1autochess_m01/scene.bin'), 'synthetic scene geometry');
+  const manifest = await prepareStaticRelease(f);
+  const entry = manifest.files.find((e) => e.path === 'assets/local/scene/act1autochess_m01/scene.bin');
+  assert.ok(entry);
+  assert.equal(await readFile(join(f.output, 'releases', RELEASE, entry.path), 'utf8'), 'synthetic scene geometry');
+  assert.deepEqual(await verifyStaticRelease(f.output), manifest);
+  const g = await fixture(t);
+  await put(join(g.source, 'public/assets/ui/blob.bin'), 'not a scene');
+  await assert.rejects(prepareStaticRelease(g), /non-scene binary/);
+  await absent(g.output);
+});
+
 test('stale vendor, package versions and hidden lockfile integrity fail closed', async (t) => {
   for (const change of ['vendor', 'version', 'integrity', 'lock-version']) {
     const f = await fixture(t);
