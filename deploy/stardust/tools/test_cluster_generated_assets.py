@@ -63,6 +63,14 @@ class GeneratedAssetsTests(unittest.TestCase):
         with self.assertRaises(assets.Refused):
             assets.generated_renderer_data(self.root)
 
+    def test_referenced_art_may_exceed_the_index_bound_up_to_the_resource_bound(self):
+        path = self.root / 'public/assets/local/mesh/map_autochess_bkg/floor.obj'
+        path.write_bytes(b'x' * (assets.LIMIT + 1))
+        self.assertEqual(assets.generated_renderer_data(self.root)['resourceReferences'], 2)
+        path.write_bytes(b'x' * (assets.RESOURCE_LIMIT + 1))
+        with self.assertRaises(assets.Refused):
+            assets.generated_renderer_data(self.root)
+
     def test_unexpected_reference_paths_are_refused(self):
         record = self.value['groups']['mesh/map_autochess_bkg']['floor']
         for path in ['/assets/local/../gate.json', '/js/main.js', 'https://example.com/map.obj', '/assets/local/a//b.obj']:

@@ -9,6 +9,8 @@ import stat
 
 INDEX = 'data/local-assets.json'
 LIMIT = 4 * 1024 * 1024
+# Referenced art: a 0.2.5 battlefield scene.bin reaches 6.5 MB (act2autochess_m01).
+RESOURCE_LIMIT = 16 * 1024 * 1024
 SEGMENT = re.compile(r'[A-Za-z0-9_\[\]-][A-Za-z0-9_.\[\]-]*')
 
 
@@ -79,7 +81,7 @@ def generated_renderer_data(root):
         raise Refused('renderer entry count mismatch')
     try:
         for relative in sorted(references):
-            read_regular(root, relative)
+            read_regular(root, relative, limit=RESOURCE_LIMIT)
     except OSError:
         raise Refused('renderer index references missing resource') from None
     return {'path': INDEX, 'bytes': raw, 'sha256': hashlib.sha256(raw).hexdigest(),
