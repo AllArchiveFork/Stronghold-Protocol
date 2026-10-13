@@ -55,6 +55,8 @@ test('simple configuration has only three direct targets and exact legacy compat
   assert.match(text, /location = \/vendor\/hooks\.module\.js \{[\s\S]*?proxy_pass http:\/\/ark_proto_game_backend;/);
   assert.match(text, /location \/_release\/ \{ return 404; \}/);
   assert.match(text, presenceBlock);
+  // The TLS server answers only its own authority: a request for another host on this connection is misdirected (421).
+  assert.match(text.slice(text.indexOf('    listen 443 ssl;')), /^    listen 443 ssl;\n    listen \[::\]:443 ssl;\n    server_name ark-proto\.stardust\.matce\.cn;\n(?:    #[^\n]*\n)*    if \(\$host != "ark-proto\.stardust\.matce\.cn"\) \{ return 421; \}\n/);
   const entry = await fs.readFile(path.join(configDir, 'entry-location.conf'), 'utf8');
   assert.match(entry, /proxy_pass http:\/\/ark_proto_game_backend/);
   assert.doesNotMatch(entry, /auth_request off/);
@@ -366,6 +368,9 @@ test('REAL simple Nginx TLS/gate/root+legacy WS/OpenI/CORS/redirect smoke', { sk
     if (nginx.exitCode !== null) throw new Error('Nginx failed: ' + nginxLog);
     try { return (await request('/login')).status === 200; } catch { return false; }
   }, 'TLS listener', 10000);
+  for (const host of ['cdn-lfs-cn-1.modelscope.cn', '127.0.0.1']) {
+    assert.equal((await request('/prod/lfs-objects/ab/cd/ef', { headers: { host } })).status, 421, 'another authority is misdirected: ' + host);
+  }
   for (const uri of ['/?_prts=1', '/index.html?_prts=1', '/js/main.js', '/data/config.json', '/data/announcements.json', '/shared/constants.js', '/sim/constants.js',
     '/client-build', '/_server/presence', PREFIX + '/public/js/main.js', PREFIX + '/shared/constants.js']) {
     assert.equal((await request(uri)).status, 401, 'anonymous private route ' + uri);
