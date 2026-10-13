@@ -790,6 +790,11 @@ const TOKEN_MAX_LEN = 64;        // protocol limit for hello.token
 const CHANNEL_NAME = 'sp.identity';
 /** How long init() waits for other tabs to claim a candidate token (ms). */
 export const CLAIM_QUERY_MS = 150;
+/**
+ * How long a shared candidate holding a match seat is asked for again after SESSION_IN_USE (identity.retryClaim): the
+ * server drops a socket that vanished without a close after one missed heartbeat (net.js heartbeatMs 30 s: 30–60 s).
+ */
+export const CLAIM_RETRY_MS = 75_000;
 
 function safeStorage(kind) {
   try {
@@ -862,6 +867,7 @@ export function createIdentity(deps = {}) {
     if (owned && saved?.hash === tokenHash(owned) && Number.isFinite(saved.at) && saved.at >= 0) welcomeAt = saved.at;
   } catch { /* old / damaged storage: the session token still claims its seat */ }
   let welcomed = false; // this document has received welcome (a copied stamp alone is not a live holder)
+  let claimRetry = null; // { hash, until }: the shared candidate retryClaim keeps asking for after SESSION_IN_USE
 
   const readRecent = () => {
     try {
@@ -1034,6 +1040,22 @@ export function createIdentity(deps = {}) {
         ? { noReplace: false, ...(welcomeAt != null ? { claimAt: welcomeAt } : {}) }
         : { noReplace: true };
     },
+    /**
+     * SESSION_IN_USE for a shared candidate (another, closed page's token — never this tab's own) that holds a match
+     * seat: the holder may be a socket the server has not seen drop yet (a killed app, a lost network). True while this
+     * candidate may be asked again — CLAIM_RETRY_MS from its first refusal; the caller then repeats the hello (still
+     * noReplace: a live holder is never replaced) instead of rejectToken, which would take a new identity and leave the
+     * seat behind (the owner's report of 2026-10-13: reconnects that ended on a spectator seat).
+     * @returns {boolean}
+     */
+    retryClaim() {
+      if (!current || current === owned) return false;
+      const hash = tokenHash(current);
+      if (!readMatches()[hash]) return false;
+      const t = now();
+      if (!claimRetry || claimRetry.hash !== hash) claimRetry = { hash, until: t + CLAIM_RETRY_MS };
+      return t < claimRetry.until;
+    },
     /** Only this page gives up the rejected claim; the shared recovery list belongs to all tabs. */
     rejectToken() {
       if (current) yieldCandidate(tokenHash(current));
@@ -1041,6 +1063,7 @@ export function createIdentity(deps = {}) {
     /** @param {string} token from `welcome` */
     saveToken(token) {
       if (!isToken(token)) return;
+      claimRetry = null;
       if (current !== token) rememberMatch(null);
       if (owned !== token || welcomeAt == null) welcomeAt = now();
       owned = token;

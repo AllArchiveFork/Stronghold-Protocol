@@ -163,7 +163,8 @@
 //     human is left at all the match ends ('abandoned'); when nobody alive is left it ends as 'eliminated'.
 //   * idle human (挂机移出, opts.afkRemoveRounds; matches that started with ≥ 2 humans): as each round's PREP ends, before
 //     its battle, an alive human seat without an accepted substantive intent (common.js AFK_ACTIONS) since the previous
-//     check gains an idle round, one with such an intent — or under AI 托管 at that moment — resets to 0 (the first
+//     check gains an idle round, one with such an intent — or under AI 托管, or disconnected, at that moment — resets
+//     to 0 (a dropped seat is left to the disconnect policy above: the reconnect window decides; the first
 //     check counts from the match start: strategy draft, 机变). At afkRemoveRounds the seat is removed like a departed
 //     human: m.removed { reason: 'afk', rounds } to it, m.notice { kind: 'afkRemoved', playerId, name, rounds } to
 //     everyone else in the match (spectator seats included), opts.onRemove, onLeave (MatchPlatform._checkIdle).

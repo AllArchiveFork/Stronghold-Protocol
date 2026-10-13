@@ -223,16 +223,19 @@ export class MatchPlatform {
   /**
    * 挂机移出 (afkRemoveRounds, the header's leave policy): called as a PREP ends, before its battle / boss fight is built
    * (MatchPrep.endPrep). Every alive human of a match that started with ≥ 2 humans (never solo or soloUntimed) is
-   * counted: an accepted AFK_ACTIONS intent since the previous check — or the AI playing the seat now (AI 托管) — resets
-   * its idle rounds, else they grow by one. A seat reaching afkRemoveRounds is removed (_removeIdle); may end the match.
-   * One round short of it, the seat is warned: a toast now and m.private afkWarn through its next prep (PlayerState).
+   * counted: an accepted AFK_ACTIONS intent since the previous check — or the AI playing the seat now (AI 托管), or the
+   * seat being offline — resets its idle rounds, else they grow by one. Offline is not idle (the owner's decision of
+   * 2026-10-13): a dropped seat keeps its place and its last lineup through the reconnect window, the disconnect policy
+   * of Match.js, whose expiry departs it — the rule had removed it after two preps, so a player back within the window
+   * found the seat gone and could only watch. A seat reaching afkRemoveRounds is removed (_removeIdle); may end the
+   * match. One round short of it, the seat is warned: a toast now and m.private afkWarn through its next prep.
    */
   _checkIdle() {
     const limit = this.afkRemoveRounds;
     if (!(limit > 0) || this.soloUntimed) return;
     const humans = this.order.filter((p) => !p.isBot && !p.left && p.alive);
     for (const ps of humans) {
-      ps.afkRounds = ps.afkActed || ps.botControlled ? 0 : ps.afkRounds + 1;
+      ps.afkRounds = ps.afkActed || ps.botControlled || !ps.connected ? 0 : ps.afkRounds + 1;
       ps.afkActed = false;
     }
     for (const ps of humans) {

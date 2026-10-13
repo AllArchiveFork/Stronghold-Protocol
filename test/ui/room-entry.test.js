@@ -34,6 +34,27 @@ test('a started room offers explicit spectatorship using the exact original code
   assert.equal(r.dialogs[0].cancelText, '取消');
 });
 
+test('a started room this browser has a closed page\'s seat in resumes that seat instead of offering to watch', async () => {
+  const r = rig();
+  const resumed = [];
+  const seat = { id: 'h1', name: 'Doctor', code };
+  r.options.localSeats = () => [{ id: 'h0', name: 'Other', code: 'WXYZ' }, seat];
+  r.options.resume = async (item) => { resumed.push(item); return true; };
+  assert.equal(await joinRoom(code, r.options), true);
+  assert.deepEqual(resumed, [seat], 'the seat of this code, not another room\'s');
+  assert.deepEqual(r.sent, [{ type: 'room.join', fields: { code } }], 'no room.spectate');
+  assert.deepEqual(r.dialogs, []);
+});
+
+test('a local seat a live page still holds falls back to the spectator offer', async () => {
+  const r = rig();
+  r.options.localSeats = () => [{ id: 'h1', name: 'Doctor', code }];
+  r.options.resume = async () => false;
+  assert.equal(await joinRoom(code, r.options), true);
+  assert.equal(r.dialogs.length, 1);
+  assert.deepEqual(r.sent.at(-1), { type: 'room.spectate', fields: { code } });
+});
+
 test('cancelling the prompt never takes a spectator seat', async () => {
   const r = rig();
   r.options.confirm = async () => false;

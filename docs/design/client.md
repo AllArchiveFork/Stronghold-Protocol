@@ -90,6 +90,16 @@ a new session or a queued player. The separate 观战 button remains available a
 key works after start. Spectating remains read-only and uses canonical room state, including a source-party alias
 that public matching maps to this one current match. New prompt / hint text is translated in every shipped pack.
 
+Reconnects (2026-10-13, the owner's report of reconnects that ended on a spectator seat): a `ROOM_STARTED` code whose
+seat another, closed page of this browser played resumes that seat (`ui/resumeMatch.js resumeLocalMatch`, the
+恢复本机对局 flow) before any offer to watch. A new page's shared token refused with `SESSION_IN_USE` is asked for
+again every 5 s for `CLAIM_RETRY_MS` (75 s, still `noReplace`) when it holds a match seat (`identity.retryClaim`,
+main.js), since the server may hold the closed page's socket until a missed heartbeat. Repeated WebSocket failures
+probe `/client-build` once per attempt from the third (`authProbe.js`): a 401 — a gate's expired sign-in, which a
+failed WebSocket cannot report — asks the player to sign in again by reloading the tab, which keeps its token. The
+server keeps a dropped seat through the reconnect window (the AFK rule counts online seats only) and reports hello
+outcomes and match-seat departures in `/healthz` `reconnect`.
+
 Fork local-candidate UI (2026-10-09): the current 机变 draft reads confirmed choices from existing public `sp.picks`,
 shows each teammate's selected card label, and lists **every** picker on a reused card rather than only `taken`'s first
 picker. It does not store pick history or reveal PREP personal choices. The host's expanded-co-op experimental dialog

@@ -15,7 +15,7 @@
 // order — 01 模拟方式, 02 模拟难度, 03 出发 (the choice summed up + 创建 / 匹配), 04 加入同盟, tips. Two columns on
 // desktops and landscape phones, one column on portrait phones with 出发 kept at the bottom edge while scrolling.
 
-import { ResumeMatchButton } from '../ui/resumeMatch.js';
+import { ResumeMatchButton, resumeLocalMatch } from '../ui/resumeMatch.js';
 import { useEffect, useRef, useState } from '../../vendor/hooks.module.js';
 import { DIFFICULTIES, DIFFICULTY_NAMES, DIFFICULTY_COLORS, ROOM_CODE_LEN, MAX_SEATS, MAX_SPECTATORS, modeIdFor, ERR } from '../../../shared/constants.js';
 import { html, Button, Icon, MicroLabel, Modal, Panel, TextField, PingPill, AvatarFrame, Tooltip, Spinner, DifficultyIcon, doctorNo, confirmDialog } from '../ui/components.js';
@@ -172,8 +172,12 @@ export function parseRoomParam(search) {
   }
 }
 
-/** Join a room, or offer its read-only spectator seat when the server says it has started. */
-export async function joinRoom(code, { connection = net, confirm = confirmDialog, getState = store.get } = {}) {
+/**
+ * Join a room, or — when the server says it has started — go back to this browser's own seat in it (a page whose token
+ * this one could not take over, identity.recoverable), else offer its read-only spectator seat.
+ */
+export async function joinRoom(code, { connection = net, confirm = confirmDialog, getState = store.get,
+  localSeats = () => identity.recoverable(), resume = resumeLocalMatch } = {}) {
   const viewer = getState().me;
   const current = () => {
     const s = getState();
@@ -186,6 +190,11 @@ export async function joinRoom(code, { connection = net, confirm = confirmDialog
     return true;
   } catch (err) {
     if (err?.code !== ERR.ROOM_STARTED) throw err;
+    if (!current()) return false;
+    // the seat of this match another (closed) page of this browser played: resume it instead of watching (the owner's
+    // report of 2026-10-13); a seat a live page still holds stays there and the offer below follows
+    const seat = localSeats().find((item) => item.code === code);
+    if (seat && await resume(seat)) return true;
     if (!current()) return false;
     const accepted = await confirm({
       title: t('同盟已开始模拟'),

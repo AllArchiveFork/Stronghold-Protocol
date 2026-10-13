@@ -637,6 +637,8 @@ export class Network {
     this.metrics = metrics;
     /** @type {{ limit: () => number } | null} the online cap (server/onlineLimit.js) for NEW sessions */
     this.onlineLimit = onlineLimit;
+    /** first hellos of a socket since start, by outcome (/healthz reconnect.hello; helloStats) */
+    this.helloCounts = { resumed: 0, fresh: 0, unknownToken: 0, inUse: 0 };
     const slices = Math.max(1, Math.min(HEARTBEAT_SLICES_MAX, Math.round(this.opts.heartbeatMs / HEARTBEAT_SLICE_MS)));
     /** @type {Set<Connection>[]} round-robin heartbeat slices; one is visited per tick */
     this.heartbeatSlices = Array.from({ length: slices }, () => new Set());
@@ -836,10 +838,12 @@ export class Network {
       if (session) {
         if (session.connected && session.ws && session.ws !== conn.ws
           && (msg.noReplace || (Number.isFinite(msg.claimAt) && session.claimAt != null && msg.claimAt > session.claimAt))) {
+          this.helloCounts.inUse++;
           this.reply(conn, errorMsg(ERR.SESSION_IN_USE, rid));
           return;
         }
         resumed = true;
+        this.helloCounts.resumed++;
         if (session.ws && session.ws !== conn.ws) this.detachReplaced(session.ws);
       } else {
         // the online cap admits no NEW session while the lobby is at it; a resumed one above always comes back
@@ -847,6 +851,8 @@ export class Network {
         if (full) { this.reply(conn, errorMsg(ERR.SERVER_FULL, rid, full)); return; }
         session = this.registry.create(name);
         if (!session) { this.reply(conn, errorMsg(ERR.INTERNAL, rid, 'server full')); return; }
+        // a token the registry does not know: expired past the reconnect window, or issued by another server process
+        this.helloCounts[msg.token ? 'unknownToken' : 'fresh']++;
       }
       conn.session = session;
       session.ws = conn.ws;
@@ -959,6 +965,13 @@ export class Network {
     const now = this.now();
     for (const conn of [...this.conns.values()]) this.heartbeatConn(conn, now);
   }
+
+  /**
+   * /healthz `reconnect.hello`: the first hellos of a socket since start — resumed (a known token rebound its session),
+   * fresh (no token), unknownToken (a token no session has any more: a new identity), inUse (SESSION_IN_USE: the
+   * token's session is live on another socket and the hello asked not to replace it).
+   */
+  helloStats() { return { ...this.helloCounts }; }
 
   /** Purge expired sessions and tell the handler. */
   sweep() {

@@ -367,6 +367,8 @@ export class Lobby {
     this.limitLog = { at: -Infinity, suppressed: 0 };
     /** room.create / room.start / room.addBot refusals per cap since start (/healthz limits.refused) */
     this.limitRefusals = { maxRooms: 0, maxRoomsPerAddr: 0, maxMatchesPerAddr: 0, maxBots: 0, maxBotsPerAddr: 0 };
+    /** human seats that left a running match since start: the AFK rule (online / offline) or an elapsed reconnect window */
+    this.matchDepartures = { afkOnline: 0, afkOffline: 0, expired: 0 };
     this.online = new Map();
     this.presenceSeq = 0;
     this.presenceTimer = null;
@@ -606,8 +608,14 @@ export class Lobby {
     const code = session.roomCode;
     session.roomCode = null;
     const room = code ? this.rooms.get(code) : null;
-    if (room) this.removeMember(room, session.playerId);
+    if (!room) return;
+    const seat = room.match ? room.seatOf(session.playerId) : null;
+    if (seat && !seat.isBot && !seat.left) this.matchDepartures.expired++;
+    this.removeMember(room, session.playerId);
   }
+
+  /** /healthz `reconnect.matchSeats`: human seats that left a running match since start, by cause (matchDepartures). */
+  departureStats() { return { ...this.matchDepartures }; }
 
   /**
    * Dispose every room (notifying members with room.closed) — used on server shutdown.
@@ -1631,6 +1639,7 @@ export class Lobby {
     if (!seat || seat.isBot || seat.left || room.disposed) return;
     const session = this.registry.byId(playerId);
     const offline = !!session && session.roomCode === room.code && !session.connected;
+    this.matchDepartures[offline ? 'afkOffline' : 'afkOnline']++;
     this.removeMember(room, playerId);
     if (offline) session.notice = reason;
   }

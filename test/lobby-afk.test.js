@@ -1,8 +1,9 @@
 // test/lobby-afk.test.js — the AFK rule (挂机移出) behind the real platform: the startServer option afkRemoveRounds
 // reaches the Match (server/http/config.js → server/lobby.js → Match opts), and a human the match removes (opts.onRemove →
 // Lobby.matchRemoved) leaves its room exactly like a g.leave — m.removed to it, m.notice afkRemoved to the other players
-// and the spectator seats, its seat departed until the match ends, its session free for another room. Removed while
-// offline, it gets room.closed { reason: 'afk' } on its next resume. Phase timers are scaled down; battles are FakeBattle.
+// and the spectator seats, its seat departed until the match ends, its session free for another room. A dropped human
+// is not idle: its seat waits for the resume (the reconnect window decides). Phase timers are scaled down; battles are
+// FakeBattle.
 import { describe, test, before, after, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -80,6 +81,7 @@ describe('the AFK rule over the in-process platform', () => {
     assert.equal(state.code, code);
     assert.ok(m.players.get(guest.id).left);
     assert.equal(m.round, 1);
+    assert.deepEqual(srv.lobby.departureStats(), { afkOnline: 1, afkOffline: 0, expired: 0 }, '/healthz reconnect.matchSeats');
     await host.waitFor('m.public', (p) => p.phase === 'COMBAT' && p.players.find((x) => x.playerId === guest.id)?.status === 'left', 5000);
     // the guest is out of the room: no more match frames, its leave is a no-op, it may open a new room at once
     await guest.expectNone('m.notice');
@@ -97,18 +99,36 @@ describe('the AFK rule over the in-process platform', () => {
     assert.equal(seatOf(back, host.id).seat, 0);
   });
 
-  test('removed while offline: room.closed { reason: afk } on the next resume', async () => {
+  test('dropped mid-match: offline is not idle — the seat is kept and the resume returns to it', async () => {
     const { host, guest, m } = await startedRoom();
     const token = guest.token;
     await guest.terminate();
     open.delete(guest);
-    await host.waitFor('m.notice', (n) => n.playerId === guest.id, 10000);
-    assert.ok(m.players.get(guest.id).left);
+    await host.waitFor('room.state', (s) => seatOf(s, guest.id)?.connected === false, 10000);
+    // afkRemoveRounds 1: an idle seat online would be removed as this prep ends (the test above)
+    await host.waitFor('m.public', (p) => p.phase === 'COMBAT' && p.round === 1, 10000);
+    await host.expectNone('m.notice');
+    assert.ok(!m.players.get(guest.id).left, 'the offline seat is not removed');
+    assert.equal(m.players.get(guest.id).afkRounds, 0);
     const back = await player('Guest', token);
     assert.equal(back.id, guest.id, 'the same session resumed');
-    assert.deepEqual(await back.waitFor('room.closed'), { t: 'room.closed', reason: 'afk' });
-    await back.expectNone('m.removed');
-    await err(back, { t: 'room.ready', ready: true }, ERR.NOT_IN_ROOM);
+    const state = await back.waitFor('room.state', (s) => seatOf(s, guest.id)?.connected === true, 5000);
+    assert.ok(state.inMatch);
+    await back.expectNone('room.closed');
+    assert.ok(m.players.get(guest.id).connected && !m.players.get(guest.id).left, 'back in its own seat');
+    m.finish({ victory: false, reason: 'defeat' });
+  });
+
+  test('a dropped seat whose reconnect window elapses departs the match (reconnect.matchSeats.expired)', async () => {
+    const { host, guest, m } = await startedRoom();
+    await guest.terminate();
+    open.delete(guest);
+    await host.waitFor('room.state', (s) => seatOf(s, guest.id)?.connected === false, 10000);
+    const before = srv.lobby.departureStats();
+    srv.lobby.onExpire(srv.registry.byId(guest.id)); // what the registry sweep does once the window has elapsed
+    assert.ok(m.players.get(guest.id).left, 'the seat departs like a leaver');
+    assert.deepEqual(srv.lobby.departureStats(), { ...before, expired: before.expired + 1 });
+    assert.equal(before.afkOffline, 0, 'the AFK rule never removed an offline seat');
     m.finish({ victory: false, reason: 'defeat' });
   });
 });

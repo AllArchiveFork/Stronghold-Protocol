@@ -5,7 +5,8 @@
 //   * any method but GET / HEAD → 405 with `Allow: GET, HEAD`;
 //   * GET /healthz → JSON status (protocol `version`, release `app`, uptime, the served `build`, sockets, sessions,
 //     rooms, matches, the room / AI caps in force with the largest per-network use and the refusals (`limits`,
-//     lobby.js limitStats), the cached `performance` sample — a cluster coordinator adds `performance.phases`,
+//     lobby.js limitStats), the hello outcomes and match-seat departures since start (`reconnect`), the cached
+//     `performance` sample — a cluster coordinator adds `performance.phases`,
 //     server/phaseMetrics.js), never cached; `?traffic=1` adds the traffic counters (traffic.js: bytes by category
 //     since the start, WebSocket wire and payload bytes) for a loopback or private-network client only — the
 //     maintainer's decision of 2026-10-12: the figures are the host's, so any other client, also one a tunnel or proxy
@@ -41,6 +42,8 @@ export function healthReport({ startedAt, network, registry, lobby, browserBuild
     build: browserBuild,
     sockets: network.connectionCount, sessions: registry.size, ...lobby.stats(),
     maxRooms: lobby.opts.maxRooms, limits: lobby.limitStats(), combat, trial,
+    // since start: hello outcomes (net.js helloStats) and the human seats that left a running match (lobby.js departureStats)
+    reconnect: { hello: network.helloStats?.() ?? null, matchSeats: lobby.departureStats?.() ?? null },
     performance: getHealthMetrics?.()?.snapshot() ?? PERFORMANCE_UNAVAILABLE,
   };
   if (withTraffic && traffic) report.traffic = traffic.snapshot();

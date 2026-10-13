@@ -33,10 +33,11 @@
 import './ui/compat.js';
 import { render } from '../vendor/preact.module.js';
 import { useErrorBoundary } from '../vendor/hooks.module.js';
-import { html, UiHosts, Button, MicroLabel, closeAllDialogs } from './ui/components.js';
+import { html, UiHosts, Button, MicroLabel, closeAllDialogs, confirmDialog } from './ui/components.js';
 import { ConnectionBanner } from './ui/connBanner.js';
 import { ToastHost, toast, toastError, describeError } from './ui/toasts.js';
 import { net, identity, NetError } from './net.js';
+import { createAuthProbe } from './authProbe.js';
 import './queueCancellation.js';
 import { store, useStore, emptyMatch, selectRoute, sessionResetNotice, isSpectating } from './store.js';
 import { data } from './data.js';
@@ -61,6 +62,8 @@ import { recordError, installTrafficMeter } from './diag.js';
 
 const RESTORE_GRACE_MS = 1500;
 const JOIN_DELAY_MS = 350;
+/** The gap between the hellos that ask again for a shared seat after SESSION_IN_USE (identity.retryClaim). */
+const CLAIM_RETRY_GAP_MS = 5000;
 const TICKER_KEEP = 20;
 const EMOTE_KEEP = 20;
 
@@ -90,6 +93,17 @@ let matchAt = 0;
 let restoreTimer = null;
 let joinTimer = null;
 let joinInFlight = false;
+let claimRetryTimer = null;
+let claimRetrying = false;
+const authProbe = createAuthProbe({
+  ask: () => confirmDialog({
+    title: t('登录已失效'),
+    text: t('登录已过期，无法连接服务器。重新登录后会自动回到当前对局。'),
+    okText: t('重新登录'),
+    cancelText: t('取消'),
+    micro: 'SIGN-IN EXPIRED',
+  }),
+});
 
 function clearPendingJoin() {
   store.patch('ui', { pendingJoin: null });
@@ -147,6 +161,10 @@ function backToLobby() {
 }
 
 function onWelcome(msg) {
+  clearTimeout(claimRetryTimer);
+  claimRetryTimer = null;
+  claimRetrying = false;
+  authProbe.onWelcome();
   identity.saveToken(msg.token);
   identity.rememberMatch(null);
   const prev = store.get();
@@ -217,6 +235,7 @@ const CLOSE_REASON = {
 
 function wireNet() {
   net.on('status', (snap) => {
+    authProbe.onStatus(snap);
     const cur = store.get().connection;
     store.set({
       ...(snap.status !== 'online' && Object.hasOwn(store.get().queue || {}, 'waitingCount')
@@ -232,7 +251,19 @@ function wireNet() {
   net.on('presence.state', (msg) => store.set({ presence: payload(msg) }));
   net.on('queue.state', (msg) => store.set({ queue: payload(msg) }));
   net.on('helloError', (err) => {
-    if (err.code === 'SESSION_IN_USE') identity.rejectToken();
+    if (err.code === 'SESSION_IN_USE') {
+      // A shared seat's holder may be a socket the server has not seen drop yet: ask again for a while before giving
+      // the seat up for a new identity (identity.retryClaim); the deep-linked join waits for the welcome meanwhile.
+      if (identity.retryClaim()) {
+        if (!claimRetrying) toast(t('正在恢复上一局…'), 'info', { ttl: CLAIM_RETRY_GAP_MS });
+        claimRetrying = true;
+        clearTimeout(claimRetryTimer);
+        claimRetryTimer = setTimeout(() => { claimRetryTimer = null; net.reconnectNow(net.name); }, CLAIM_RETRY_GAP_MS);
+        return;
+      }
+      claimRetrying = false;
+      identity.rejectToken();
+    }
     if (err.code === 'NAME_REJECTED') {
       identity.setEntered(false);
       store.set({ session: { entered: false } }); // retain room/token: correcting a legacy name must not abandon its game

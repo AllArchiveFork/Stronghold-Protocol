@@ -142,7 +142,7 @@ test('an accepted substantive intent resets the count; refused ones do not', () 
   m.dispose();
 });
 
-test('a seat under AI 托管 is never idle (offline too); a disconnected human without it is', () => {
+test('a seat under AI 托管 is never idle (offline too); neither is a disconnected human — it keeps its seat', () => {
   const h = makeMatch({ mode: 'coop', humans: 2, bots: 1, seed: 43, fake: true, afkRemoveRounds: 2 }).start();
   const m = h.m, p0 = h.ps('p_0'), p1 = h.ps('p_1');
   // p_0 drops at once and plays the whole match under AI 托管
@@ -157,14 +157,39 @@ test('a seat under AI 托管 is never idle (offline too); a disconnected human w
   assert.deepEqual(m.handle('p_1', { t: 'g.autoplay', on: false }), { ok: true });
   m.onDisconnect('p_1');
   reach(h, PHASE.COMBAT, 3);
-  assert.equal(p1.afkRounds, 1);
-  reach(h, PHASE.COMBAT, 4);
-  assert.ok(p1.left, 'offline without AI 托管: idle like any human');
+  assert.equal(p1.afkRounds, 0, 'offline is not idle (the reconnect window decides, not the AFK rule)');
+  reach(h, PHASE.COMBAT, 5);
+  assert.ok(!p1.left && p1.afkRounds === 0, 'offline without AI 托管: the seat is kept through several preps');
   assert.ok(!p0.left && p0.afkRounds === 0, 'the AI 托管 seat never counts');
   assert.ok(!h.ps('ai_0').left);
   assert.equal(h.ended, null);
-  reach(h, PHASE.PREP, 6);
+  // back online and still idle: counted again from 0, warned, then removed as usual
+  m.onReconnect('p_1');
+  reach(h, PHASE.COMBAT, 6);
+  assert.equal(p1.afkRounds, 1);
+  reach(h, PHASE.COMBAT, 7);
+  assert.ok(p1.left, 'idle online after the reconnect: removed like any human');
   assert.ok(!p0.left);
+  m.dispose();
+});
+
+test('an idle round before a drop does not carry over: the count restarts after the reconnect', () => {
+  const h = makeMatch({ mode: 'coop', humans: 2, seed: 45, fake: true, afkRemoveRounds: 2 }).start();
+  const m = h.m, p1 = h.ps('p_1');
+  const toasts = [];
+  h.onSend.push((id, msg) => { if (msg.t === 'm.toast' && id === 'p_1') toasts.push(msg); });
+  reach(h, PHASE.COMBAT, 1, (ps) => ps.playerId !== 'p_1');
+  assert.equal(p1.afkRounds, 1);
+  assert.equal(toasts.length, 1);
+  m.onDisconnect('p_1');
+  reach(h, PHASE.COMBAT, 3, (ps) => ps.playerId !== 'p_1');
+  assert.ok(!p1.left);
+  assert.equal(p1.afkRounds, 0);
+  assert.equal(toasts.length, 1, 'an offline seat is not warned');
+  m.onReconnect('p_1');
+  reach(h, PHASE.COMBAT, 4, (ps) => ps.playerId !== 'p_1');
+  assert.ok(!p1.left);
+  assert.equal(p1.afkRounds, 1);
   m.dispose();
 });
 

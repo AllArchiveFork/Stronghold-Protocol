@@ -1901,5 +1901,9 @@
   "你本回合没有任何操作，下回合备战仍无操作将被移出对局": "You took no action this round. Stay idle through the next prep and you will be removed from the match.",
   "本回合仍无操作将被移出对局": "No action this round and you will be removed from the match",
   "连续多个回合没有任何操作，你已被移出对局": "You took no action for several rounds in a row and were removed from the match.",
-  "房间、对局或 AI 队友数量已达上限，请先退出其他房间或稍后再试": "Room, match or AI teammate limit reached. Leave your other rooms or try again later."
+  "房间、对局或 AI 队友数量已达上限，请先退出其他房间或稍后再试": "Room, match or AI teammate limit reached. Leave your other rooms or try again later.",
+  "正在恢复上一局…": "Resuming your previous match…",
+  "登录已失效": "Sign-in expired",
+  "登录已过期，无法连接服务器。重新登录后会自动回到当前对局。": "Your sign-in has expired, so the server cannot be reached. Sign in again to return to your match.",
+  "重新登录": "Sign in again"
 }
