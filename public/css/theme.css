@@ -143,7 +143,12 @@ html {
 :root.sp-in-match[data-ui="120"] { --ui: 1.2; }
 html.sp-in-match {
   font-size: calc(clamp(40px, min(calc(100vw / 19.2), calc(100vh / 10.8)), 240px) * var(--ui));
-  font-size: calc(clamp(40px, min(calc(100vw / 19.2), calc(100svh / 10.8)), 240px) * var(--ui));
+}
+/* The svh line only where svh exists: a declaration with var() is never dropped while parsing, so a browser without svh
+   (Chrome < 108, Safari < 15.4, Firefox < 101, older in-app WebViews) kept it over the vh line, found it invalid at
+   computed-value time and put the match root back at its 16 px default — the whole HUD a fraction of its size. */
+@supports (height: 100svh) {
+  html.sp-in-match { font-size: calc(clamp(40px, min(calc(100vw / 19.2), calc(100svh / 10.8)), 240px) * var(--ui)); }
 }
 
 /* ---- text root: 设置 →「文字大小」 ---------------------------------------------------------------

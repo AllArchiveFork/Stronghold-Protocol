@@ -5,7 +5,7 @@
 // 1 and every computed value is what it was. The browser check is test/ui/ui-scale.e2e.test.js.
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DEFAULT_SETTINGS, UI_SCALES, uiScaleStep, sanitizeSettings } from '../../public/js/ui/gameLogic.js';
@@ -64,7 +64,35 @@ describe('界面大小: the CSS', () => {
 
   test('the match root multiplies the unchanged clamp; the base root is untouched', () => {
     assert.match(theme, /html \{\n {2}font-size: clamp\(40px, min\(calc\(100vw \/ 19\.2\), calc\(100vh \/ 10\.8\)\), 240px\);/);
-    assert.match(theme, /html\.sp-in-match \{\n {2}font-size: calc\(clamp\(40px, min\(calc\(100vw \/ 19\.2\), calc\(100vh \/ 10\.8\)\), 240px\) \* var\(--ui\)\);\n {2}font-size: calc\(clamp\(40px, min\(calc\(100vw \/ 19\.2\), calc\(100svh \/ 10\.8\)\), 240px\) \* var\(--ui\)\);\n\}/);
+    assert.match(theme, /html\.sp-in-match \{\n {2}font-size: calc\(clamp\(40px, min\(calc\(100vw \/ 19\.2\), calc\(100vh \/ 10\.8\)\), 240px\) \* var\(--ui\)\);\n\}/);
+    assert.match(theme, /@supports \(height: 100svh\) \{\n {2}html\.sp-in-match \{ font-size: calc\(clamp\(40px, min\(calc\(100vw \/ 19\.2\), calc\(100svh \/ 10\.8\)\), 240px\) \* var\(--ui\)\); \}\n\}/);
+  });
+
+  test('a declaration with var() and a small / dynamic / large viewport unit sits under @supports for that unit', () => {
+    // A var() declaration is only checked at computed-value time: where the unit is unknown it does not fall back to an
+    // earlier line but to the property's initial value (the match root at the 16 px default — the
+    // owner's report of 2026-10-13: the HUD tiny on browsers without svh).
+    const UNIT = /\d(?:\.\d+)?(s|d|l)v(h|w|min|max|i|b)\b/;
+    const bad = [];
+    const walk = (dir) => readdirSync(path.join(ROOT, dir), { withFileTypes: true }).flatMap((e) =>
+      e.isDirectory() ? walk(`${dir}/${e.name}`) : e.name.endsWith('.css') ? [`${dir}/${e.name}`] : []);
+    for (const f of walk('public/css')) {
+      const src = read(f);
+      const stack = [];
+      let text = '';
+      for (const ch of src) {
+        if (ch === '{') { stack.push(text.trim()); text = ''; }
+        else if (ch === '}' || ch === ';') {
+          const m = UNIT.exec(text);
+          if (m && text.includes('var(') && !stack.some((p) => p.startsWith('@supports') && p.includes(`${m[1]}v${m[2]}`))) {
+            bad.push(`${f}: ${text.trim().slice(0, 100)}`);
+          }
+          if (ch === '}') stack.pop();
+          text = '';
+        } else text += ch;
+      }
+    }
+    assert.deepEqual(bad, []);
   });
 
   test('every pixel floor of the match CSS follows --ui (a new unscaled floor would stay full size on a phone)', () => {

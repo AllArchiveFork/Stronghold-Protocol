@@ -57,7 +57,14 @@
 @media (max-width: 900px) {
   .damage-board__toggle { width: max(.56rem, calc(32px * var(--ui))); padding: 0; justify-content: center; }
   /* Keep the report clear of avatars and within the viewport, including short landscape screens. */
-  .damage-board__panel { position: fixed; left: max(calc(100px * var(--ui)), 1.75rem); right: 16px; bottom: calc(.24rem + max(.56rem, calc(32px * var(--ui))) + .12rem); width: auto; max-width: 320px; max-height: calc(100dvh - .24rem - max(.56rem, calc(32px * var(--ui))) - .12rem - 16px); padding: 12px; }
+  .damage-board__panel { position: fixed; left: max(calc(100px * var(--ui)), 1.75rem); right: 16px; bottom: calc(.24rem + max(.56rem, calc(32px * var(--ui))) + .12rem); width: auto; max-width: 320px; max-height: calc(100vh - .24rem - max(.56rem, calc(32px * var(--ui))) - .12rem - 16px); padding: 12px; }
+}
+/* dvh only where it exists: with var() in it the line is not dropped while parsing, and without dvh it would end as
+   max-height: none (css/theme.css, the match root). */
+@supports (height: 100dvh) {
+  @media (max-width: 900px) {
+    .damage-board__panel { max-height: calc(100dvh - .24rem - max(.56rem, calc(32px * var(--ui))) - .12rem - 16px); }
+  }
 }
 @media (max-width: 767px) {
   /* Keep the existing two-row corner on narrow screens; a fourth control must not create a third row. */
