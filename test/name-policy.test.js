@@ -171,6 +171,8 @@ test('isolated auth and both game Docker stages package only canonical moderatio
   writeFileSync(join(stage, 'package.json'), '{"type":"module"}');
   for (const file of ['server.mjs', ...MODERATION_FILES]) cpSync(new URL('deploy/stardust/auth/' + file, ROOT), join(auth, file));
   cpSync(new URL('shared/names.js', ROOT), join(stage, 'shared/names.js'));
+  // The auth image carries its one runtime dependency next to server.mjs (deploy/stardust/auth/Dockerfile).
+  cpSync(new URL('node_modules/altcha-lib', ROOT), join(auth, 'node_modules/altcha-lib'), { recursive: true });
   const stagedAuth = await import(pathToFileURL(join(auth, 'server.mjs')).href);
   const stagedGame = await import(pathToFileURL(join(stage, 'shared/names.js')).href);
   assert.equal(typeof stagedAuth.createGate, 'function');
@@ -182,12 +184,12 @@ test('auth login and remembered profile reject political category names without 
   const fixture = mkdtempSync(join(tmpdir(), 'sp-name-auth-'));
   t.after(() => rmSync(fixture, { recursive: true, force: true }));
   writeFileSync(join(fixture, 'login.html'), '<input name="csrf" value="{{CSRF}}">');
-  for (const file of ['gate.css', 'gate.js', 'warmup.js', 'terminal-motion.js', 'scene.js', 'entry-nav.js', 'three.module.js', 'three.core.js', 'css3d.js', 'bender-regular.woff2']) {
+  for (const file of ['gate.css', 'gate.js', 'altcha-pbkdf2.js', 'warmup.js', 'terminal-motion.js', 'scene.js', 'entry-nav.js', 'three.module.js', 'three.core.js', 'css3d.js', 'bender-regular.woff2']) {
     writeFileSync(join(fixture, file), 'fixture');
   }
   const password = 'test-only-name-policy-access-93';
   const secrets = await makeSecrets(password);
-  const server = createGate({ secrets, publicDir: fixture });
+  const server = createGate({ secrets, publicDir: fixture, pow: false }); // the ALTCHA proof of work has its own tests (deploy/stardust/auth/test)
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise(resolve => { server.closeAllConnections(); server.close(resolve); }));
   const base = `http://127.0.0.1:${server.address().port}`;
