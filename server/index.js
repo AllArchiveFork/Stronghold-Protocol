@@ -2,16 +2,22 @@
 // Worker pools are process-owned loans to matches. Startup and shutdown keep diagnostics separate from readiness.
 // Process-entry boot checks a pending update package before listening (server/update.js).
 // The default dual-stack bind may fall back to IPv4; explicit hosts remain literal.
+// Art under public/assets and public/fonts is served with content-hash URLs once the background index is ready
+// (http/assetIndex.js, http/assetViews.js; SP_ASSET_INDEX=0: off); GET /healthz?traffic=1 adds the traffic counters
+// (http/traffic.js) for a local client.
 
 import http from 'node:http';
 import { getData, loadData } from './data.js';
-import { ROOT, listenAddress, bindCandidates, serveDirs, makeLogger, parseTrustProxy } from './http/config.js';
+import { ROOT, listenAddress, bindCandidates, serveDirs, makeLogger, parseTrustProxy, assetIndexOptionsFrom } from './http/config.js';
 import { WS_MAX_PAYLOAD, createSessionStack, attachWebSocket } from './http/websocket.js';
 import { DATA_SHIM_JS, createStaticHandler } from './http/static.js';
 import { createPackRegistry } from './packs.js';
-import { MIME, COMPRESSIBLE, acceptsGzip, parseRange } from './http/files.js';
+import { MIME, COMPRESSIBLE, acceptsGzip, pickEncoding, parseRange } from './http/files.js';
 import { BUILD_INPUTS, computeBuildTag, buildTag, resetBuildTag } from './http/buildTag.js';
 import { createRequestHandler } from './http/routes.js';
+import { createTrafficCounter } from './http/traffic.js';
+import { createAssetIndex } from './http/assetIndex.js';
+import { createManifestViews } from './http/assetViews.js';
 import { answerClientError } from './http/common.js';
 import { lanUrls, displayHost, isProcessEntry, runMain } from './http/boot.js';
 import { CombatWorkerPool } from './match/combat/pool.js';
@@ -22,7 +28,7 @@ import { parseSnapshotHz } from './match/fields.js';
 
 export {
   ROOT, WS_MAX_PAYLOAD, DATA_SHIM_JS, MIME, COMPRESSIBLE, BUILD_INPUTS, computeBuildTag, buildTag, resetBuildTag,
-  acceptsGzip, parseRange, createStaticHandler, lanUrls, parseTrustProxy,
+  acceptsGzip, pickEncoding, parseRange, createStaticHandler, lanUrls, parseTrustProxy,
 };
 
 /** Zero retains the synchronous backend; malformed pool configuration fails before listening. */
@@ -74,7 +80,7 @@ export async function startServer(opts = {}) {
       log.warn?.(`[trial] worker startup failed; rehearsal stays inline: ${e.message}`);
     }
   }
-  let registry, lobby, network, packs, serveStatic, browserBuild;
+  let registry, lobby, network, packs, serveStatic, browserBuild, assetIndex = null, views = null;
   const startedAt = Date.now();
   // The online cap and the lobby's room / AI caps (server/onlineLimit.js): a JSON file re-read while the server runs; none = no cap.
   const onlineLimit = createOnlineLimit({ file: opts.onlineLimitFile ?? process.env.SP_ONLINE_LIMIT_FILE ?? null, log });
@@ -86,20 +92,26 @@ export async function startServer(opts = {}) {
     }));
     packs = createPackRegistry({ publicDir, dataDir, packsDir }, { log });
     packs.refresh(true);
-    serveStatic = createStaticHandler({ publicDir, dataDir, sharedDir, packsDir, packs, log, metrics: opts.phaseMetrics });
+    // the content hashes of the art (built in the background once listening) and the manifests served with them
+    const indexOptions = assetIndexOptionsFrom(opts, publicDir);
+    assetIndex = indexOptions ? createAssetIndex({ publicDir, log, ...indexOptions }) : null;
+    views = assetIndex ? createManifestViews({ dataDir, index: assetIndex, log }) : null;
+    serveStatic = createStaticHandler({ publicDir, dataDir, sharedDir, packsDir, packs, log, metrics: opts.phaseMetrics, assetIndex, views });
     browserBuild = computeBuildTag(ROOT, publicDir);
   } catch (e) {
     network?.close();
     lobby?.shutdown('boot-failed');
     onlineLimit.close();
+    assetIndex?.close();
     await closePools();
     throw e;
   }
+  const traffic = createTrafficCounter();
   const health = { startedAt, network, registry, lobby, browserBuild, combatPool, trialPool, trialStartupFailed,
-    getHealthMetrics: () => healthMetrics };
-  const server = http.createServer(createRequestHandler({ serveStatic, health, log }));
+    getHealthMetrics: () => healthMetrics, traffic, assetIndex, views };
+  const server = http.createServer(createRequestHandler({ serveStatic, health, log, trustProxy: network.opts.trustProxy }));
   server.on('clientError', answerClientError);
-  const wss = attachWebSocket(server, { network, log, wsCompression });
+  const wss = attachWebSocket(server, { network, log, wsCompression, traffic });
 
   // The address actually bound. The default may fall back to IPv4; the returned host and url follow that.
   let boundHost;
@@ -134,10 +146,12 @@ export async function startServer(opts = {}) {
     network.close();
     lobby.shutdown('boot-failed');
     onlineLimit.close();
+    assetIndex?.close();
     await closePools();
     throw e;
   }
   server.on('error', e => log.error('[http] server error', e));
+  assetIndex?.start();
   try {
     healthMetrics = (opts.healthMetricsFactory ?? createHealthMetrics)(opts.phaseMetrics ? { log, phases: opts.phaseMetrics } : { log });
     healthMetrics.start();
@@ -159,6 +173,7 @@ export async function startServer(opts = {}) {
       try { lobby.shutdown('shutdown'); } catch (e) { log.error('[shutdown] lobby', e); }
       network.close();
       onlineLimit.close();
+      assetIndex?.close();
       await closePools();
       await new Promise(resolve => {
         server.close(() => resolve());
@@ -169,7 +184,8 @@ export async function startServer(opts = {}) {
     })();
     return closing;
   }
-  return { port: actualPort, host: boundHost, url, server, wss, lobby, network, registry, packs, combatPool, trialPool, healthMetrics, close };
+  return { port: actualPort, host: boundHost, url, server, wss, lobby, network, registry, packs, combatPool, trialPool, healthMetrics,
+    traffic, assetIndex, views, close };
 }
 
 if (isProcessEntry(import.meta.url)) runMain(startServer);

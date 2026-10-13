@@ -16,6 +16,8 @@ services:
       PORT: "3000"
       SP_COMBAT: server
       SP_VERIFY: "off"
+      # Art is redirected to the material sources by plain path (material-lb, /fonts/): no 0.2.6 content-hash URLs.
+      SP_ASSET_INDEX: "0"
       SP_COMBAT_WORKERS: "12"
       SP_TRIAL_WORKERS: "2"
       TRUST_PROXY: auto

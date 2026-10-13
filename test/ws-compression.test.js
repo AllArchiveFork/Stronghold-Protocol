@@ -441,4 +441,14 @@ describe('native WebSocket compression through the complete server', { concurren
     second.transmit({ t: 'ping', c: 7, rid: 103 });
     assert.equal((await second.waitFor('pong', (msg) => msg.rid === 103)).msg.c, 7);
   });
+
+  test('a compressed client frame keeps the 64 KB inflated frame limit', { timeout: 10000 }, async (t) => {
+    const { connect } = await boot(t, { wsCompression: 'on' });
+    const client = await connect();
+    assert.equal(client.ws.extensions, 'permessage-deflate');
+    // a compressed client frame whose inflated size is over the limit closes the socket (1009), like a plain one
+    const closed = new Promise((resolve) => client.ws.once('close', (code) => resolve(code)));
+    client.ws.send(JSON.stringify({ t: 'hello', name: 'x'.repeat(70 * 1024) }), { compress: true });
+    assert.equal(await closed, 1009);
+  });
 });

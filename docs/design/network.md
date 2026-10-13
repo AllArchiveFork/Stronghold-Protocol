@@ -4,7 +4,7 @@ Part of [DESIGN.md](../DESIGN.md) (the index; section numbers are global).
 
 ## 8. Network protocol (shared/protocol.js is normative)
 
-Transport: one WebSocket per tab at `/ws`, JSON text frames `{ t: '<type>', ...payload }`. Client requests may carry `rid` (request id); the server's direct reply echoes `rid` (`ok` or `error`). Server pushes have no `rid`. Max frame 64 KB inbound; rate limit 40 msgs/s per connection (excess dropped with `error RATE`).
+Transport: one WebSocket per tab at `/ws`, JSON text frames `{ t: '<type>', ...payload }`. Client requests may carry `rid` (request id); the server's direct reply echoes `rid` (`ok` or `error`). Server pushes have no `rid`. Max frame 64 KB inbound (a compressed frame counts its inflated size); rate limit 40 msgs/s per connection (excess dropped with `error RATE`). permessage-deflate (RFC 7692) is opt-in in this fork: with `SP_WS_COMPRESSION=on` (`server/wsCompression.js`, [deploy/stardust/WS-COMPRESSION.md](../../deploy/stardust/WS-COMPRESSION.md)) the state and battle-stream frames are compressed with one deflate context kept per connection, while credentials and control frames go out plain; a client that offers no compression gets plain frames. Upstream 0.2.6 instead compresses every frame from 1 KB by default (`WS_DEFLATE`; a measured solo session, rounds 3–5: 173 KB of server frames → 60 KB on the wire); the fork keeps its own preset and default (DESIGN, Stardust fork overrides). `/healthz?traffic=1` reports the WebSocket wire and payload bytes either way.
 
 Fork cluster startup correction (2026-10-10): ordinary private RPC requests and all RPC replies retain their
 64 KiB limit. Only an aggregated `prepare` request above that size uses the fixed private

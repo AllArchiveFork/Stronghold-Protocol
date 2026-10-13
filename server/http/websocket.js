@@ -2,8 +2,9 @@
 //
 //   * session wiring: SessionRegistry (reconnect tokens) → Lobby (rooms, server/lobby.js) → Network (the socket
 //     protocol, server/net.js), built from the startServer() options (config.js decides which go where);
-//   * WebSocket (ws) at /ws, maxPayload 64 KB, no per-message deflate → Network.handleConnection. Refused at the
-//     upgrade: any other path 404; per-network socket limit for internet clients (maxConnectionsPerAddr, see net.js
+//   * WebSocket (ws) at /ws, maxPayload 64 KB (inflated size), permessage-deflate only when SP_WS_COMPRESSION=on
+//     (server/wsCompression.js: the bounded preset and the per-type allowlist) → Network.handleConnection. Refused at
+//     the upgrade: any other path 404; per-network socket limit for internet clients (maxConnectionsPerAddr, see net.js
 //     clientAddress; local/LAN peers are exempt) 429; server full (maxConnections) or shutting down 503.
 
 import { WebSocketServer } from 'ws';
@@ -38,14 +39,38 @@ export function createSessionStack(opts, { data, log, combatPool = null, trialPo
 }
 
 /**
+ * Count a socket in the traffic counters (traffic.js): its wire bytes from now until it closes, the payload of every
+ * message it sends (ws.send wrapped) and receives.
+ * @param {import('ws').WebSocket} ws
+ * @param {import('node:http').IncomingMessage} req
+ * @param {ReturnType<typeof import('./traffic.js').createTrafficCounter>} traffic
+ */
+function meterSocket(ws, req, traffic) {
+  const socket = req.socket;
+  traffic.wsOpen(socket);
+  const send = ws.send;
+  ws.send = function meteredSend(data, ...rest) {
+    traffic.wsSent(data);
+    return send.call(this, data, ...rest);
+  };
+  ws.on('message', (data) => traffic.wsReceived(data));
+  ws.once('close', () => traffic.wsClose(socket));
+}
+
+/**
  * Serve the WebSocket endpoint /ws on `server` (its 'upgrade' event).
  * @param {import('node:http').Server} server
- * @param {{ network: Network, log: object }} deps
+ * @param {{ network: Network, log: object, wsCompression?: false | object,
+ *   traffic?: ReturnType<typeof import('./traffic.js').createTrafficCounter> }} deps
+ *   wsCompression: the resolved permessage-deflate options (wsCompression.js resolveWsCompression), false: none
  * @returns {WebSocketServer}
  */
-export function attachWebSocket(server, { network, log, wsCompression = false }) {
+export function attachWebSocket(server, { network, log, wsCompression = false, traffic = null }) {
   const wss = new WebSocketServer({ noServer: true, maxPayload: WS_MAX_PAYLOAD, perMessageDeflate: wsCompression, clientTracking: false });
-  wss.on('connection', (ws, req) => network.handleConnection(ws, req));
+  wss.on('connection', (ws, req) => {
+    if (traffic) meterSocket(ws, req, traffic);
+    network.handleConnection(ws, req);
+  });
   wss.on('error', (e) => log.error('[ws] server error', e));
 
   server.on('upgrade', (req, socket, head) => {

@@ -1,10 +1,10 @@
 # 卫戍协议：盟约 · Stronghold Protocol: Alliance
 
-> 本仓库是 [sganggs/Stronghold-Protocol](https://github.com/sganggs/Stronghold-Protocol) 的 fork。玩法规则、游戏数据和素材流程跟随上游（目前同步到上游 0.2.5），在此之上增加了公开匹配、扩展人数的好友房、服务器端战斗与集群部署、登录门禁和素材分发等改动，见[与上游的区别](#与上游的区别)。`master` 是开发集成分支，推送不等于线上发布；本文不记录任何部署地址或上线状态。
+> 本仓库是 [sganggs/Stronghold-Protocol](https://github.com/sganggs/Stronghold-Protocol) 的 fork。玩法规则、游戏数据和素材流程跟随上游（目前同步到上游 0.2.6），在此之上增加了公开匹配、扩展人数的好友房、服务器端战斗与集群部署、登录门禁和素材分发等改动，见[与上游的区别](#与上游的区别)。`master` 是开发集成分支，推送不等于线上发布；本文不记录任何部署地址或上线状态。
 
 《明日方舟》季节性自走棋塔防玩法「卫戍协议：盟约」的**非官方同人复刻**：浏览器即开即玩，单人、1–4 人合作，或在好友房里扩展到最多 20 人。
 
-![version](https://img.shields.io/badge/version-0.2.5-2ea44f)
+![version](https://img.shields.io/badge/version-0.2.6-2ea44f)
 ![license](https://img.shields.io/badge/code%20license-GPL--3.0--or--later-blue)
 ![node](https://img.shields.io/badge/node-22%20%7C%2024-339933)
 
@@ -41,7 +41,7 @@ English summary: [below](#english).
 - **两种运行方式**：
   - **单进程**：和上游一样，一个 Node.js 进程同时提供页面和 WebSocket，战斗默认在各玩家的浏览器里模拟，一台低功耗小主机就能开服。
   - **集群**：一个 coordinator 负责大厅、房间与匹配，多个 game 节点用固定的 Worker 池在服务器上模拟战斗，多个 ingress 转发玩家连接。浏览器在本地演算自己看到的战场，由服务器定期校验，胜负以服务器为准。见 [deploy/stardust/cluster/](deploy/stardust/cluster/README.md)。
-- **版本**：玩法与数据同步到上游 0.2.5（上游的版本记录见 [CHANGELOG.md](CHANGELOG.md)）。本 fork 的改动见下一节和提交记录。仍有少数规则按推断实现，与官方不一致的地方欢迎在 Issue 里反馈。
+- **版本**：玩法与数据同步到上游 0.2.6（上游的版本记录见 [CHANGELOG.md](CHANGELOG.md)）。本 fork 的改动见下一节和提交记录。仍有少数规则按推断实现，与官方不一致的地方欢迎在 Issue 里反馈。
 
 ## 与上游的区别
 
@@ -70,7 +70,7 @@ English summary: [below](#english).
 
 - **服务器端战斗**：`SP_COMBAT=server` 加上 `SP_COMBAT_WORKERS` 后，战斗在服务器的固定 Worker 池里模拟，另有独立的 AI 试算池；集群的 game 节点总是由服务器模拟。见 [deploy/stardust/WORKERS.md](deploy/stardust/WORKERS.md)。
 - **本地演算副本**：服务器模拟时，玩家自己的战场、最终攻势 / 隐秘核心的 Boss 战，以及观看的队友战场都由浏览器本地演算，服务器定期发摘要校验；对不上时自动改回服务器推送的画面。
-- **推流优化**：服务器快照频率可选 20 / 10 / 5 Hz；可选的 WebSocket 压缩，每个连接复用同一个压缩上下文，ingress 只压缩大消息；Worker 回包精简，多个 Worker 共用一个节拍。
+- **推流优化**：服务器快照频率可选 20 / 10 / 5 Hz；可选的 WebSocket 压缩，每个连接复用同一个压缩上下文，ingress 只压缩大消息（上游 0.2.6 起单进程默认压缩 1 KB 以上的消息，本 fork 仍默认关闭，开启后按消息类型压缩）；Worker 回包精简，多个 Worker 共用一个节拍。
 - **故障处理**：game 节点重启或断开时，受影响的对局会明确结束并提示，不会卡住；开局时有玩家连接没就绪，可以直接重试。
 
 ### 部署与运维（[deploy/stardust/](deploy/stardust/README.md)）
@@ -78,7 +78,7 @@ English summary: [below](#english).
 - **集群**：一个 coordinator、16 或 32 个 game 节点、多个 ingress，全部入口共用一个匹配池。ingress 到 coordinator 可选多路复用链路。另有不依赖 WireGuard 的同机部署方式。
 - **门禁**：共享口令登录、PRTS 风格的登录动画，以及 ALTCHA 工作量证明。Origin / CSRF 检查严格；私有代码每次请求都过门禁，用 ETag 重新验证，不重复下载。
 - **Nginx 模板**：每个 IP 的 WebSocket 并发上限；可选只放行中国大陆 IP，IP 表每日更新，可热加载（[deploy/stardust/geo/](deploy/stardust/geo/README.md)）。
-- **素材分发**：不可变素材经 ModelScope、OpenI 等多个源签名重定向，浏览器加载失败时自动回退到其他源。见 [MATERIAL-SOURCES.md](deploy/stardust/MATERIAL-SOURCES.md) 和 [OPENI.md](deploy/stardust/OPENI.md)。
+- **素材分发**：不可变素材经 ModelScope、OpenI 等多个源签名重定向，浏览器加载失败时自动回退到其他源。素材按原路径重定向，所以部署模板关闭了上游 0.2.6 的素材内容哈希地址（`SP_ASSET_INDEX=0`）。见 [MATERIAL-SOURCES.md](deploy/stardust/MATERIAL-SOURCES.md) 和 [OPENI.md](deploy/stardust/OPENI.md)。
 - **运维工具**：在线人数上限可在运行中调整；主线程优先级工具；离线镜像构建；游戏、门禁和素材分别发布、配套回滚的 SOP（[UPDATE-SOP.md](deploy/stardust/UPDATE-SOP.md)、[CLUSTER-SOP.md](deploy/stardust/CLUSTER-SOP.md)）。
 
 ## 功能一览
@@ -158,6 +158,7 @@ npm start          # 启动服务器：http://localhost:3000
 | `DEBUG` | 空 | 设为任意值输出详细日志 |
 | `SP_NO_BROWSER` | 空 | 设为 `1` 时启动脚本不自动打开浏览器 |
 | `SP_BOT_EMOTES` | 空 | AI 队友的对局表情回应（战斗、整备、合成、联防、收礼时即刻的 `m.emote` 广播）；设为 `0` 时整体关闭 |
+| `SP_ASSET_INDEX` | 空 | 素材地址带内容哈希、浏览器长期缓存（0.2.6 起默认开启，哈希存在 `.cache/asset-hashes.json`）；设为 `0` 时关闭，素材清单原样下发；本 fork 的部署模板设为 `0`（素材按原路径重定向到外部源） |
 
 设置方式：macOS / Linux `PORT=8080 npm start`；PowerShell `$env:PORT=8080; npm start`；cmd `set "PORT=8080" && npm start`。健康检查：`GET /healthz`。集群各角色的配置文件格式见 [deploy/stardust/cluster/](deploy/stardust/cluster/README.md)。
 
@@ -313,7 +314,7 @@ node tools/perfbench.mjs --cpu 1,4,6 --profile             # 真实战斗的帧�
 
 ## English
 
-A fork of [sganggs/Stronghold-Protocol](https://github.com/sganggs/Stronghold-Protocol), an **unofficial, non-commercial fan remake** of Arknights' seasonal auto-chess tower-defense mode *Stronghold Protocol: Alliance*, played in the browser. Gameplay and data follow upstream (currently 0.2.5); this fork adds multiplayer, server-side combat and deployment work on top.
+A fork of [sganggs/Stronghold-Protocol](https://github.com/sganggs/Stronghold-Protocol), an **unofficial, non-commercial fan remake** of Arknights' seasonal auto-chess tower-defense mode *Stronghold Protocol: Alliance*, played in the browser. Gameplay and data follow upstream (currently 0.2.6); this fork adds multiplayer, server-side combat and deployment work on top.
 
 - **What this fork adds:** public 4-player matchmaking with whole-party queueing; opt-in friend rooms of 8 / 12 / 16 / 20 players (repeatable drafts, a second relay defense round, grouped stock, optional rescue and independent pools — [docs/EXPERIMENTAL-MULTIPLAYER.md](docs/EXPERIMENTAL-MULTIPLAYER.md)); unlimited spectators, also after the match has started; AI teammate strategies, bond plans and AFK removal; display-only operator skins, cn / jp / en operator voices, full operator presets, per-view damage boards and an interface scale setting.
 - **Server side:** optional server-run combat on a fixed Worker pool (`SP_COMBAT_WORKERS`) with the player's own, boss and watched fields run as browser-side replicas checked by server digests; snapshot rate, WebSocket compression and an online cap that can change at run time; a cluster of one coordinator, game nodes and ingresses ([deploy/stardust/cluster/](deploy/stardust/cluster/README.md)); a password gate with ALTCHA proof of work, Nginx templates with per-IP WebSocket caps and an optional mainland-China allowlist, and multi-source material delivery ([deploy/stardust/](deploy/stardust/README.md)).

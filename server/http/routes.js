@@ -6,43 +6,61 @@
 //   * GET /healthz → JSON status (protocol `version`, release `app`, uptime, the served `build`, sockets, sessions,
 //     rooms, matches, the room / AI caps in force with the largest per-network use and the refusals (`limits`,
 //     lobby.js limitStats), the cached `performance` sample — a cluster coordinator adds `performance.phases`,
-//     server/phaseMetrics.js), never cached;
+//     server/phaseMetrics.js), never cached; `?traffic=1` adds the traffic counters (traffic.js: bytes by category
+//     since the start, WebSocket wire and payload bytes) for a loopback or private-network client only — the
+//     maintainer's decision of 2026-10-12: the figures are the host's, so any other client, also one a tunnel or proxy
+//     on this machine forwards, gets the plain report (net.js clientAddress, honouring TRUST_PROXY like the WebSocket
+//     limits);
 //   * everything else → the static files (static.js).
-// A route that throws is logged and answers 500.
+// Every response's body bytes count in the traffic counters (traffic.js meter). A route that throws is logged and
+// answers 500.
 
 import { PROTOCOL_VERSION, APP_VERSION } from '../../shared/constants.js';
 import { PERFORMANCE_UNAVAILABLE } from '../healthMetrics.js';
 import { setSecurityHeaders, sendError, sendJson, splitUrl } from './common.js';
+import { clientAddress, isLocalIp } from '../net.js';
 
 const MAX_URL_LENGTH = 4096;
 
 /**
- * The GET /healthz body.
+ * The GET /healthz body (`withTraffic`: plus the traffic counters and the asset index's state, `?traffic=1`).
  * @param {{ startedAt: number, network: import('../net.js').Network, registry: import('../net.js').SessionRegistry,
- *           lobby: import('../lobby.js').Lobby }} health
+ *           lobby: import('../lobby.js').Lobby, traffic?: ReturnType<typeof import('./traffic.js').createTrafficCounter>,
+ *           assetIndex?: ReturnType<typeof import('./assetIndex.js').createAssetIndex> | null,
+ *           views?: ReturnType<typeof import('./assetViews.js').createManifestViews> | null }} health
+ * @param {boolean} [withTraffic]
  */
-export function healthReport({ startedAt, network, registry, lobby, browserBuild, combatPool, trialPool, trialStartupFailed, getHealthMetrics }) {
+export function healthReport({ startedAt, network, registry, lobby, browserBuild, combatPool, trialPool, trialStartupFailed, getHealthMetrics,
+  traffic, assetIndex, views }, withTraffic = false) {
   const combat = combatPool ? { backend: 'workers', scope: 'server-streaming', ...combatPool.stats() } : { backend: 'inline', workers: 0 };
   const ok = !combatPool || (combat.status === 'ready' && combat.ready > 0);
   const trial = trialPool ? { backend: 'workers', scope: 'bot-rehearsal', ...trialPool.stats() }
     : { backend: 'inline', scope: 'bot-rehearsal', workers: 0, status: trialStartupFailed ? 'degraded' : 'disabled' };
-  return {
+  const report = {
     ok, version: PROTOCOL_VERSION, app: APP_VERSION, uptimeSec: Math.round((Date.now() - startedAt) / 1000),
     build: browserBuild,
     sockets: network.connectionCount, sessions: registry.size, ...lobby.stats(),
     maxRooms: lobby.opts.maxRooms, limits: lobby.limitStats(), combat, trial,
     performance: getHealthMetrics?.()?.snapshot() ?? PERFORMANCE_UNAVAILABLE,
   };
+  if (withTraffic && traffic) report.traffic = traffic.snapshot();
+  // content-hashed asset URLs (assetIndex.js / assetViews.js): off, building, or ready with how many files and URLs
+  if (withTraffic) report.assetHashes = assetIndex ? { ...assetIndex.stats(), views: views ? views.stats() : null } : null;
+  return report;
 }
+
+/** Does the query ask for the traffic counters (`traffic`, `traffic=1`, `traffic=true`)? */
+const wantsTraffic = (query) => /(?:^|&)traffic(?:=(?:1|true|yes))?(?:&|$)/i.test(query || '');
 
 /**
  * The request listener for `http.createServer`.
  * @param {{ serveStatic: (req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse,
  *             rawPath: string, query: string) => Promise<void>,
- *           health: Parameters<typeof healthReport>[0], log: object }} deps
+ *           health: Parameters<typeof healthReport>[0], log: object, trustProxy?: 'auto' | boolean }} deps
+ *   trustProxy: whose forwarding headers name the client (net.js clientAddress; the server's TRUST_PROXY)
  * @returns {(req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse) => void}
  */
-export function createRequestHandler({ serveStatic, health, log }) {
+export function createRequestHandler({ serveStatic, health, log, trustProxy = 'auto' }) {
   async function handleRequest(req, res) {
     const url = req.url || '/';
     if (url.length > MAX_URL_LENGTH) { sendError(req, res, 414, '请求地址过长 · URI too long'); return; }
@@ -54,7 +72,8 @@ export function createRequestHandler({ serveStatic, health, log }) {
       return;
     }
     if (parts.rawPath === '/healthz') {
-      const report = healthReport(health);
+      const withTraffic = wantsTraffic(parts.query) && isLocalIp(clientAddress(req, trustProxy).ip);
+      const report = healthReport(health, withTraffic);
       sendJson(req, res, report.ok ? 200 : 503, report);
       return;
     }
@@ -67,6 +86,7 @@ export function createRequestHandler({ serveStatic, health, log }) {
 
   return (req, res) => {
     setSecurityHeaders(res);
+    if (health.traffic) health.traffic.meter(res, splitUrl(req.url || '/')?.rawPath || '/');
     handleRequest(req, res).catch((e) => {
       log.error('[http] request failed', e);
       sendError(req, res, 500, '服务器内部错误 · Internal error');
