@@ -7,7 +7,9 @@ import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { createGate, makeSecrets, validateSecrets, signToken, verifyToken, safeNext, gameDestination, cookieValue, AttemptLimiter, ORIGIN, SESSION_COOKIE, CSRF_COOKIE, SESSION_TTL } from '../server.mjs';
+import { solveChallenge } from 'altcha-lib';
+import { deriveKey as pbkdf2Key } from 'altcha-lib/algorithms/pbkdf2';
+import { createGate, makeSecrets, validateSecrets, signToken, verifyToken, safeNext, gameDestination, cookieValue, AttemptLimiter, ORIGIN, SESSION_COOKIE, CSRF_COOKIE, SESSION_TTL, POW } from '../server.mjs';
 
 let secrets, betaSecrets;
 const BETA_ORIGIN = 'https://ark-proto-beta.stardust.matce.cn';
@@ -15,12 +17,13 @@ const origins = new Map();
 const password = 'test-only-access-password-84!';
 const fixture = mkdtempSync(join(tmpdir(), 'ark-gate-tests-'));
 writeFileSync(join(fixture, 'login.html'), '<!doctype html><body data-authenticated="{{AUTHENTICATED}}"><form {{LOGIN_HIDDEN}}><input name="csrf" value="{{CSRF}}"><input name="next" value="{{NEXT}}"><p>{{MESSAGE}}</p></form><section {{STATUS_HIDDEN}}>authorized</section></body>');
-for (const name of ['gate.css', 'gate.js', 'warmup.js', 'scene.js', 'terminal-motion.js', 'entry-nav.js', 'three.module.js', 'three.core.js', 'css3d.js', 'bender-regular.woff2']) writeFileSync(join(fixture, name), 'test asset');
+for (const name of ['gate.css', 'gate.js', 'altcha-pbkdf2.js', 'warmup.js', 'scene.js', 'terminal-motion.js', 'entry-nav.js', 'three.module.js', 'three.core.js', 'css3d.js', 'bender-regular.woff2']) writeFileSync(join(fixture, name), 'test asset');
 before(async () => { secrets = await makeSecrets(password); betaSecrets = await makeSecrets(password); });
 after(() => rmSync(fixture, { recursive: true, force: true }));
 
 async function start(t, opts = {}) {
-  const server = createGate({ secrets, publicDir: fixture, ...opts });
+  // Proof of work has its own tests below; the remaining cases keep exercising the password path directly.
+  const server = createGate({ secrets, publicDir: fixture, pow: false, ...opts });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const base = `http://127.0.0.1:${server.address().port}`;
   origins.set(base, opts.profile === 'beta' ? BETA_ORIGIN : ORIGIN);
@@ -73,6 +76,14 @@ async function page(base, next = '/', existing = '') {
 }
 async function post(base, session, extra = {}, headers = {}, path = '/_gate/login') {
   return request(base + path, { method: 'POST', redirect: 'manual', headers: { Origin: origins.get(base), Accept: 'application/json', Cookie: session.cookie, ...headers }, body: new URLSearchParams({ csrf: session.csrf, password, callsign: '阿米娅', next: '/', ...extra }) });
+}
+const FAST_POW = Object.freeze({ cost: 2, counterMin: 1, counterMax: 40 });
+async function solved(base, change = payload => payload) {
+  const r = await request(base + '/_gate/pow', { headers: { Accept: 'application/json' } });
+  assert.equal(r.status, 200);
+  const challenge = await r.json();
+  const solution = await solveChallenge({ challenge, deriveKey: pbkdf2Key });
+  return Buffer.from(JSON.stringify(change({ challenge, solution }))).toString('base64');
 }
 
 test('credentials validate and reject weak or malformed configuration', async () => {
@@ -241,7 +252,7 @@ test('password page assets are allowlisted, not a filesystem proxy', async t => 
   const base = await start(t);
   assert.equal((await request(base + '/_gate/assets/gate.css')).status, 200);
   assert.equal((await request(base + '/_gate/assets/warmup.js')).status, 200);
-  assert.equal((await request(base + '/_gate/assets/terminal-motion.js?v=ae-10')).status, 200);
+  assert.equal((await request(base + '/_gate/assets/terminal-motion.js?v=ae-11')).status, 200);
   for (const name of ['doctor.webp', 'rhodes.webp', 'ae-sphere.json']) assert.equal((await request(base + '/_gate/assets/' + name)).status, 404, 'optional missing art does not prevent the gate starting');
   for (const path of ['/_gate/assets/secrets.json', '/_gate/assets/%2e%2e/server.mjs', '/server.mjs', '/data/chess.json', '/ws']) assert.equal((await request(base + path)).status, 404);
 });
@@ -526,4 +537,70 @@ test('request URLs cannot replace the fixed profile origin even with a trusted H
       assert.equal(response.headers['set-cookie'], undefined);
     }
   }
+});
+
+test('ALTCHA challenges are signed, deterministic, short-lived and bounded', async t => {
+  assert.equal(POW.algorithm, 'PBKDF2/SHA-256');
+  const base = await start(t, { pow: FAST_POW });
+  const r = await request(base + '/_gate/pow', { headers: { Accept: 'application/json' } });
+  assert.equal(r.status, 200);
+  assert.equal(r.headers.get('cache-control'), 'no-store');
+  const { parameters, signature } = await r.json();
+  assert.match(signature, /^[0-9a-f]{64}$/);
+  assert.equal(parameters.algorithm, 'PBKDF2/SHA-256');
+  assert.equal(parameters.cost, 2);
+  assert.match(parameters.keySignature, /^[0-9a-f]{64}$/);
+  assert.equal(parameters.keyPrefix.length, 32);
+  assert.ok(Math.abs(parameters.expiresAt - Math.floor(Date.now() / 1000) - POW.ttl) <= 2);
+  assert.equal((await request(base + '/_gate/pow', { method: 'HEAD' })).status, 405);
+  const busy = await start(t, { pow: { cost: 200000, issuing: 1 } });
+  const statuses = await Promise.all(Array.from({ length: 4 }, () => request(busy + '/_gate/pow').then(x => x.status)));
+  assert.ok(statuses.includes(200) && statuses.includes(429), statuses.join());
+  const off = await start(t);
+  assert.equal((await request(off + '/_gate/pow')).status, 404);
+});
+test('login needs one fresh ALTCHA solution and unsolved requests spend no password attempt', async t => {
+  const base = await start(t, { pow: FAST_POW, limiter: new AttemptLimiter({ perIP: 1, window: 300 }) });
+  const p = await page(base);
+  for (const altcha of [undefined, '', 'not base64!', Buffer.from('{"challenge":{}}').toString('base64')]) {
+    const r = await post(base, p, altcha === undefined ? {} : { altcha });
+    assert.equal(r.status, 403);
+    const body = await r.json();
+    assert.equal(body.code, 'POW_REJECTED');
+    assert.equal(r.headers.get('set-cookie'), null);
+  }
+  const altcha = await solved(base);
+  const r = await post(base, p, { altcha });
+  assert.equal(r.status, 200);
+  assert.match(r.headers.get('set-cookie'), /^__Host-ark_gate=/);
+  const replay = await post(base, p, { altcha });
+  assert.equal(replay.status, 403);
+  assert.equal((await replay.json()).code, 'POW_REJECTED');
+  assert.equal((await post(base, p, { altcha: await solved(base) })).status, 429, 'a solved request does use the attempt limiter');
+});
+test('tampered, foreign, expired and wrong-password ALTCHA solutions are not reusable', async t => {
+  const base = await start(t, { pow: FAST_POW }); const p = await page(base);
+  const tamper = [
+    x => ({ ...x, challenge: { ...x.challenge, parameters: { ...x.challenge.parameters, cost: 1 } } }),
+    x => ({ ...x, challenge: { ...x.challenge, parameters: { ...x.challenge.parameters, keySignature: undefined } } }),
+    x => ({ ...x, solution: { ...x.solution, derivedKey: '00'.repeat(32) } }),
+    x => ({ ...x, challenge: { ...x.challenge, parameters: { ...x.challenge.parameters, algorithm: 'SHA-256' } } }),
+  ];
+  for (const change of tamper) assert.equal((await post(base, p, { altcha: await solved(base, change) })).status, 403);
+  const other = await start(t, { pow: FAST_POW, secrets: betaSecrets });
+  assert.equal((await post(base, p, { altcha: await solved(other) })).status, 403);
+  const stale = await start(t, { pow: FAST_POW, now: () => Math.floor(Date.now() / 1000) - POW.ttl - 5 });
+  const expired = await post(base, p, { altcha: await solved(stale) });
+  assert.equal(expired.status, 403);
+  assert.match((await expired.json()).message, /过期/);
+  const altcha = await solved(base);
+  assert.equal((await post(base, p, { altcha, password: 'wrong-password' })).status, 401);
+  assert.equal((await post(base, p, { altcha })).status, 403);
+});
+test('a browser without the proof gets a rendered form error instead of a session', async t => {
+  const base = await start(t, { pow: FAST_POW }); const p = await page(base);
+  const r = await post(base, p, {}, { Accept: 'text/html' });
+  assert.equal(r.status, 403);
+  assert.equal(r.headers.get('set-cookie')?.includes('__Host-ark_gate='), false);
+  assert.match(await r.text(), /人机验证未通过/);
 });

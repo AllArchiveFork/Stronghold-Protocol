@@ -18,6 +18,10 @@ const previewScript = `(() => {
   const originalFetch = window.fetch.bind(window);
   window.fetch = (input, options = {}) => {
     const path = new URL(typeof input === 'string' ? input : input.url, location.href).pathname;
+    // The demo proof of work is trivial, unsigned and solved locally; it never reaches a server either.
+    if (path === '/_gate/pow') return Promise.resolve(new Response(JSON.stringify({ parameters: { algorithm: 'PBKDF2/SHA-256', nonce: '00'.repeat(16), salt: '00'.repeat(16), cost: 1, keyLength: 32, keyPrefix: '0' }, signature: 'local-demo' }), {
+      status: 200, headers: { 'Content-Type': 'application/json' }
+    }));
     if (path !== '/_gate/login') return originalFetch(input, options);
     // This response is generated in this browser. Form contents NEVER travel to the server.
     const name = new URLSearchParams(options.body).get('callsign') || 'Doctor';
@@ -37,7 +41,7 @@ export function createPreviewServer({ host = '192.168.10.101', port = 8788 } = {
   function add(path, file) {
     routes.set(path, { type: types[file.split('.').at(-1)], data: readFileSync(file) });
   }
-  for (const name of ['gate.css', 'gate.js', 'warmup.js', 'scene.js', 'terminal-motion.js', 'entry-nav.js',
+  for (const name of ['gate.css', 'gate.js', 'altcha-pbkdf2.js', 'warmup.js', 'scene.js', 'terminal-motion.js', 'entry-nav.js',
     'three.module.js', 'three.core.js', 'css3d.js', 'bender-regular.woff2', 'doctor.webp', 'rhodes.webp', 'ae-sphere.json']) add('/_gate/assets/' + name, join(auth, name));
   for (const name of ['fonts.css', 'bender-regular.woff2', 'bender-light.woff2', 'novecento-wide-normal.woff2']) add('/fonts/' + name, join(root, 'public/fonts', name));
   for (const name of ['preact.module.js', 'hooks.module.js', 'htm.module.js']) add('/vendor/' + name, join(root, 'public/vendor', name));
@@ -61,7 +65,7 @@ export function createPreviewServer({ host = '192.168.10.101', port = 8788 } = {
     requests++;
     res.setHeader('Cache-Control', 'no-store'); res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'no-referrer'); res.setHeader('X-Frame-Options', 'DENY');
-    res.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; connect-src 'self'; form-action 'none'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'");
+    res.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; connect-src 'self'; worker-src 'self'; child-src 'self'; form-action 'none'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'");
     const remote = req.socket.remoteAddress;
     const local = remote === '127.0.0.1' || /^192\.168\.10\.\d{1,3}$/.test(remote || '');
     if (!local || req.headers.host !== `${host}:${server.address().port}`) { blocked++; res.writeHead(403); res.end(); return; }

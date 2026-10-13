@@ -91,6 +91,7 @@ test('auth CSP permits only the existing static host; private gates stay intact'
       assert.match(policy, /script-src 'self' https:\/\/ark-asset\.hanabi-ai\.cn:25442/);
       assert.match(policy, /connect-src 'self' https:\/\/ark-asset\.hanabi-ai\.cn:25442;/);
       assert.match(policy, /frame-ancestors 'none'/);
+      assert.match(policy, /worker-src 'self'; child-src 'self';/);
       assert.doesNotMatch(policy, /unsafe-inline|unsafe-eval|inline-speculation-rules|\*/);
     }
     assert.match(text, /auth_request \/_gate\/check;/); assert.match(text, /private, no-store/);

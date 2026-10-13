@@ -2,7 +2,7 @@
   'use strict';
   const $ = id => document.getElementById(id);
   const body = document.body;
-  if (body.dataset.build !== 'ae-10') { location.reload(); return; }
+  if (body.dataset.build !== 'ae-11') { location.reload(); return; }
   const form = $('login-form'), logout = $('logout-form'), input = $('password');
   const callsign = $('callsign'), credentialName = $('credential-name');
   const message = $('login-message'), statusMessage = $('status-message');
@@ -14,7 +14,7 @@
   const authed = body.dataset.authenticated === 'true';
   let phase = 'idle', phaseTime = performance.now(), scene = null;
   let introTimer = 0, handoffTimer = 0, assembleTimer = 0, pending = false, committed = false, navigation = false;
-  let destination = '/', entryTimers = [], retryAt = 0;
+  let destination = '/', entryTimers = [], retryAt = 0, proof = null, proofTask = null, proving = false;
   let autoAllowed = authed && location.pathname === '/entry', autoStarted = false;
   const introToggle = $('intro-enabled');
   let introEnabled = false, sceneLoading = false;
@@ -225,6 +225,71 @@
     return true;
   }
 
+  // ALTCHA proof of work for a new session, solved in the background by the official PBKDF2 worker while
+  // the form is filled in. Each solution admits one login request; a fresh one is prepared after every try.
+  function solveProof() {
+    if (proofTask) return proofTask;
+    proofTask = (async () => {
+      const started = Date.now();
+      let response;
+      for (let attempt = 0; ; attempt++) {
+        response = await fetch('/_gate/pow', { headers: { Accept: 'application/json' }, credentials: 'same-origin', cache: 'no-store' });
+        if (response.status !== 429 || attempt >= 2) break;
+        await new Promise(resolve => setTimeout(resolve, 1500));
+      }
+      const challenge = await response.json().catch(() => null);
+      if (!response.ok || !challenge?.parameters || typeof challenge.signature !== 'string') throw new Error('challenge');
+      const solution = await new Promise((resolve, reject) => {
+        const count = Math.max(1, Math.min(8, navigator.hardwareConcurrency || 2));
+        const workers = [];
+        let open = count, settled = false;
+        const settle = (error, value) => {
+          if (settled) return;
+          settled = true; workers.forEach(worker => worker.terminate());
+          if (error) reject(error); else resolve(value);
+        };
+        try {
+          for (let i = 0; i < count; i++) {
+            const worker = new Worker('/_gate/assets/altcha-pbkdf2.js?v=ae-11');
+            workers.push(worker);
+            worker.onmessage = event => {
+              const data = event.data;
+              if (data && Number.isInteger(data.counter) && typeof data.derivedKey === 'string') settle(null, data);
+              else if (--open === 0) settle(new Error('unsolved'));
+            };
+            worker.onerror = () => settle(new Error('worker'));
+            worker.postMessage({ type: 'work', challenge, counterStart: i, counterStep: count, timeout: 90000 });
+          }
+        } catch (error) { settle(error); }
+      });
+      // The server allows five minutes; the local deadline is shorter and ignores client clock skew.
+      proof = { expires: started + 240000, value: btoa(JSON.stringify({ challenge: { parameters: challenge.parameters, signature: challenge.signature }, solution: { counter: solution.counter, derivedKey: solution.derivedKey, time: solution.time } })) };
+    })().finally(() => { proofTask = null; });
+    return proofTask;
+  }
+  function prepareProof() {
+    if (!authed && !committed && !proof && window.Worker) solveProof().catch(() => {});
+  }
+  async function takeProof() {
+    if (!proof || proof.expires <= Date.now()) { proof = null; await solveProof(); }
+    const value = proof.value;
+    proof = null;
+    return value;
+  }
+  async function sendLogin(requestBody) {
+    proving = true;
+    if (!proof) tell(message, '正在进行人机验证……', 'pending');
+    requestBody.set('altcha', await takeProof());
+    proving = false;
+    tell(message, '正在确认访问权限……', 'pending');
+    const controller = new AbortController();
+    const deadline = setTimeout(() => controller.abort(), 20000);
+    try {
+      const response = await fetch(form.action, { method: 'POST', headers: { Accept: 'application/json' }, credentials: 'same-origin', cache: 'no-store', body: requestBody, signal: controller.signal });
+      return { response, result: await response.json().catch(() => null) };
+    } finally { clearTimeout(deadline); }
+  }
+
   async function continueSession(automatic = false) {
     if (pending || committed || (automatic && !autoAllowed)) return;
     const next = entryPath(returnLink.getAttribute('href')) || '/';
@@ -255,13 +320,11 @@
       const name = readCallsign();
       if (!name) return;
       const requestBody = new URLSearchParams(new FormData(form));
-      pending = true; busy(form, true); setPhase('checking'); tell(message, '正在确认访问权限……', 'pending');
-      const controller = new AbortController();
-      const deadline = setTimeout(() => controller.abort(), 20000);
+      pending = true; busy(form, true); setPhase('checking');
       try {
-        const response = await fetch(form.action, { method: 'POST', headers: { Accept: 'application/json' }, credentials: 'same-origin', cache: 'no-store', body: requestBody, signal: controller.signal });
-        const result = await response.json().catch(() => null);
-        clearTimeout(deadline);
+        let { response, result } = await sendLogin(requestBody);
+        // A proof from a stale page can expire or be refused; one fresh proof is solved and sent again.
+        if (result?.code === 'POW_REJECTED') ({ response, result } = await sendLogin(requestBody));
         if (response.status === 429) {
           const wait = Math.max(1, Number(result?.retryAfter || response.headers.get('Retry-After')) || 30);
           retryAt = Date.now() + Math.min(wait, 86400) * 1000;
@@ -281,13 +344,14 @@
         if (typeof result.callsign !== 'string' || !result.callsign) { setPhase('error'); tell(message, '代号校验未完成，请刷新后重试。'); return; }
         enter(next, result.callsign);
       } catch (error) {
-        if (!committed) { setPhase('error'); tell(message, error.name === 'AbortError' ? '验证请求超时，请重试。' : '无法连接认证服务，请检查网络。'); }
+        if (!committed) { setPhase('error'); tell(message, proving ? '人机验证未能完成，请刷新页面后重试。' : error.name === 'AbortError' ? '验证请求超时，请重试。' : '无法连接认证服务，请检查网络。'); }
         else navigate();
       } finally {
-        clearTimeout(deadline); pending = false;
-        if (!committed) busy(form, false);
+        proving = false; pending = false;
+        if (!committed) { busy(form, false); prepareProof(); }
       }
     });
+    prepareProof();
 
     logout.addEventListener('submit', async event => {
       event.preventDefault(); autoAllowed = false; if (pending || committed) return;
@@ -318,7 +382,7 @@
   function loadScene() {
     if (motion.matches || scene || sceneLoading || navigation) return;
     sceneLoading = true;
-    import('/_gate/assets/scene.js?v=ae-10').then(module => {
+    import('/_gate/assets/scene.js?v=ae-11').then(module => {
       if (motion.matches || navigation) return;
       $('spatial-dom').hidden = false;
       scene = module.createTerminalScene({ canvas: $('world'), plane: $('terminal-plane'), home: $('plane-home'), dom: $('spatial-dom'), reduced: motion.matches });

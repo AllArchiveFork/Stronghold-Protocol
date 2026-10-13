@@ -1,10 +1,12 @@
 import http from 'node:http';
-import { createHmac, randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomBytes, randomInt, scrypt, timingSafeEqual } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { isIP } from 'node:net';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+import { createChallenge, verifySolution } from 'altcha-lib';
+import { deriveKey as pbkdf2Key } from 'altcha-lib/algorithms/pbkdf2';
 import { moderateName, nameReasonMessage } from './name-policy.mjs';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
@@ -17,9 +19,13 @@ export const SESSION_TTL = 7 * 86400;
 const CSRF_TTL = 1800;
 const BODY_LIMIT = 4096;
 const KDF = Object.freeze({ N: 32768, r: 8, p: 1, maxmem: 64 * 1024 * 1024 });
+// ALTCHA proof of work before a new session: deterministic mode costs the server one PBKDF2 per issued
+// challenge and a single HMAC per verification; the browser derives keys until it reaches the secret counter.
+export const POW = Object.freeze({ algorithm: 'PBKDF2/SHA-256', cost: 2000, counterMin: 1000, counterMax: 4000, ttl: 300, issuing: 4, spent: 50000 });
 const ASSETS = new Map([
   ['gate.css', 'text/css; charset=utf-8'],
   ['gate.js', 'text/javascript; charset=utf-8'],
+  ['altcha-pbkdf2.js', 'text/javascript; charset=utf-8'],
   ['warmup.js', 'text/javascript; charset=utf-8'],
   ['scene.js', 'text/javascript; charset=utf-8'],
   ['terminal-motion.js', 'text/javascript; charset=utf-8'],
@@ -150,7 +156,7 @@ function headers(res) {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'same-origin');
   res.setHeader('X-Frame-Options', 'DENY');
-  res.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; connect-src 'self' https://ark-asset.hanabi-ai.cn:25442; form-action 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'");
+  res.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; connect-src 'self' https://ark-asset.hanabi-ai.cn:25442; worker-src 'self'; child-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'");
 }
 
 function send(req, res, status, body, type = 'text/plain; charset=utf-8') {
@@ -182,12 +188,12 @@ async function readForm(req) {
   });
   const form = new URLSearchParams(body);
   for (const key of form.keys()) {
-    if (!['password', 'csrf', 'next', 'callsign'].includes(key) || form.getAll(key).length !== 1) throw new InputError(400, '请求格式不正确。');
+    if (!['password', 'csrf', 'next', 'callsign', 'altcha'].includes(key) || form.getAll(key).length !== 1) throw new InputError(400, '请求格式不正确。');
   }
   return form;
 }
 
-export function createGate({ secrets, profile = 'prod', now = () => Math.floor(Date.now() / 1000), limiter = new AttemptLimiter(), publicDir = join(ROOT, 'public') } = {}) {
+export function createGate({ secrets, profile = 'prod', now = () => Math.floor(Date.now() / 1000), limiter = new AttemptLimiter(), publicDir = join(ROOT, 'public'), pow = POW } = {}) {
   const origin = profileOrigin(profile);
   const trustedHost = new URL(origin).host;
   const keys = validateSecrets(secrets);
@@ -198,6 +204,38 @@ export function createGate({ secrets, profile = 'prod', now = () => Math.floor(D
     catch (error) { if (error.code !== 'ENOENT') throw error; }
   }
   let activeKDF = 0;
+  // ALTCHA secrets derive from the signing key, so rotating it also revokes outstanding challenges.
+  const proof = pow ? { ...POW, ...pow } : null;
+  const powSecret = label => createHmac('sha256', keys.signingKey).update(`altcha\0${label}`).digest('base64url');
+  const challengeSecret = powSecret('challenge'), keySecret = powSecret('key');
+  const spent = new Map();
+  let issuing = 0, nextSpentSweep = 0;
+
+  // A solved challenge admits one password attempt; its nonce is remembered until the challenge expires.
+  async function checkProof(value) {
+    let payload = null;
+    if (typeof value === 'string' && value.length <= 3000 && /^[A-Za-z0-9+/]+={0,2}$/.test(value)) {
+      try { payload = JSON.parse(Buffer.from(value, 'base64').toString('utf8')); } catch {}
+    }
+    const parameters = payload?.challenge?.parameters;
+    if (!parameters || typeof parameters !== 'object' || typeof payload.challenge.signature !== 'string'
+      || parameters.algorithm !== proof.algorithm || typeof parameters.nonce !== 'string' || !Number.isSafeInteger(parameters.expiresAt)) return 'invalid';
+    let result;
+    try {
+      result = await verifySolution({ challenge: { parameters, signature: payload.challenge.signature }, solution: payload.solution, deriveKey: pbkdf2Key, hmacSignatureSecret: challengeSecret, hmacKeySignatureSecret: keySecret });
+    } catch { return 'invalid'; }
+    if (result.expired) return 'expired';
+    if (!result.verified) return 'invalid';
+    const t = now();
+    if (t >= nextSpentSweep) {
+      for (const [nonce, until] of spent) if (until < t) spent.delete(nonce);
+      nextSpentSweep = t + 30;
+    }
+    if (spent.has(parameters.nonce)) return 'invalid';
+    if (spent.size >= proof.spent) return 'busy';
+    spent.set(parameters.nonce, parameters.expiresAt);
+    return null;
+  }
 
   const authenticated = req => verifyToken(cookieValue(req.headers.cookie, SESSION_COOKIE), 'session', keys.signingKey, now());
   function render(req, res, status, next = '/', message = '') {
@@ -234,6 +272,20 @@ export function createGate({ secrets, profile = 'prod', now = () => Math.floor(D
         return res.end();
       }
       if (path === '/login' || path === '/entry') return render(req, res, 200, url.searchParams.get('next') || '/');
+      if (path === '/_gate/pow' && proof) {
+        if (req.method !== 'GET') { res.setHeader('Allow', 'GET'); return send(req, res, 405, 'Method not allowed'); }
+        // Issuing derives a key on the shared two-thread pool, so concurrent issues are bounded like scrypt.
+        if (issuing >= proof.issuing) { res.setHeader('Retry-After', '1'); return send(req, res, 429, '{"ok":false}', 'application/json; charset=utf-8'); }
+        issuing++;
+        let challenge;
+        try {
+          challenge = await createChallenge({
+            algorithm: proof.algorithm, cost: proof.cost, counter: randomInt(proof.counterMin, proof.counterMax + 1), deriveKey: pbkdf2Key,
+            expiresAt: now() + proof.ttl, hmacSignatureSecret: challengeSecret, hmacKeySignatureSecret: keySecret,
+          });
+        } finally { issuing--; }
+        return send(req, res, 200, JSON.stringify(challenge), 'application/json; charset=utf-8');
+      }
       if (path.startsWith('/_gate/assets/')) {
         const asset = assets.get(path.slice('/_gate/assets/'.length));
         if (!asset) return send(req, res, 404, 'Not found');
@@ -278,6 +330,12 @@ export function createGate({ secrets, profile = 'prod', now = () => Math.floor(D
     }
     const password = form.get('password');
     if (!password || password.length > 256 || Buffer.byteLength(password) > 512) return fail(req, res, 400, '请输入有效的访问口令。', next);
+    // Proof of work is checked before the attempt limiter, so unsolved requests cost no password attempt.
+    if (proof) {
+      const rejected = await checkProof(form.get('altcha'));
+      if (rejected === 'busy') return fail(req, res, 429, '认证终端正忙，请稍后重试。', next, 5);
+      if (rejected) return fail(req, res, 403, rejected === 'expired' ? '人机验证已过期，请重新连接。' : '人机验证未通过，请刷新页面后重试。', next, null, { code: 'POW_REJECTED' });
+    }
     const forwarded = req.headers['x-real-ip'];
     const ip = typeof forwarded === 'string' && isIP(forwarded) ? forwarded : req.socket.remoteAddress || 'unknown';
     const retry = limiter.take(ip, now());
