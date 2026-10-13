@@ -73,7 +73,7 @@ test('site names cover the exact thirty-two slots in order without changing wire
   for (const label of [null, undefined, 1, 'game-001', 'game-00', 'game-257', 'game-01\n', 'private-node', '罗德岛']) assert.equal(gameDisplayName(label), null);
   const notices = JSON.parse(source('../../data/announcements.json'));
   assert.equal(notices.length, 2);
-  assert.equal(notices[0].title, '10 月 13 日更新：同步原作 0.2.5，Boss 战与观战本地演算');
+  assert.equal(notices[0].title, '10 月 14 日更新：同步原作 0.2.6，掉线重连与界面修复');
   assert.doesNotMatch(notices.flatMap(notice => notice.paragraphs).join('\n'), /节点更名|服务器更名|罗德岛|企鹅物流/);
 });
 

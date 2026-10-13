@@ -85,16 +85,16 @@ test('shipped announcement data validates; optional board is mounted from the lo
   assert.match(board, /ariaLabel=\$\{t\('大厅公告板'\)\} trapFocus=\$\{true\}/);
 });
 
-test('today is one short notice: 0.2.5, local Boss / watched battles, 界面大小, grouped stock and the maintenance; the introduction is retained', () => {
+test('today is one short notice: 0.2.6, the access changes live since 10-13, reconnects, the interface fix and the maintenance; the introduction is retained', () => {
   const entries = parseAnnouncements(JSON.parse(source('../../data/announcements.json')));
   assert.equal(entries.length, 2);
-  assert.equal(entries[0].title, '10 月 13 日更新：同步原作 0.2.5，Boss 战与观战本地演算');
-  assert.equal(entries[0].date, '2026-10-13');
+  assert.equal(entries[0].title, '10 月 14 日更新：同步原作 0.2.6，掉线重连与界面修复');
+  assert.equal(entries[0].date, '2026-10-14');
   assert.equal(entries[1].title, '欢迎游玩卫戍协议！卫来！');
   assert.equal(entries[1].date, '2026-10-06');
   const today = entries[0].paragraphs.join('\n');
-  for (const phrase of ['请刷新页面重新进入', '原作 0.2.5', 'Boss 战', '本地演算', '观战队友', '战斗结果仍以服务器为准', '自动调整缓冲',
-    '「界面大小」', '70%–120%', '手机默认 80%', '「官方伤害数字」', '首领配对', '「全队库存已用完」', '机密商店']) assert.ok(today.includes(phrase), phrase);
+  for (const phrase of ['请刷新页面重新进入', '原作 0.2.6', '10 月 13 日起已生效', '只向中国大陆网络开放', '「暂不可用」', '安全验证',
+    '掉线不再算作挂机', '10 分钟内', '恢复本机座位', '提示重新登录', '界面变得极小', '「弹药数量」']) assert.ok(today.includes(phrase), phrase);
   assert.doesNotMatch(today, /保证不卡顿|带宽无限|固定比例下降|会话重置.*已修复|正在进行服务器扩容|不[^。；]{0,100}，也不/);
   assert.match(entries[1].paragraphs.join('\n'), /纯公益.*非官方/);
   assert.match(entries[1].paragraphs.join('\n'), /github\.com\/sganggs\/Stronghold-Protocol/);
