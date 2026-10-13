@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily Stronghold mainland-China allowlist refresh
+
+[Timer]
+OnCalendar=*-*-* 04:30:00
+RandomizedDelaySec=600
+Persistent=true
+
+[Install]
+WantedBy=timers.target

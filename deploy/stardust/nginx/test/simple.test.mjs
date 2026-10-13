@@ -24,6 +24,13 @@ const binary = process.env.NGINX_BIN;
 const enabled = process.env.SIMPLE_NGINX_SMOKE === '1' && !!binary;
 const lua = process.env.NGINX_HAS_LUA === '1';
 const presenceBlock = /    location = \/_server\/presence \{\n        content_by_lua_block \{[\s\S]*?\n        \}\n    \}/;
+const geoInit = /\n# Mainland-China allowlist[^\n]*\n#[^\n]*\ninit_worker_by_lua_block \{\n[\s\S]*?\n\}\n/;
+const geoCheck = /\n    set_by_lua_block \$ark_proto_geo_deny \{[^\n]*\}\n    if \(\$ark_proto_geo_deny\) \{[^\n]*\}/;
+/** Stock Nginx cannot run the mainland-China allowlist (Lua); the formal vhost is then tested without it. */
+function withoutGeo(text) {
+  assert.match(text, geoInit); assert.match(text, geoCheck);
+  return text.replace(geoInit, '\n').replace(geoCheck, '');
+}
 async function freePort() {
   const server = net.createServer(); await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const port = server.address().port; await new Promise(resolve => server.close(resolve)); return port;
@@ -177,6 +184,7 @@ for (const profile of ['formal', 'beta']) test('REAL ' + profile + ' template TL
   if (!lua) {
     assert.match(text, presenceBlock);
     text = text.replace(presenceBlock, `    location = /_server/presence { proxy_pass http://${namespace}_game_backend/client-build; }`);
+    if (!beta) text = withoutGeo(text);
     t.diagnostic('Stock Nginx: only presence body is a fixture proxy; its gate remains tested, Lua body not exercised.');
   }
   const luaLib = process.env.HEALTH_NGINX_LUALIB;
@@ -336,6 +344,7 @@ test('REAL simple Nginx TLS/gate/root+legacy WS/OpenI/CORS/redirect smoke', { sk
     assert.match(text, presenceBlock);
     // Use a normal content-phase proxy, not rewrite-phase return (which would skip auth_request).
     text = text.replace(presenceBlock, '    location = /_server/presence { proxy_pass http://ark_proto_game_backend/client-build; }');
+    text = withoutGeo(text);
     t.diagnostic('Stock Nginx has no Lua: only presence BODY uses a test-only build-marker proxy; inherited gate/internal health still tested. Actual OpenResty aggregation subtest is skipped.');
   }
   const config = `worker_processes 1;\nworker_shutdown_timeout 1s;\npid ${dir}/nginx.pid;\nerror_log stderr warn;\nevents { worker_connections 256; }\nhttp {\naccess_log off;\nclient_body_temp_path ${dir}/body;\nproxy_temp_path ${dir}/proxy;\nfastcgi_temp_path ${dir}/fastcgi;\nuwsgi_temp_path ${dir}/uwsgi;\nscgi_temp_path ${dir}/scgi;\n${text}\n}\n`;

@@ -1,0 +1,9 @@
+[Unit]
+Description=Rebuild the Stronghold mainland-China allowlist and install it on the proxy host
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/root/projects/ark-geo-cn/update-and-push.sh
+TimeoutStartSec=600
