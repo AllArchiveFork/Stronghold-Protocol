@@ -4,7 +4,8 @@
 //   * a URL longer than 4096 characters → 414; one that does not parse → 400;
 //   * any method but GET / HEAD → 405 with `Allow: GET, HEAD`;
 //   * GET /healthz → JSON status (protocol `version`, release `app`, uptime, the served `build`, sockets, sessions,
-//     rooms, matches, the cached `performance` sample — a cluster coordinator adds `performance.phases`,
+//     rooms, matches, the room / AI caps in force with the largest per-network use and the refusals (`limits`,
+//     lobby.js limitStats), the cached `performance` sample — a cluster coordinator adds `performance.phases`,
 //     server/phaseMetrics.js), never cached;
 //   * everything else → the static files (static.js).
 // A route that throws is logged and answers 500.
@@ -29,7 +30,7 @@ export function healthReport({ startedAt, network, registry, lobby, browserBuild
     ok, version: PROTOCOL_VERSION, app: APP_VERSION, uptimeSec: Math.round((Date.now() - startedAt) / 1000),
     build: browserBuild,
     sockets: network.connectionCount, sessions: registry.size, ...lobby.stats(),
-    maxRooms: lobby.opts.maxRooms, combat, trial,
+    maxRooms: lobby.opts.maxRooms, limits: lobby.limitStats(), combat, trial,
     performance: getHealthMetrics?.()?.snapshot() ?? PERFORMANCE_UNAVAILABLE,
   };
 }

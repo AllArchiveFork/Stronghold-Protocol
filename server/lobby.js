@@ -49,8 +49,12 @@
 //     the lobby grace gets them right after `room.closed {timeout}` on their next resume (Match.onReconnect cannot do
 //     this: the lobby drops the match reference at onEnd and disposes it on the next macrotask).
 //   * Optional per-network limits (internet clients only, see net.js clientAddress): positive `maxRoomsPerAddr`
-//     and `maxMatchesPerAddr` cap concurrent rooms and running matches (room.create / room.start → ERR.RATE).
-//     These and the global `maxRooms` admission cap default to 0 (unlimited). Match rules, reconnect policy,
+//     and `maxMatchesPerAddr` cap concurrent rooms and running matches (room.create / room.start → ERR.LIMIT;
+//     matchmaking allocation → ERR.RATE), positive `maxBotsPerAddr` the AI seats in the rooms charged to a network
+//     (room.addBot → ERR.LIMIT; a room is charged to the network that created it, a matchmade one to all of its
+//     players' networks). The global `maxRooms` and `maxBots` caps work the same way for everyone. All default to 0
+//     (unlimited); the limits file (server/onlineLimit.js, Lobby.cap) may change each of them while the server runs.
+//     A lower cap never closes rooms or removes AI seats that already exist. Match rules, reconnect policy,
 //     per-socket backpressure and Worker execution/queue safeguards are independent and remain enforced.
 //   * Permanent departure during a match (room.leave, g.leave, reconnect window expired): the seat is
 //     marked departed (shown as connected=false), match.onLeave(playerId) is called, and the seat is freed
@@ -130,6 +134,8 @@ export const LOBBY_DEFAULTS = Object.freeze({
   maxRooms: 0,           // concurrent rooms (0 = unlimited)
   maxRoomsPerAddr: 0,     // rooms created from one client network that may exist at once (0 = unlimited)
   maxMatchesPerAddr: 0,   // matches started from one client network that may run at once (0 = unlimited)
+  maxBots: 0,             // AI seats in all rooms (0 = unlimited)
+  maxBotsPerAddr: 0,      // AI seats in the rooms charged to one client network (0 = unlimited)
   resyncMinGapMs: 1000,   // heavy resyncs (match state / result replay) per session at most this often on repeated hellos
   soloReconnectWindowMs: null, // a dropped solo run stays resumable this long (null = data singleReconnectTime, 24 h)
   matchmaking: null,           // queue admission/deadline options; defaults live in matchmaking.js
@@ -156,6 +162,13 @@ export const BOT_NAMES = Object.freeze(['AI·华法琳', 'AI·阿米娅', 'AI·�
 
 const OK = Object.freeze({ ok: true });
 const fail = (code, detail) => (detail ? { error: code, detail } : { error: code });
+/** The distinct non-null network keys of a single key and an optional set (Room ownerKey/ownerKeys, matchKey/matchKeys). */
+const chargedKeys = (key, keys) => {
+  if (!keys) return key ? [key] : [];
+  const out = new Set(keys);
+  if (key) out.add(key);
+  return [...out];
+};
 const noopLog = { info() {}, warn() {}, error() {}, debug() {} };
 
 /**
@@ -326,11 +339,12 @@ export class Lobby {
    *   now?: () => number,
    *   seedFn?: () => number,
    *   options?: Partial<typeof LOBBY_DEFAULTS>,
+   *   limits?: { caps?: () => Readonly<Record<string, number>> } | null,
    *   metrics?: typeof NO_PHASES,
-   * }} opts
+   * }} opts  (`limits`: the limits file, server/onlineLimit.js — the room / AI caps it sets win over `options`)
    */
   constructor({ registry, log = noopLog, MatchClass = DefaultMatch, getData = defaultGetData, now = Date.now, seedFn, combatPool = null, trialPool = null, options = {},
-    metrics = NO_PHASES }) {
+    limits = null, metrics = NO_PHASES }) {
     this.combatPool = combatPool;
     this.trialPool = trialPool;
     this.registry = registry;
@@ -340,6 +354,7 @@ export class Lobby {
     this.now = now;
     this.seedFn = seedFn || (() => randomInt(2 ** 32));
     this.opts = { ...LOBBY_DEFAULTS, ...options };
+    this.limits = limits;
     /** @type {Map<string, Room>} */
     this.rooms = new Map();
     /** Consumed party codes are spectator-only aliases for one exact live match context. */
@@ -350,6 +365,8 @@ export class Lobby {
     this.resyncTimers = new Map();
     /** per-network limit warnings: at most one log line per 10 s (the rest are counted) */
     this.limitLog = { at: -Infinity, suppressed: 0 };
+    /** room.create / room.start / room.addBot refusals per cap since start (/healthz limits.refused) */
+    this.limitRefusals = { maxRooms: 0, maxRoomsPerAddr: 0, maxMatchesPerAddr: 0, maxBots: 0, maxBotsPerAddr: 0 };
     this.online = new Map();
     this.presenceSeq = 0;
     this.presenceTimer = null;
@@ -621,14 +638,18 @@ export class Lobby {
     if (this.queue.has(session)) return fail(ERR.QUEUED);
     const cur = this.roomOf(session);
     if (cur && cur.match) return fail(ERR.ROOM_STARTED, 'leave your running match first');
-    if (this.opts.maxRooms > 0 && this.rooms.size >= this.opts.maxRooms) return fail(ERR.INTERNAL, 'too many rooms');
+    // The room being left disappears with this create when the creator is its only human (a spectator is none).
+    const leaves = !!cur && cur.activeHumans().length === 1 && !cur.spectatorOf(session.playerId);
+    const maxRooms = this.cap('maxRooms');
+    if (maxRooms > 0 && this.rooms.size - (leaves ? 1 : 0) >= maxRooms) {
+      return this.limitRefusal('maxRooms', `room cap (${maxRooms}) reached`, 'too many rooms');
+    }
     const key = session.limitKey || null;
-    if (key && this.opts.maxRoomsPerAddr > 0) {
-      // The room being left disappears with this create when the creator is its only human (a spectator is none).
-      const leaving = cur && this.roomCharges(cur, key) && cur.activeHumans().length === 1 && !cur.spectatorOf(session.playerId) ? 1 : 0;
-      if (this.countRooms((r) => this.roomCharges(r, key)) - leaving >= this.opts.maxRoomsPerAddr) {
-        this.limitWarn(`room limit (${this.opts.maxRoomsPerAddr}) reached for ${session.addr}`);
-        return fail(ERR.RATE, 'too many rooms from your network');
+    const perAddr = this.cap('maxRoomsPerAddr');
+    if (key && perAddr > 0) {
+      const leaving = leaves && this.roomCharges(cur, key) ? 1 : 0;
+      if (this.countRooms((r) => this.roomCharges(r, key)) - leaving >= perAddr) {
+        return this.limitRefusal('maxRoomsPerAddr', `room limit (${perAddr}) reached for ${session.addr}`, 'too many rooms from your network');
       }
     }
     const code = this.genCode();
@@ -855,6 +876,8 @@ export class Lobby {
     if (room.mode === 'solo') return fail(ERR.ROOM_FULL, 'solo rooms cannot have AI teammates');
     const idx = room.freeSeat();
     if (idx < 0) return fail(ERR.ROOM_FULL);
+    const capped = this.botCapRefusal(room, session);
+    if (capped) return capped;
     const used = new Set(room.seats.filter((s) => s && s.isBot).map((s) => s.name));
     const name = BOT_NAMES.find((n) => !used.has(n)) || `AI·${idx + 1}`;
     let playerId;
@@ -926,10 +949,11 @@ export class Lobby {
       const memberKey = this.registry.byId(s.playerId)?.limitKey;
       if (memberKey) keys.add(memberKey);
     }
-    if (this.opts.maxMatchesPerAddr > 0) for (const network of keys) {
-      if (this.countRooms((r) => !!r.match && this.matchCharges(r, network)) >= this.opts.maxMatchesPerAddr) {
-        this.limitWarn(`match limit (${this.opts.maxMatchesPerAddr}) reached for public/private room network`);
-        return fail(ERR.RATE, 'too many running matches from your network');
+    const maxMatches = this.cap('maxMatchesPerAddr');
+    if (maxMatches > 0) for (const network of keys) {
+      if (this.countRooms((r) => !!r.match && this.matchCharges(r, network)) >= maxMatches) {
+        return this.limitRefusal('maxMatchesPerAddr', `match limit (${maxMatches}) reached for public/private room network`,
+          'too many running matches from your network');
       }
     }
     return this.startMatch(room, key, room.ownerKeys ? keys : null);
@@ -1020,6 +1044,74 @@ export class Lobby {
 
   roomCharges(room, key) { return room.ownerKey === key || !!room.ownerKeys?.has(key); }
   matchCharges(room, key) { return room.matchKey === key || !!room.matchKeys?.has(key); }
+  /** The networks a room is charged to (roomCharges) / its running match is charged to (matchCharges). */
+  roomNetworks(room) { return chargedKeys(room.ownerKey, room.ownerKeys); }
+  matchNetworks(room) { return chargedKeys(room.matchKey, room.matchKeys); }
+
+  /**
+   * A room / AI cap in force (0 = unlimited): the limits file (server/onlineLimit.js) wins over the options for every
+   * key it sets, so an operator changes caps without a restart.
+   * @param {'maxRooms'|'maxRoomsPerAddr'|'maxMatchesPerAddr'|'maxBots'|'maxBotsPerAddr'} name
+   */
+  cap(name) {
+    const caps = this.limits?.caps?.();
+    return (caps && Object.hasOwn(caps, name) ? caps[name] : this.opts[name]) || 0;
+  }
+
+  /** Count, log (limitWarn) and answer a room.create / room.start / room.addBot refused by a cap. */
+  limitRefusal(name, text, detail) {
+    this.limitRefusals[name]++;
+    this.limitWarn(text);
+    return fail(ERR.LIMIT, detail);
+  }
+
+  /**
+   * room.addBot's caps: the AI seats of all rooms (`maxBots`) and of the rooms charged to each network this room is
+   * charged to (`maxBotsPerAddr`). One pass over the rooms, only while a cap is set.
+   * @returns {{ error: string, detail: string } | null}
+   */
+  botCapRefusal(room, session) {
+    const total = this.cap('maxBots'), perAddr = this.cap('maxBotsPerAddr');
+    const keys = perAddr > 0 ? this.roomNetworks(room) : [];
+    if (total <= 0 && !keys.length) return null;
+    const mine = new Map(keys.map((key) => [key, 0]));
+    let all = 0;
+    for (const r of this.rooms.values()) {
+      let bots = 0;
+      for (const s of r.seats) if (s && s.isBot) bots++;
+      if (!bots) continue;
+      all += bots;
+      for (const key of keys) if (this.roomCharges(r, key)) mine.set(key, mine.get(key) + bots);
+    }
+    if (total > 0 && all >= total) return this.limitRefusal('maxBots', `AI cap (${total}) reached`, 'too many AI teammates');
+    for (const bots of mine.values()) {
+      if (bots >= perAddr) {
+        return this.limitRefusal('maxBotsPerAddr', `AI limit (${perAddr}) reached for the network of room ${room.code} (host ${session.addr})`,
+          'too many AI teammates from your network');
+      }
+    }
+    return null;
+  }
+
+  /**
+   * /healthz `limits`: the caps in force, the largest use any one network makes of each per-network cap, and the
+   * refusals since start (limitRefusal; matchmaking allocation refusals are not counted).
+   */
+  limitStats() {
+    const rooms = new Map(), matches = new Map(), bots = new Map();
+    const add = (map, key, n) => map.set(key, (map.get(key) || 0) + n);
+    for (const r of this.rooms.values()) {
+      let n = 0;
+      for (const s of r.seats) if (s && s.isBot) n++;
+      for (const key of this.roomNetworks(r)) { add(rooms, key, 1); if (n) add(bots, key, n); }
+      if (r.match) for (const key of this.matchNetworks(r)) add(matches, key, 1);
+    }
+    const largest = (map) => { let m = 0; for (const n of map.values()) if (n > m) m = n; return m; };
+    const caps = {};
+    for (const name of Object.keys(this.limitRefusals)) caps[name] = this.cap(name);
+    return { ...caps, perAddrPeak: { rooms: largest(rooms), matches: largest(matches), bots: largest(bots) },
+      refused: { ...this.limitRefusals } };
+  }
 
   /** Build/start privately, then commit the whole cohort together; failed starts retain the old rooms. */
   allocateMatchmadeRoom(sessions, difficulty) {
@@ -1049,14 +1141,15 @@ export class Lobby {
     for (const old of oldRooms) {
       if (old.spectators.some((s) => this.registry.byId(s.playerId)?.roomCode !== old.code)) return fail(ERR.BAD_TARGET, 'party spectator unavailable');
     }
-    if (this.opts.maxRooms > 0 && this.rooms.size - oldRooms.size >= this.opts.maxRooms) return fail(ERR.RATE, 'too many rooms');
+    const maxRooms = this.cap('maxRooms'), perAddr = this.cap('maxRoomsPerAddr'), maxMatches = this.cap('maxMatchesPerAddr');
+    if (maxRooms > 0 && this.rooms.size - oldRooms.size >= maxRooms) return fail(ERR.RATE, 'too many rooms');
     const keys = new Set(sessions.map((s) => s.limitKey).filter(Boolean));
     for (const key of keys) {
       const released = [...oldRooms].filter((r) => this.roomCharges(r, key)).length;
-      if (this.opts.maxRoomsPerAddr > 0 && this.countRooms((r) => this.roomCharges(r, key)) - released >= this.opts.maxRoomsPerAddr) {
+      if (perAddr > 0 && this.countRooms((r) => this.roomCharges(r, key)) - released >= perAddr) {
         return fail(ERR.RATE, 'too many rooms from your network');
       }
-      if (this.opts.maxMatchesPerAddr > 0 && this.countRooms((r) => !!r.match && this.matchCharges(r, key)) >= this.opts.maxMatchesPerAddr) {
+      if (maxMatches > 0 && this.countRooms((r) => !!r.match && this.matchCharges(r, key)) >= maxMatches) {
         return fail(ERR.RATE, 'too many running matches from your network');
       }
     }

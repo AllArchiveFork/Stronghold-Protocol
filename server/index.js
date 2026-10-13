@@ -76,7 +76,7 @@ export async function startServer(opts = {}) {
   }
   let registry, lobby, network, packs, serveStatic, browserBuild;
   const startedAt = Date.now();
-  // The online cap (server/onlineLimit.js): a JSON file re-read while the server runs; none = no cap.
+  // The online cap and the lobby's room / AI caps (server/onlineLimit.js): a JSON file re-read while the server runs; none = no cap.
   const onlineLimit = createOnlineLimit({ file: opts.onlineLimitFile ?? process.env.SP_ONLINE_LIMIT_FILE ?? null, log });
   try {
     ({ registry, lobby, network } = createSessionStack({ ...opts, snapshotHz }, {

@@ -264,12 +264,13 @@ export class ClusterLobby extends Lobby {
     const spectators = [...oldRooms].flatMap(room => room.spectators);
     if (MAX_SPECTATORS > 0 && spectators.length > MAX_SPECTATORS) invalid(ERR.ROOM_FULL);
     for (const room of oldRooms) if (room.spectators.some(s => this.registry.byId(s.playerId)?.roomCode !== room.code)) invalid(ERR.BAD_TARGET);
-    if (this.opts.maxRooms > 0 && this.rooms.size - oldRooms.size >= this.opts.maxRooms) invalid(ERR.RATE);
+    const maxRooms = this.cap('maxRooms'), perAddr = this.cap('maxRoomsPerAddr'), maxMatches = this.cap('maxMatchesPerAddr');
+    if (maxRooms > 0 && this.rooms.size - oldRooms.size >= maxRooms) invalid(ERR.RATE);
     const keys = new Set(sessions.map(s => s.limitKey).filter(Boolean));
     for (const key of keys) {
       const released = [...oldRooms].filter(room => this.roomCharges(room, key)).length;
-      if ((this.opts.maxRoomsPerAddr > 0 && this.countRooms(room => this.roomCharges(room, key)) - released >= this.opts.maxRoomsPerAddr)
-        || (this.opts.maxMatchesPerAddr > 0 && this.countRooms(room => !!room.match && this.matchCharges(room, key)) >= this.opts.maxMatchesPerAddr)) invalid(ERR.RATE);
+      if ((perAddr > 0 && this.countRooms(room => this.roomCharges(room, key)) - released >= perAddr)
+        || (maxMatches > 0 && this.countRooms(room => !!room.match && this.matchCharges(room, key)) >= maxMatches)) invalid(ERR.RATE);
     }
     return { oldRooms, spectators, keys, experimental: experimentalOptions(offer.experimental) };
   }

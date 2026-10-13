@@ -967,7 +967,7 @@ test('workers: unlimited default crosses the old4096-room boundary; positive cap
   const capped = new Lobby({ registry: { byId: (id) => sessions.get(id) }, log: quiet, getData: () => DATA, options: { maxRooms: 2 } });
   try {
     for (let n = 0; n < 2; n++) assert.deepEqual(capped.create(session(`small${n}`), { mode: 'solo', difficulty: 'NORMAL' }), { ok: true });
-    assert.equal(capped.create(session('blocked'), { mode: 'solo', difficulty: 'NORMAL' }).error, 'INTERNAL');
+    assert.equal(capped.create(session('blocked'), { mode: 'solo', difficulty: 'NORMAL' }).error, 'LIMIT');
   } finally { capped.shutdown(); }
 });
 

@@ -133,6 +133,7 @@ export const ERR = Object.freeze({
   SESSION_IN_USE: 'SESSION_IN_USE', // a local recovery candidate cannot replace the connected holder
   SERVER_FULL: 'SERVER_FULL',     // the online cap is reached (server/onlineLimit.js); a resumed session is never refused
   RATE: 'RATE',                   // rate limited
+  LIMIT: 'LIMIT',                 // a room / match / AI seat cap (server/lobby.js Lobby.cap: per network or for all)
   NOT_IN_ROOM: 'NOT_IN_ROOM',
   ROOM_NOT_FOUND: 'ROOM_NOT_FOUND',
   ROOM_FULL: 'ROOM_FULL',
@@ -168,6 +169,7 @@ export const ERR_TEXT = {
   SPECTATOR: N_('观战中无法进行该操作'), START_RETRY: N_('有玩家连接未就绪，请重试'), INTERNAL: N_('服务器内部错误'),
   NAME_REJECTED: N_('代号含有不适宜内容或格式无效，请换一个昵称。'),
   QUEUED: N_('正在匹配中，请先取消匹配'),
+  LIMIT: N_('房间、对局或 AI 队友数量已达上限，请先退出其他房间或稍后再试'),
 };
 
 // ---- Emotes (交流, research 09 §4) -----------------------------------------------------------------------------

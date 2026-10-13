@@ -47,8 +47,9 @@ def local_ingress_service(instance, profile, game_nodes):
     return 'ingress' if instance == 1 else 'ingress-' + format(instance, '02d')
 
 
-# The coordinator's hot-reloadable online cap (server/onlineLimit.js): the host DIRECTORY is mounted read-only (an
-# editor's or mv's replacement keeps working) and the file inside it may be absent (= no cap).
+# The coordinator's hot-reloadable online cap and room / AI caps (server/onlineLimit.js; e.g. {"limit": 0,
+# "maxRoomsPerAddr": 24, "maxBotsPerAddr": 60}): the host DIRECTORY is mounted read-only (an editor's or mv's
+# replacement keeps working) and the file inside it may be absent (= no cap).
 ONLINE_LIMIT_MOUNT = '/run/limits'
 ONLINE_LIMIT_FILE = ONLINE_LIMIT_MOUNT + '/online-limit.json'
 

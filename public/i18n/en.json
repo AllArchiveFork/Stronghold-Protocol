@@ -1898,5 +1898,6 @@
   "选择你打算发展的盟约，所有博士都能看到。只作沟通，不影响对局。": "Pick the bond you plan to build. Every Doctor can see it — it is only for coordination and does not affect the match.",
   "你本回合没有任何操作，下回合备战仍无操作将被移出对局": "You took no action this round. Stay idle through the next prep and you will be removed from the match.",
   "本回合仍无操作将被移出对局": "No action this round and you will be removed from the match",
-  "连续多个回合没有任何操作，你已被移出对局": "You took no action for several rounds in a row and were removed from the match."
+  "连续多个回合没有任何操作，你已被移出对局": "You took no action for several rounds in a row and were removed from the match.",
+  "房间、对局或 AI 队友数量已达上限，请先退出其他房间或稍后再试": "Room, match or AI teammate limit reached. Leave your other rooms or try again later."
 }

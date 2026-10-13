@@ -7,7 +7,7 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Network, SessionRegistry } from '../server/net.js';
-import { createOnlineLimit, parseOnlineLimit, serverFullDetail, SERVER_FULL_RETRY_MS } from '../server/onlineLimit.js';
+import { createOnlineLimit, parseLimits, parseOnlineLimit, serverFullDetail, SERVER_FULL_RETRY_MS } from '../server/onlineLimit.js';
 import { serverFull } from '../public/js/net.js';
 import { ERR, ERR_TEXT } from '../shared/constants.js';
 
@@ -16,6 +16,40 @@ test('the cap file: a limit 0..1e6 (0 or no key = none); anything else is invali
   assert.equal(parseOnlineLimit({ limit: 0 }), 0);
   assert.equal(parseOnlineLimit({}), 0);
   for (const bad of [null, [], 'x', { limit: -1 }, { limit: 1.5 }, { limit: '3000' }, { limit: 1_000_001 }]) assert.equal(parseOnlineLimit(bad), null, JSON.stringify(bad));
+});
+
+test('the file may also set the lobby room / AI caps; an unknown key or a bad value invalidates the whole file', () => {
+  assert.deepEqual(parseLimits({ limit: 3000, maxRoomsPerAddr: 24, maxBotsPerAddr: 60 }), { limit: 3000, caps: { maxRoomsPerAddr: 24, maxBotsPerAddr: 60 } });
+  assert.deepEqual(parseLimits({ maxRooms: 0, maxMatchesPerAddr: 24, maxBots: 6000 }), { limit: 0, caps: { maxRooms: 0, maxMatchesPerAddr: 24, maxBots: 6000 } });
+  for (const bad of [{ limit: 10, maxRoomPerAddr: 3 }, { maxBots: -1 }, { maxBotsPerAddr: '60' }, { maxRooms: 1.5 }]) {
+    assert.equal(parseLimits(bad), null, JSON.stringify(bad));
+    assert.equal(parseOnlineLimit(bad), null, JSON.stringify(bad));
+  }
+});
+
+test('the room caps follow the file too: a bad edit keeps every previous value, a removed file clears them', async (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'sp-limit-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'online-limit.json');
+  const logs = [];
+  const limit = createOnlineLimit({ file, pollMs: 60_000, log: { info: (m) => logs.push(m), warn: (m) => logs.push(m) } });
+  t.after(() => limit.close());
+  await limit.refresh();
+  assert.deepEqual(limit.caps(), {}, 'no file: no caps');
+  writeFileSync(file, '{ "limit": 0, "maxRoomsPerAddr": 24, "maxBotsPerAddr": 60 }\n');
+  assert.equal(await limit.refresh(), 0);
+  assert.deepEqual(limit.caps(), { maxRoomsPerAddr: 24, maxBotsPerAddr: 60 });
+  writeFileSync(file, '{ "limit": 500, "maxRoomsPerAdr": 8 }\n');
+  assert.equal(await limit.refresh(), 0, 'a typo keeps the online cap');
+  assert.deepEqual(limit.caps(), { maxRoomsPerAddr: 24, maxBotsPerAddr: 60 }, 'and the room caps');
+  writeFileSync(file, '{ "limit": 500, "maxRoomsPerAddr": 16 }\n');
+  assert.equal(await limit.refresh(), 500);
+  assert.deepEqual(limit.caps(), { maxRoomsPerAddr: 16 }, 'a key left out goes back to the lobby option');
+  rmSync(file);
+  assert.equal(await limit.refresh(), 0);
+  assert.deepEqual(limit.caps(), {});
+  assert.ok(logs.some((m) => /room caps options → \{"maxRoomsPerAddr":24,"maxBotsPerAddr":60\}/.test(m)), logs.join('\n'));
+  assert.ok(logs.some((m) => /maxRoomsPerAdr|not \{"limit"/.test(m)));
 });
 
 test('the cap follows its file: missing = none, a change is picked up, a bad edit keeps the previous value', async (t) => {

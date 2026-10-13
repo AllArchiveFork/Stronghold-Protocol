@@ -116,6 +116,8 @@ test('unlimited room admission serializes maxRooms zero in health without report
   assert.equal(health.ok, true);
   assert.equal(health.maxRooms, 0);
   assert.equal(health.rooms, 2);
+  assert.deepEqual(health.limits, { maxRooms: 0, maxRoomsPerAddr: 0, maxMatchesPerAddr: 0, maxBots: 0, maxBotsPerAddr: 0,
+    perAddrPeak: { rooms: 0, matches: 0, bots: 0 }, refused: { maxRooms: 0, maxRoomsPerAddr: 0, maxMatchesPerAddr: 0, maxBots: 0, maxBotsPerAddr: 0 } });
 });
 
 // ---------------------------------------------------------------------------------------------------
@@ -1744,9 +1746,9 @@ describe('per-network limits', () => {
     const second = await orphan(A, 2);
     assert.equal(second.create.t, 'ok', 'third room from A still allowed');
     assert.equal(second.start.t, 'error');
-    assert.equal(second.start.code, ERR.RATE, 'third concurrent match from A refused');
+    assert.equal(second.start.code, ERR.LIMIT, 'third concurrent match from A refused');
     const third = await orphan(A, 3);
-    assert.equal(third.create.code, ERR.RATE, 'fourth room from A refused');
+    assert.equal(third.create.code, ERR.LIMIT, 'fourth room from A refused');
     assert.match(third.create.detail, /rooms/);
     const h1 = JSON.parse((await httpReq(srv.port, '/healthz')).body.toString());
 

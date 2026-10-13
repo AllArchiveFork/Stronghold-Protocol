@@ -30,7 +30,9 @@ export function createSessionStack(opts, { data, log, combatPool = null, trialPo
   const createLobby = opts.lobbyFactory || (params => new Lobby(params));
   // Optional coordinator phase recorder (server/phaseMetrics.js); absent everywhere else.
   const metrics = opts.phaseMetrics ? { metrics: opts.phaseMetrics } : {};
-  const lobby = createLobby({ registry, log, MatchClass: opts.MatchClass, getData: () => data, seedFn: opts.seedFn, combatPool, trialPool, options: lobbyOptions, ...metrics });
+  // The limits file (server/onlineLimit.js) also carries the lobby's hot-reloadable room / AI caps (Lobby.cap).
+  const lobby = createLobby({ registry, log, MatchClass: opts.MatchClass, getData: () => data, seedFn: opts.seedFn, combatPool, trialPool, options: lobbyOptions,
+    limits: onlineLimit, ...metrics });
   const network = new Network({ registry, handler: lobby, log, options: netOptions, getLoadState, getLoadDetails, getClusterLoad: opts.getClusterLoad, onlineLimit, ...metrics });
   return { registry, lobby, network };
 }

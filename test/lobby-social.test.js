@@ -297,7 +297,7 @@ test('offer deadline drops unconfirmed players; accepted survivors retain FIFO a
 });
 
 test('default concurrency admission allows same-network rooms/matches and four-human allocation without quantity caps', (t) => {
-  for (const key of ['maxRooms', 'maxRoomsPerAddr', 'maxMatchesPerAddr']) assert.equal(LOBBY_DEFAULTS[key], 0);
+  for (const key of ['maxRooms', 'maxRoomsPerAddr', 'maxMatchesPerAddr', 'maxBots', 'maxBotsPerAddr']) assert.equal(LOBBY_DEFAULTS[key], 0);
   assert.equal(MATCHMAKING_DEFAULTS.maxEntries, 0);
   assert.equal(MATCHMAKING_DEFAULTS.maxPerAddr, 0);
   const h = harness(t);
@@ -347,7 +347,7 @@ test('matchmaking validation accepts zero quantity caps but rejects invalid caps
 test('positive global room admission cap still rejects a private create without moving its creator', (t) => {
   const h = harness(t, { maxRooms: 1 }), owner = h.player('房主'), other = h.player('满员');
   assert.deepEqual(h.lobby.create(owner, { mode: 'solo', difficulty: 'NORMAL' }), { ok: true });
-  assert.equal(h.lobby.create(other, { mode: 'solo', difficulty: 'NORMAL' }).error, ERR.INTERNAL);
+  assert.equal(h.lobby.create(other, { mode: 'solo', difficulty: 'NORMAL' }).error, ERR.LIMIT);
   assert.equal(other.roomCode, null);
   assert.equal(h.lobby.rooms.size, 1);
 });
@@ -384,9 +384,9 @@ test('public rooms charge each distinct cohort network, and private creates shar
   const room = h.lobby.roomOf(players[0]);
   assert.equal(room.ownerKeys.size, 3);
   const outsider = h.player('同网络', 'B');
-  assert.equal(h.lobby.create(outsider, { mode: 'solo', difficulty: 'FUNNY' }).error, ERR.RATE);
+  assert.equal(h.lobby.create(outsider, { mode: 'solo', difficulty: 'FUNNY' }).error, ERR.LIMIT);
   h.lobby.leave(players[2]);
-  assert.equal(h.lobby.create(outsider, { mode: 'solo', difficulty: 'FUNNY' }).error, ERR.RATE);
+  assert.equal(h.lobby.create(outsider, { mode: 'solo', difficulty: 'FUNNY' }).error, ERR.LIMIT);
   for (const p of [players[0], players[1], players[3]]) h.lobby.leave(p);
   assert.deepEqual(h.lobby.create(outsider, { mode: 'solo', difficulty: 'FUNNY' }), { ok: true });
 });
@@ -407,20 +407,20 @@ test('public match quota follows all cohort networks across host migration', (t)
   const room = h.lobby.roomOf(players[0]);
   const outsider = h.player('同网新局', 'B');
   h.lobby.create(outsider, { mode: 'solo', difficulty: 'FUNNY' });
-  assert.equal(h.lobby.start(outsider).error, ERR.RATE);
+  assert.equal(h.lobby.start(outsider).error, ERR.LIMIT);
   assert.equal(room.matchKeys.size, 4);
   // A post-game replay keeps ordinary room ready/start semantics and still rechecks the match quota.
   room.match.opts.onEnd({});
   assert.deepEqual(h.lobby.start(outsider), { ok: true });
   for (const p of players) h.lobby.ready(p, { ready: true });
-  assert.equal(h.lobby.start(players[0]).error, ERR.RATE);
+  assert.equal(h.lobby.start(players[0]).error, ERR.LIMIT);
   h.lobby.roomOf(outsider).match.opts.onEnd({});
   assert.deepEqual(h.lobby.start(players[0]), { ok: true });
   assert.equal(room.matchKeys.size, 4);
-  assert.equal(h.lobby.start(outsider).error, ERR.RATE);
+  assert.equal(h.lobby.start(outsider).error, ERR.LIMIT);
   h.lobby.leave(players[0]);
   assert.equal(room.hostId, players[1].playerId);
-  assert.equal(h.lobby.start(outsider).error, ERR.RATE);
+  assert.equal(h.lobby.start(outsider).error, ERR.LIMIT);
 });
 
 test('new wire requests reject malformed boolean, ticket and resurrection identity fields', () => {
@@ -923,10 +923,10 @@ test('party quota transfer credits only consumed rooms and keeps unrelated netwo
   assert.equal(h.lobby.rooms.size, 1);
   assert.deepEqual([...matchRoom.ownerKeys].sort(), ['A', 'B', 'C', 'D']);
   assert.deepEqual([...matchRoom.matchKeys].sort(), ['A', 'B', 'C', 'D']);
-  assert.equal(h.lobby.create(unrelated, { mode: 'solo', difficulty: 'NORMAL' }).error, ERR.RATE);
+  assert.equal(h.lobby.create(unrelated, { mode: 'solo', difficulty: 'NORMAL' }).error, ERR.LIMIT);
   h.lobby.leave(players[0]);
   assert.equal(matchRoom.hostId, players[1].playerId);
-  assert.equal(h.lobby.create(unrelated, { mode: 'solo', difficulty: 'NORMAL' }).error, ERR.RATE);
+  assert.equal(h.lobby.create(unrelated, { mode: 'solo', difficulty: 'NORMAL' }).error, ERR.LIMIT);
 });
 
 test('fourth acceptance winning a cancel/disconnect race retains exactly one running match and its locked votes', (t) => {
@@ -1305,7 +1305,7 @@ test('a spectator cannot claim the last human room credit when creating at its c
   for (const p of players.slice(1)) h.lobby.leave(p);
   const observer = h.player('同网观战', 'B');
   h.lobby.spectate(observer, { code: room.code });
-  assert.equal(h.lobby.create(observer, { mode: 'solo', difficulty: 'NORMAL' }).error, ERR.RATE);
+  assert.equal(h.lobby.create(observer, { mode: 'solo', difficulty: 'NORMAL' }).error, ERR.LIMIT);
   assert.equal(observer.roomCode, room.code);
   assert.equal(room.activeHumans().length, 1);
   assert.equal(h.lobby.rooms.size, 1);
@@ -1320,4 +1320,59 @@ test('legacy and invalid hello capabilities cannot enter public queue', async (t
   assert.equal((await c.request({ t: 'hello', name: '不匹配', version: 1, matchmakingVersion: 'foreign' })).code, ERR.BAD_MSG);
   assert.equal(srv.registry.size, 1);
   assert.equal((await c.request({ t: 'room.create', mode: 'solo', difficulty: 'FUNNY' })).t, 'ok');
+});
+
+test('AI seats are capped per network (the rooms charged to it) and in total; a lower cap keeps existing seats', (t) => {
+  const h = harness(t, { maxBotsPerAddr: 4 });
+  const first = h.player('甲', 'A'), second = h.player('乙', 'A'), other = h.player('丙', 'B'), local = h.player('本机');
+  for (const p of [first, second, other, local]) assert.deepEqual(h.lobby.create(p, { mode: 'coop', difficulty: 'NORMAL' }), { ok: true });
+  for (let i = 0; i < 3; i++) assert.deepEqual(h.lobby.addBot(first), { ok: true });
+  assert.deepEqual(h.lobby.addBot(second), { ok: true }, 'the fourth AI seat of network A');
+  const refused = h.lobby.addBot(second);
+  assert.equal(refused.error, ERR.LIMIT);
+  assert.match(refused.detail, /AI teammates from your network/);
+  assert.equal(h.lobby.roomOf(second).seats.filter((s) => s?.isBot).length, 1, 'nothing added on refusal');
+  for (const p of [other, local]) assert.deepEqual(h.lobby.addBot(p), { ok: true }, 'other networks and local peers are unaffected');
+  const full = h.lobby.roomOf(first);
+  assert.deepEqual(h.lobby.removeBot(first, { seat: full.seats.findIndex((s) => s?.isBot) }), { ok: true });
+  assert.deepEqual(h.lobby.addBot(second), { ok: true }, 'a removed AI seat frees the network quota');
+  // The room stays charged to the network that created it after a host from another network takes over.
+  const guest = h.player('丁', 'C');
+  assert.deepEqual(h.lobby.join(guest, { code: full.code }), { ok: true });
+  h.lobby.leave(first);
+  assert.equal(full.hostId, guest.playerId);
+  assert.equal(h.lobby.addBot(guest).error, ERR.LIMIT);
+
+  const total = harness(t, { maxBots: 2 }), x = total.player('X', 'X'), y = total.player('Y', 'Y');
+  for (const p of [x, y]) assert.deepEqual(total.lobby.create(p, { mode: 'coop', difficulty: 'NORMAL' }), { ok: true });
+  assert.deepEqual(total.lobby.addBot(x), { ok: true });
+  assert.deepEqual(total.lobby.addBot(y), { ok: true });
+  assert.equal(total.lobby.addBot(x).error, ERR.LIMIT);
+  assert.deepEqual(total.lobby.limitStats().refused, { maxRooms: 0, maxRoomsPerAddr: 0, maxMatchesPerAddr: 0, maxBots: 1, maxBotsPerAddr: 0 });
+});
+
+test('the limits file overrides each room / AI cap it sets while the lobby runs; healthz reports caps, peaks and refusals', (t) => {
+  const h = harness(t, { maxRoomsPerAddr: 1 });
+  let caps = {};
+  h.lobby.limits = { caps: () => caps };
+  const a = h.player('甲', 'A'), b = h.player('乙', 'A'), c = h.player('丙', 'A');
+  assert.deepEqual(h.lobby.create(a, { mode: 'coop', difficulty: 'NORMAL' }), { ok: true });
+  assert.equal(h.lobby.create(b, { mode: 'solo', difficulty: 'NORMAL' }).error, ERR.LIMIT, 'the option applies while the file leaves the key out');
+  caps = { maxRoomsPerAddr: 0 };
+  assert.deepEqual(h.lobby.create(b, { mode: 'solo', difficulty: 'NORMAL' }), { ok: true }, 'the file sets 0 = unlimited');
+  caps = { maxRoomsPerAddr: 2, maxMatchesPerAddr: 1, maxBotsPerAddr: 1, maxRooms: 50 };
+  assert.equal(h.lobby.create(c, { mode: 'solo', difficulty: 'NORMAL' }).error, ERR.LIMIT);
+  assert.equal(h.lobby.rooms.size, 2, 'a lower cap closes nothing');
+  assert.deepEqual(h.lobby.addBot(a), { ok: true });
+  assert.equal(h.lobby.addBot(a).error, ERR.LIMIT);
+  assert.deepEqual(h.lobby.start(b), { ok: true });
+  assert.equal(h.lobby.start(a).error, ERR.LIMIT);
+  caps = { maxRooms: 2, maxRoomsPerAddr: 0 };
+  assert.equal(h.lobby.create(h.player('戊', 'B'), { mode: 'solo', difficulty: 'NORMAL' }).error, ERR.LIMIT, 'global cap');
+  assert.deepEqual(h.lobby.create(a, { mode: 'coop', difficulty: 'HARD' }), { ok: true }, 'replacing your only room is no new room');
+  assert.deepEqual(h.lobby.limitStats(), {
+    maxRooms: 2, maxRoomsPerAddr: 0, maxMatchesPerAddr: 0, maxBots: 0, maxBotsPerAddr: 0,
+    perAddrPeak: { rooms: 2, matches: 1, bots: 0 },
+    refused: { maxRooms: 1, maxRoomsPerAddr: 2, maxMatchesPerAddr: 1, maxBots: 0, maxBotsPerAddr: 1 },
+  });
 });
