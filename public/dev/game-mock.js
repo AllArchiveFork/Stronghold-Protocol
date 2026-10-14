@@ -41,6 +41,9 @@ const PLAYERS = [
   { playerId: 'p4', seat: 3, name: '灰烬', isBot: false, bandId: 'band_amedic' },
 ];
 
+/** Teammates' room.card (room.state seats[].card): a 头像 for Doctor·B, a namecard and trophies for 灰烬 (who keeps no 头像). */
+const MOCK_CARDS = { p3: { avatar: 'char_306_leizi', trophies: 260 }, p4: { bg: 'loading:core', trophies: 1200 } };
+
 let uidSeq = 100;
 const nextUid = () => ++uidSeq;
 let S = null; // mock server state
@@ -879,7 +882,8 @@ async function boot() {
     clock: { offset: 0, rtt: 20, synced: true },
     room: {
       code: 'MOCK', hostId: VARIANTS.has('notHost') ? 'ai_2' : ME, mode: 'coop', difficulty: 'HARD', inMatch: true,
-      seats: PLAYERS.map((p) => ({ seat: p.seat, playerId: p.playerId, name: p.name, isBot: p.isBot, ready: true, connected: true })),
+      seats: PLAYERS.map((p) => ({ seat: p.seat, playerId: p.playerId, name: p.name, isBot: p.isBot, ready: true, connected: true,
+        ...(MOCK_CARDS[p.playerId] ? { card: MOCK_CARDS[p.playerId] } : {}) })),
       ...(VARIANTS.has('spectators') ? { spectators: [{ playerId: 'sp_1', name: '观战者甲', connected: true }, { playerId: 'sp_2', name: '观战者乙', connected: false }] } : {}),
     },
   });

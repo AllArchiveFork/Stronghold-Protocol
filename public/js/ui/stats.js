@@ -280,6 +280,20 @@ export function loadStats() {
   return { ...stats, newer, dropped, damaged: false };
 }
 
+/**
+ * The records for the read-only views (成就统计, the trophies of 名片): read + migrate, nothing written back. An
+ * unreadable or newer value reads as none and stays where it is for the 统计数据 page to report (loadStats above).
+ * @returns {any[]}
+ */
+export function peekStatsRecords() {
+  const raw = readRaw();
+  if (raw == null) return [];
+  let parsed;
+  try { parsed = JSON.parse(raw); } catch { return []; }
+  const { stats, newer } = migrateStats(parsed);
+  return newer ? [] : stats.records;
+}
+
 // ---- compaction + the storage budget ---------------------------------------------------------------------------
 
 const COMPACT_FRAME = ['id', 'v', 't', 'end', 'victory', 'roundsPassed', 'lastRound', 'hiddenReached', 'hiddenCleared', 'reason', 'modeId',
@@ -299,6 +313,8 @@ export function compactRecord(rec) {
   out.players = self ? [{
     playerId: self.playerId, seat: self.seat, alive: self.alive, victory: self.victory, roundsPassed: self.roundsPassed,
     eliminatedRound: self.eliminatedRound, bandId: self.bandId, title: self.title, left: self.left, stats: self.stats,
+    // (the trophies and the experience add up across every record: 名片 / 成就统计 and the settlement's LV, screens/settle.js)
+    trophies: self.trophies, reward: self.reward,
   }] : [];
   return out;
 }

@@ -11,13 +11,15 @@ import { useEffect, useState } from '../../vendor/hooks.module.js';
 import { html } from './components.js';
 import { CoinGlyph } from './gameComponents.js';
 import { PixBot } from './pixbots.js';
-import { t } from '../../../shared/i18n.js';
+import { t, tParts } from '../../../shared/i18n.js';
 
 const cx = (...p) => p.flat().filter(Boolean).join(' ');
 
+/** How long the 机变阶段 plate holds; ui/choiceOverlay.js lets its first 轮到你选 wait until the plate has folded. */
+export const SP_POPUP_MS = 1800;
 /** How long the round popup holds before it folds away (ms), and the fold. */
 export const ROUND_POPUP_MS = 2300;
-const LEAVE_MS = 280;
+export const LEAVE_MS = 280;
 
 /** Two-digit round number as the plate shows it (00 before the first round). */
 export const roundDigits = (n) => String(Math.max(0, Math.trunc(Number(n) || 0)) % 100).padStart(2, '0');
@@ -68,7 +70,7 @@ export function RoundPopup({ round, gain = null, left = null, onDone }) {
   return html`<div class=${cx('mpop', 'mpop--round', leaving && 'is-leaving')} role="status" aria-live="polite"
       aria-label=${t('第 {r} 回合', { r: round })} data-testid="round-popup">
     <div class="mpop__panel">
-      ${left ? html`<div class="mpop__head"><span class="mpop__warn" aria-hidden="true"></span>${t('剩余')} <b class="num">${left}</b> ${t('回合')}</div>` : null}
+      ${left ? html`<div class="mpop__head"><span class="mpop__warn" aria-hidden="true"></span>${tParts('剩余 {n} 回合', { n: html`<b class="num">${left}</b>` })}</div>` : null}
       <${PopArt} kinds=${['bot']} tag="ROUND // START" />
       <div class="mpop__cell mpop__cell--round">
         <span class="mpop__k">${t('回合')}</span>
@@ -114,7 +116,7 @@ export function phasePopupOf(phase, banner) {
   if (!banner) return null;
   switch (phase) {
     case 'UNITE': return { tone: 'orange', kinds: ['happy', 'worried'], chev: true, duration: 2600, ...pick(banner) };
-    case 'SP_DRAFT': return { tone: 'gold', kinds: ['bot'], chev: false, duration: 1800, ...pick(banner) };
+    case 'SP_DRAFT': return { tone: 'gold', kinds: ['bot'], chev: false, duration: SP_POPUP_MS, ...pick(banner) };
     case 'HIDDEN_CORE': return { tone: 'red', kinds: ['worried'], chev: true, duration: 2600, ...pick(banner) };
     default: return null;
   }

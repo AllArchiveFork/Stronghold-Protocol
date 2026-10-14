@@ -116,7 +116,7 @@ test('unlimited room admission serializes maxRooms zero in health without report
   assert.equal(health.ok, true);
   assert.equal(health.maxRooms, 0);
   assert.equal(health.rooms, 2);
-  assert.deepEqual(health.limits, { maxRooms: 0, maxRoomsPerAddr: 0, maxMatchesPerAddr: 0, maxBots: 0, maxBotsPerAddr: 0,
+  assert.deepEqual(health.limits, { maxRooms: 0, maxRoomsPerAddr: 0, maxMatchesPerAddr: 0, maxBots: 0, maxBotsPerAddr: 0, maintenance: 0,
     perAddrPeak: { rooms: 0, matches: 0, bots: 0 }, refused: { maxRooms: 0, maxRoomsPerAddr: 0, maxMatchesPerAddr: 0, maxBots: 0, maxBotsPerAddr: 0 } });
 });
 

@@ -150,6 +150,15 @@ html.sp-in-match {
 @supports (height: 100svh) {
   html.sp-in-match { font-size: calc(clamp(40px, min(calc(100vw / 19.2), calc(100svh / 10.8)), 240px) * var(--ui)); }
 }
+/* 异形屏适配 (设置, ui/screenFit.js; the 2026-10-14 hub design): while <html data-fit> holds the player's own insets, the
+   layout root is computed from the box inside them — the rules above with the insets taken off, in a match times --ui as
+   above. The svh lines only where svh exists, for the same reason (the insets are var()s). */
+html[data-fit] { font-size: clamp(40px, min(calc((100vw - var(--fit-l, 0px) - var(--fit-r, 0px)) / 19.2), calc((100vh - var(--fit-t, 0px) - var(--fit-b, 0px)) / 10.8)), 240px); }
+html[data-fit].sp-in-match { font-size: calc(clamp(40px, min(calc((100vw - var(--fit-l, 0px) - var(--fit-r, 0px)) / 19.2), calc((100vh - var(--fit-t, 0px) - var(--fit-b, 0px)) / 10.8)), 240px) * var(--ui)); }
+@supports (height: 100svh) {
+  html[data-fit] { font-size: clamp(40px, min(calc((100vw - var(--fit-l, 0px) - var(--fit-r, 0px)) / 19.2), calc((100svh - var(--fit-t, 0px) - var(--fit-b, 0px)) / 10.8)), 240px); }
+  html[data-fit].sp-in-match { font-size: calc(clamp(40px, min(calc((100vw - var(--fit-l, 0px) - var(--fit-r, 0px)) / 19.2), calc((100svh - var(--fit-t, 0px) - var(--fit-b, 0px)) / 10.8)), 240px) * var(--ui)); }
+}
 
 /* ---- text root: 设置 →「文字大小」 ---------------------------------------------------------------
    1rem above is the LAYOUT root, and five modules convert it to pixels with getComputedStyle:

@@ -441,7 +441,7 @@ export function SweepReport({ onClose }) {
   }, []);
 
   let left = null;
-  let right = null;
+  let right;
   if (!ready) {
     right = html`<p class="sw-loading">${t('正在读取报告…')}</p>`;
   } else if (tab === 'bonds') {

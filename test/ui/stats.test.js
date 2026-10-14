@@ -12,7 +12,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   STATS_VERSION, MAX_RECORDS, MAX_CHARS, FULL_KEEP, emptyStats, buildRecord, recordId, appendRecord, recordResult, recordQuit,
-  loadStats, saveStats, migrateStats, normalizeRecord, importStats, exportStats, aggregateStats, selfRowOf, roomModeOf,
+  loadStats, peekStatsRecords, saveStats, migrateStats, normalizeRecord, importStats, exportStats, aggregateStats, selfRowOf, roomModeOf,
   recordToResult, compactRecord, fitToBudget, countsTowardStats, roundsOf, clearedRounds, createLiveMatch, observeMatch,
   buildQuitRecord, installStatsRecorder, liveMatch, MIGRATIONS,
 } from '../../public/js/ui/stats.js';
@@ -374,6 +374,9 @@ describe('local stats: bounded storage', () => {
     assert.equal(c.difficulty, 'HARD');
     assert.equal(c.durationMs, 952123);
     assert.equal(selfRowOf(normalizeRecord(c)).bandId, 'band_amiya');
+    // the trophies and the experience stay: 名片 / 成就统计 and the settlement's LV add them up over every record
+    assert.equal(selfRowOf(normalizeRecord(c)).trophies, 30);
+    assert.equal(selfRowOf(normalizeRecord(c)).reward, 88);
   });
 
   test(`a store of ${MAX_RECORDS} real-size co-op matches fits MAX_CHARS (${MAX_CHARS}) — the oldest few go; solo matches all stay`, () => {
@@ -388,7 +391,8 @@ describe('local stats: bounded storage', () => {
     const coop = (i) => baseResult({ seed: i, modeId: 'mode_multi_hard', players: [row(1), row(2), row(3), row(4)].map((r, k) => (k === 0 ? { ...r, playerId: 'p1' } : r)) });
     const stats = manyRecords(MAX_RECORDS, coop);
     const fit = fitToBudget(stats.records);
-    assert.ok(fit.length >= 900 && fit.length <= MAX_RECORDS, `kept ${fit.length}`);
+    // (≈ 880 since the compact row keeps its trophies and experience, 2026-10-14: 名片 / 成就统计 / the settlement's LV)
+    assert.ok(fit.length >= 850 && fit.length <= MAX_RECORDS, `kept ${fit.length}`);
     assert.equal(fit[0].t, MAX_RECORDS - 1, 'the newest first');
     assert.ok(JSON.stringify({ v: 1, records: fit }).length <= MAX_CHARS);
     withStorage((ls) => { assert.equal(saveStats(stats), true); assert.ok(ls.raw.length <= MAX_CHARS); });
@@ -486,6 +490,27 @@ describe('local stats: corrupt and old storage', () => {
         assert.equal(loadStats().damaged, false);
       });
     }
+  });
+
+  test('the read-only views (成就统计, 名片 trophies) never move or rewrite storage: the 统计数据 page still reports it', () => {
+    for (const bad of ['{"v":1,"records":[', '{"v":1}']) {
+      withStorage((ls) => {
+        ls.setItem('sp.pref.stats', bad);
+        assert.deepEqual(peekStatsRecords(), [], bad);
+        assert.equal(ls.raw, bad, `${bad}: left in place`);
+        assert.equal(ls.damaged, null);
+        assert.equal(loadStats().damaged, true, `${bad}: the page still sees it`);
+      });
+    }
+    withStorage((ls) => {
+      const newer = JSON.stringify({ v: STATS_VERSION + 3, records: [{ players: [{ playerId: 'x' }] }] });
+      ls.setItem('sp.pref.stats', newer);
+      assert.deepEqual(peekStatsRecords(), []);
+      assert.equal(ls.raw, newer);
+      const stats = manyRecords(3);
+      ls.setItem('sp.pref.stats', JSON.stringify(stats));
+      assert.equal(peekStatsRecords().length, 3);
+    });
   });
 
   test('damaged rows are dropped and counted, the good ones kept (in order, newest first); the storage is rewritten without them', () => {

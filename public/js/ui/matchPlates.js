@@ -123,7 +123,7 @@ export function FinalAssaultPlate({ rows, total, icon = null, onDone }) {
         </g>`)}
       </svg>
       ${rows.map((r, i) => html`<div key=${r.player?.playerId ?? i} class="fa__row" style=${`top:${rem(lines[i].y)};--i:${i};--fa-av:${rem(Math.min(66, lines[i].gap - 10))}`}>
-        <${PlayerAvatar} player=${r.player} size="sm" class="fa__ava" />
+        <${PlayerAvatar} player=${r.player} size="sm" prefer="avatar" class="fa__ava" />
         <span class="fa__lp num"><${Icon} name="rook" />${Number.isFinite(r.lp) ? Math.max(0, r.lp) : '--'}</span>
       </div>`)}
       <div class="fa__node" style=${`left:${rem(FA_NODE.x)};top:${rem(FA_NODE.y)}`}>

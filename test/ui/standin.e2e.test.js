@@ -50,11 +50,9 @@ describe('0.2.0 补位 — a not-owned operator fights as its stand-in (real ser
       await c.page.waitForFunction(() => !document.querySelector('.lo'), { timeout: 3000 });
 
       // 2) a solo 标准 match: the briefing's m.private carries the list
-      await c.click('.mode-card', '独立模拟');
-      await c.click('.diff-card', '标准模拟');
-      await c.click('.create-box button', '开始独立模拟');
+      await c.createSolo('标准模拟');
       await c.waitFor((s) => !!s.room, 'solo room');
-      if (!(await c.st()).phase) await c.click('.room-bar__right button', '开始模拟', { timeout: 20000 });
+      if (!(await c.st()).phase) await c.roomStart({ timeout: 20000 });
       await c.waitFor((s) => s.phase === 'INFO_CHECK', 'briefing', 30000);
       const standIns = await c.page.evaluate(() => globalThis.__SP__.store.get().match.private?.standIns ?? null);
       assert.deepEqual(standIns, [SILVER], 'the match received the not-owned list');

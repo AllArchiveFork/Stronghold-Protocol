@@ -1,8 +1,8 @@
-// 成就奖杯等级 (the owner, 2026-10-14, the PRTS 同盟成就奖杯 table): the account's cumulative trophies pick one of five
+// 成就奖杯等级 (the 2026-10-14 design by 雨千代chiyo, the PRTS 同盟成就奖杯 table): the cumulative trophies pick one of five
 // chess-piece badges — 0~9 / 10~29 / 30~59 / 60~99 / 100+ (data/config.json trophies.medals, the official medalDataList),
 // art data/assets.json ui['medalIcon/trophy_level<n>_icon']; the SVG rook while the pack is missing or fails to load.
-// Mine come from my account's records (ui/achievements.js achievementStats); anybody else's from /accounts/lookup
-// (`trophies`, the sidecar's sum of that account's records).
+// One's own count is the sum of this browser's 统计数据 (ui/playerCard.js trophyTotal); a teammate's comes with their
+// seat's card (room.state seats[].card.trophies — that player's own claim, display only).
 
 import { useState } from '../../vendor/hooks.module.js';
 import { html, Icon } from './components.js';

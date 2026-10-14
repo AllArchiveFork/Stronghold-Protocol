@@ -1563,7 +1563,7 @@ export async function createFieldView(host, options = {}) {
       case 'deploy': {
         gone.delete(e[1]);
         const v = battleView(e[1]);
-        if (v) { v.onDeploy?.(); if (!queueBeam(v, renderT) && v.info?.kind !== 'device') fx.deploy(v); }
+        if (v) { v.onDeploy?.(); if (!queueBeam(v, now) && v.info?.kind !== 'device') fx.deploy(v); }
         break;
       }
       case 'atk': {

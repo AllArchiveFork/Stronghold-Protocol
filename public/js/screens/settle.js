@@ -1,20 +1,21 @@
-// The settlement flow of a match on screen (the event video 11:39–12:32, 2026-10-13): a radar intro, then two pages.
+// The settlement flow of a match on screen (the event video 11:39–12:32; the 2026-10-14 UI package by 雨千代chiyo, ported
+// 2026-10-14 with the fork's own pieces kept): a radar intro, then two pages.
 //   个人战报 (SelfPage): my own outcome (模拟完成, or 模拟中断 when the team lost or I was out before the end), the rounds I
 //     passed, the leaders I helped defeat, my final lineup (ten slots: tier, elite level and gear of each operator), my
 //     bonds and their layers, my plate with the trophies, and the level settlement (the LV bar filling with this match's
 //     experience) — then 下一步. The official 卫戍认证 / 每日防卫目标 strip is left out: the owner's servers have no such
 //     currency (2026-10-13).
-//   同盟 (TeamPage): one card per seat (its ace operator's art, the 评语, the rounds passed, the player plate, the
-//     trophies; under a teammate 加好友 and 点赞, under my own card the likes this match brought me — 2026-10-14, bound
-//     to the accounts: ui/friends.js, the sidecar's social.mjs), the team's outcome and rounds, the match time and date,
-//     数据详情 (the full report: screens/result.js ResultView) and 返回同盟 / 返回大厅.
-// The LV is counted from the match records: the logged-in account's list (ui/cloudStats.js), else this device's. A
-// match's experience is its settlement row's `reward`; 300 a level, LV 60 at most. Everything is drawn here (SVG / CSS);
+//   同盟 (TeamPage): one card per seat (its ace operator's art, the 评语, the rounds passed, the player plate with its
+//     名片底图 and trophy level — room.state seats[].card, ui/playerCard.js — and the trophies this match brought), the
+//     team's outcome and rounds, the match time and date, 数据详情 (the full report: screens/result.js ResultView) and
+//     返回同盟 / 返回大厅. The package's 加好友 / 点赞 and #编号 need its accounts service: left out (no accounts here,
+//     the owner, 2026-10-14).
+// The LV is counted from this browser's match records (ui/stats.js, like 成就统计). A match's experience is its
+// settlement row's `reward`; 300 a level, LV 60 at most. Everything is drawn here (SVG / CSS);
 // only the data's own art (operator portraits, item / bond / title / enemy icons, avatars) comes from the resource pack.
 // A spectator seat (no row of its own) opens on the team page. The stats page re-views a stored match with ResultView.
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from '../../vendor/hooks.module.js';
-import { RANDOM_MODE_NAME } from '../../../shared/randomMode.js';
 import { html, Icon, DifficultyTag } from '../ui/components.js';
 import { useGameData, Img, Sprite, PlayerAvatar, BondGlyph, BandIcon } from '../ui/gameComponents.js';
 import { normalizeResult, diyRecordFor, cardStandIn, standInForText } from '../ui/gameLogic.js';
@@ -23,14 +24,12 @@ import { chessPortraitUrl, chessAvatarUrl, itemIconUrl, enemyIconUrl, titleIconU
 import { store, useStore, emptyMatch } from '../store.js';
 import { audio } from '../audio.js';
 import { sentText } from '../ui/lang.js';
-import { AccountTag, useAccount, useCurrentAccount } from '../ui/accounts.js';
 import { TrophyBadge } from '../ui/trophies.js';
 import { reducedMotion } from '../ui/device.js';
-import { recordId, selfRowOf } from '../ui/stats.js';
-import { currentRecords, ensureUploaded, accountApi } from '../ui/cloudStats.js';
-import { friendsStore, requestFriend, Glyph, THUMB, ADD_FRIEND } from '../ui/friends.js';
+import { recordId, selfRowOf, peekStatsRecords } from '../ui/stats.js';
 import { NameCardLayer } from '../ui/namecards.js';
-import { toast } from '../ui/toasts.js';
+import { useMyCard } from '../ui/playerCard.js';
+import { appearanceRecord } from '../ui/skinAssets.js';
 import { ResultView, resultBonds } from './result.js';
 import { t } from '../../../shared/i18n.js';
 
@@ -285,7 +284,7 @@ function unitView(u, gd) {
   const chess = u.kind === 'token' ? null : gd.chess(u.id);
   const dr = u.diy && chess ? diyRecordFor(chess, u.diy, { chess: data.get('chess'), backups: data.get('backups') }) : null;
   const si = !dr && chess ? cardStandIn(chess, { unit: u, backups: gd.backups }) : null;
-  const rec = dr || si || chess;
+  const rec = appearanceRecord(dr || si || chess, u.skinId);
   const tier = Math.max(0, Math.min(6, Number(u.tier) || Number(rec?.tier) || 0));
   return {
     si,
@@ -346,7 +345,6 @@ function BondBar({ bonds, gd }) {
 function ModePill({ r }) {
   return html`<span class="smode">
     ${r.difficulty ? html`<${DifficultyTag} difficulty=${r.difficulty} size="lg" />` : null}
-    ${r.randomMode ? html`<span class="smode__rm">${RANDOM_MODE_NAME}</span>` : null}
   </span>`;
 }
 
@@ -356,7 +354,7 @@ function LevelStrip({ prog }) {
   const total = useCountUp(prog.after, { ms: 1300, delay: 700, from: prog.before });
   const lv0 = levelOf(prog.before);
   const lv = levelOf(total);
-  return html`<div class=${cx('slv', lv.max && 'is-max')} title=${t('等级：每局按通过回合与难度获得经验（登录后记在账号上）')}>
+  return html`<div class=${cx('slv', lv.max && 'is-max')} title=${t('等级：每局按通过回合与难度获得经验（本机记录）')}>
     <span class="slv__lv"><small>LV.</small><b class="num">${lv.lv}</b></span>
     <div class="slv__track">
       ${lv.lv > lv0.lv ? html`<span class="slv__up">LEVEL UP!</span>` : null}
@@ -377,7 +375,7 @@ function SelfPage({ r, raw, self, gd, prog, seed, onNext }) {
   const hidden = cleared && r.hiddenReached && r.hiddenBossId ? gd.boss(r.hiddenBossId) : null;
   const medals = [boss && { kind: 'boss', rec: boss, done: true }, hidden && { kind: 'hidden', rec: hidden, done: r.hiddenCleared }].filter(Boolean);
   const slots = Array.from({ length: 10 }, (_, i) => self.lineup[i] || null);
-  const acct = useAccount(self.isBot ? null : self.playerId);
+  const card = useMyCard();
   useEffect(() => {
     audio.sfx(cleared ? 'settlementSucceed' : 'settlementFail');
     const sign = medals.length ? setTimeout(() => audio.sfx('settlementBossSign'), 900) : null;
@@ -404,10 +402,10 @@ function SelfPage({ r, raw, self, gd, prog, seed, onNext }) {
         <${Img} src=${enemyIconUrl(gd.m, m.rec.enemyKey)} fallback=${html`<${Icon} name="crown" class="smedal__glyph" />`} />
         <i class="smedal__check"><${Icon} name=${m.done ? 'check' : 'close'} /></i></span>`)}</div>` : null}
       <div class="splate">
-        <${PlayerAvatar} player=${self} self=${true} class="splate__ava" />
-        <div class=${cx('splate__info', acct?.card && 'has-nc')}>
-          <${NameCardLayer} card=${acct?.card} />
-          <b class="splate__name">${self.name}<${AccountTag} playerId=${self.isBot ? null : self.playerId} /></b>
+        <${PlayerAvatar} player=${self} self=${true} prefer="avatar" class="splate__ava" />
+        <div class=${cx('splate__info', card.bg && 'has-nc')}>
+          <${NameCardLayer} card=${card.bg} />
+          <b class="splate__name">${self.name}</b>
           <span class="splate__rank" title=${t('累计奖杯')}><${TrophyBadge} count=${prog.trophies} /><small><${Icon} name="crown" />${prog.trophies}</small></span>
           <span class="splate__gain"><small><${Icon} name="crown" />${t('获得奖杯')}</small><b class="num">${self.trophies}</b></span>
         </div>
@@ -442,76 +440,20 @@ function titleView(p, gd) {
   };
 }
 
-/**
- * 点赞 / 加好友 of this match (my record `rid`; null for a spectator or a guest): the likes per player (polled while the page
- * is open, the first two minutes), the teammates I liked, the requests I sent here.
- */
-function useMatchSocial(rid) {
-  const { me: acct } = useCurrentAccount();
-  const [likes, setLikes] = useState({ counts: {}, mine: [] });
-  const [sent, setSent] = useState([]);
-  const [busy, setBusy] = useState(null);
-  const on = !!(acct && rid);
-  useEffect(() => {
-    if (!on) return undefined;
-    let n = 0;
-    const poll = async () => {
-      n++;
-      try { if (await ensureUploaded(rid)) { const d = await accountApi(`likes?record=${encodeURIComponent(rid)}`); setLikes({ counts: d.counts || {}, mine: d.mine || [] }); } } catch { /* next tick */ }
-    };
-    poll();
-    const id = setInterval(() => { if (n >= 24) clearInterval(id); else if (!document.hidden) poll(); }, 5000);
-    return () => clearInterval(id);
-  }, [on, rid]);
-  const like = async (pid) => {
-    if (busy) return;
-    setBusy('like:' + pid);
-    try {
-      if (!(await ensureUploaded(rid))) throw new Error(t('战绩还没有同步到账号，请稍后再试'));
-      await accountApi('likes', { body: { record: rid, playerId: pid } });
-      setLikes((l) => ({ counts: { ...l.counts, [pid]: (l.counts[pid] || 0) + (l.mine.includes(pid) ? 0 : 1) }, mine: [...new Set([...l.mine, pid])] }));
-    } catch (err) { toast(err?.message || t('点赞失败'), 'error'); } finally { setBusy(null); }
-  };
-  const befriend = async (pid) => {
-    if (busy) return;
-    setBusy('friend:' + pid);
-    try { await requestFriend({ playerId: pid }); setSent((s) => [...s, pid]); } catch (err) { toast(err?.message || t('添加好友失败'), 'error'); } finally { setBusy(null); }
-  };
-  // 加好友 needs only my login (the request names the teammate's match id), not this match's record
-  return { on, acct: !!acct, likes, sent, busy, like, befriend };
+/** A seat's room.card (名片底图, trophies) as room.state last told it; my own from this browser (ui/playerCard.js). */
+function useSeatCard(playerId, self) {
+  const mine = useMyCard();
+  const seat = useStore((s) => (Array.isArray(s.room?.seats) ? s.room.seats.find((x) => x && x.playerId === playerId)?.card : null) || null);
+  return self ? mine : seat && typeof seat === 'object' ? seat : null;
 }
 
-/** The chips of a teammate (加好友 · 点赞) or of my own card (the likes I got). */
-function SocialChips({ p, self, social }) {
-  const info = useAccount(p.isBot ? null : p.playerId);
-  const friends = useStore((s) => s.data?.friends || null, Object.is, friendsStore);
-  if (p.isBot || !social) return null;
-  const got = social.likes.counts[p.playerId] || 0;
-  if (self) {
-    return social.on && got ? html`<span class="tchip tchip--liked" title=${t('本局收到的点赞')}><${Glyph} d=${THUMB} /><b class="num">${got}</b></span>` : null;
-  }
-  const guest = !info;
-  const why = !social.on ? t('登录账号后可以点赞和加好友') : guest ? t('点赞需要服务器的账号服务（对方没有账号）') : '';
-  const whyFriend = !social.acct ? t('登录账号后可以加好友') : guest ? t('加好友需要服务器的账号服务（对方没有账号）') : '';
-  const liked = social.likes.mine.includes(p.playerId);
-  const isFriend = !!(info && friends?.some((f) => f.name === info.name && f.tag === info.tag));
-  const asked = social.sent.includes(p.playerId);
-  return html`
-    <button type="button" class=${cx('tchip', 'tchip--friend', (isFriend || asked) && 'is-done')} disabled=${!!whyFriend || isFriend || asked || social.busy === 'friend:' + p.playerId}
-      title=${whyFriend || (isFriend ? t('已是好友') : asked ? t('好友申请已发送') : t('加好友'))} aria-label=${t('加好友')} onClick=${() => social.befriend(p.playerId)}>
-      <${Glyph} d=${ADD_FRIEND} />${isFriend || asked ? html`<${Icon} name="check" />` : null}</button>
-    <button type="button" class=${cx('tchip', 'tchip--like', liked && 'is-done')} disabled=${!!why || liked || social.busy === 'like:' + p.playerId}
-      title=${why || (liked ? t('已点赞') : t('点赞'))} aria-label=${t('点赞')} onClick=${() => social.like(p.playerId)}>
-      <${Glyph} d=${THUMB} />${got ? html`<b class="num">${got}</b>` : null}</button>`;
-}
-
-function TeamCard({ p, i, gd, self, victory, raw, social }) {
+function TeamCard({ p, i, gd, self, victory, raw }) {
   const ace = aceOf(p.lineup);
   const v = ace ? unitView(ace, gd) : null;
   const title = titleView(p, gd);
   const cleared = rowCleared(raw, p, victory);
   const band = p.bandId ? gd.band(p.bandId) : null;
-  const acct = useAccount(p.isBot ? null : p.playerId);
+  const card = useSeatCard(p.playerId, self);
   return html`<article class=${cx('tcard', self && 'is-self', p.alive === false && 'is-dead', p.left && 'is-left', cleared ? 'is-clear' : 'is-fail')} style=${`--i:${i}`}>
     <header class="tcard__head" aria-hidden="true"><i class="tcard__pin"></i><span class="tcard__code"><i></i><i></i><i></i>STRONGHOLD PROTOCOL</span><span class="tcard__seat num">${pad2(p.seat + 1)}</span></header>
     <div class="tcard__art">
@@ -521,25 +463,23 @@ function TeamCard({ p, i, gd, self, victory, raw, social }) {
         <${Img} src=${title.icon} class="tcard__ticon" fallback=${html`<${Icon} name="crown" class="tcard__ticon" />`} /><b>${title.name}</b></div>` : null}
       <div class="tcard__rounds"><span>${t('通过回合')}</span><b class="num">${p.roundsPassed}</b></div>
     </div>
-    <div class=${cx('tcard__plate', acct?.card && 'has-nc')}>
-      <${NameCardLayer} card=${acct?.card} />
+    <div class=${cx('tcard__plate', !p.isBot && card?.bg && 'has-nc')}>
+      ${p.isBot ? null : html`<${NameCardLayer} card=${card?.bg} />`}
       ${self ? html`<i class="tcard__me" aria-hidden="true"><${Icon} name="user" /></i>` : null}
-      <${PlayerAvatar} player=${p} self=${self} class="tcard__ava" />
+      <${PlayerAvatar} player=${p} self=${self} prefer="avatar" class="tcard__ava" />
       <span class="tcard__who">
-        <b class="tcard__name"><${TrophyBadge} count=${acct?.trophies} class="tbadge--inline" /><span>${p.name}</span><${AccountTag} playerId=${p.isBot ? null : p.playerId} />${p.isBot ? html`<span class="tcard__ai">AI</span>` : null}</b>
+        <b class="tcard__name">${p.isBot ? null : html`<${TrophyBadge} count=${Number.isSafeInteger(card?.trophies) ? card.trophies : null} class="tbadge--inline" />`}<span>${p.name}</span>${p.isBot ? html`<span class="tcard__ai">AI</span>` : null}</b>
         ${band ? html`<span class="tcard__band"><${BandIcon} bandId=${band.bandId} size="xs" /><span>${band.name}</span></span>` : null}
       </span>
     </div>
     <div class="tcard__chips">
       <span class="tchip tchip--cup" title=${t('获得奖杯')}><${Icon} name="crown" /><b class="num">+${p.trophies}</b></span>
-      <${SocialChips} p=${p} self=${self} social=${social} />
     </div>
   </article>`;
 }
 
-function TeamPage({ r, res, gd, myId, at, rid, backLabel, onBack, onDetail }) {
+function TeamPage({ r, res, gd, myId, at, backLabel, onBack, onDetail }) {
   const rounds = useCountUp(r.roundsPassed, { ms: 900, delay: 450 });
-  const social = useMatchSocial(rid);
   const backRef = useRef(null);
   const rawOf = (pid) => (Array.isArray(res?.players) ? res.players.find((x) => x && x.playerId === pid) : null) || null;
   useEffect(() => {
@@ -552,7 +492,7 @@ function TeamPage({ r, res, gd, myId, at, rid, backLabel, onBack, onDetail }) {
       <div class="steam__bg" aria-hidden="true"></div>
       <${Logo} />
       <div class="steam__cards" style=${`--n:${r.players.length}`}>
-        ${r.players.length ? r.players.map((p, i) => html`<${TeamCard} key=${p.playerId} p=${p} i=${i} gd=${gd} self=${p.playerId === myId} victory=${r.victory} raw=${rawOf(p.playerId)} social=${r.players.length > 1 ? social : null} />`)
+        ${r.players.length ? r.players.map((p, i) => html`<${TeamCard} key=${p.playerId} p=${p} i=${i} gd=${gd} self=${p.playerId === myId} victory=${r.victory} raw=${rawOf(p.playerId)} />`)
           : html`<p class="steam__none">${t('暂无结算数据')}</p>`}
       </div>
       <div class="settle__barbg steam__barbg" aria-hidden="true"></div>
@@ -584,14 +524,14 @@ export function SettleFlow({ res, pub = null, myId = null, backLabel, onBack }) 
   const [page, setPage] = useState(() => (!self ? 'team' : reducedMotion() ? 'self' : 'intro'));
   const [detail, setDetail] = useState(false);
   const ctx = useMemo(() => {
-    // the account's list when logged in (this match is in its outbox already), else this device's
-    const { records } = currentRecords();
+    // this browser's records (read only; m.result is recorded as it arrives — levelProgress leaves this match's own
+    // record out and adds its row)
+    let records;
+    try { records = peekStatsRecords(); } catch { records = []; }
     const id = recordId(res, myId);
-    const own = records.find((x) => x.id === id);
+    const own = records.find((x) => x && x.id === id);
     const at = own?.t || Date.now();
-    // rid even when the record is not listed yet (m.result is recorded as it arrives, the account list syncs after):
-    // ensureUploaded waits for it — a null here left 点赞 / 加好友 greyed for the whole page (the owner, 2026-10-14)
-    return { at, rid: self ? id : null, prog: self ? levelProgress(records, { id, exp: self.reward, trophies: self.trophies, at }) : null };
+    return { at, prog: self ? levelProgress(records, { id, exp: self.reward, trophies: self.trophies, at }) : null };
   }, []);
   const rootRef = useRef(null);
   useStageFit(rootRef);
@@ -599,7 +539,7 @@ export function SettleFlow({ res, pub = null, myId = null, backLabel, onBack }) 
   return html`<div ref=${rootRef} class=${cx('screen', 'result', 'settle', `settle--${page}`)} data-testid="settle">
     ${page === 'intro' ? html`<${SettleIntro} players=${r.players} myId=${myId} lose=${lose} onDone=${() => setPage('self')} />` : null}
     ${page === 'self' ? html`<${SelfPage} r=${r} raw=${rawSelf} self=${self} gd=${gd} prog=${ctx.prog} seed=${res?.seed} onNext=${() => setPage('team')} />` : null}
-    ${page === 'team' ? html`<${TeamPage} r=${r} res=${res} gd=${gd} myId=${myId} at=${ctx.at} rid=${ctx.rid} backLabel=${backLabel} onBack=${onBack} onDetail=${() => setDetail(true)} />` : null}
+    ${page === 'team' ? html`<${TeamPage} r=${r} res=${res} gd=${gd} myId=${myId} at=${ctx.at} backLabel=${backLabel} onBack=${onBack} onDetail=${() => setDetail(true)} />` : null}
     ${detail ? html`<div class="settle__detail" data-testid="settle-detail">
       <${ResultView} res=${res} pub=${pub} myId=${myId} quiet=${true} backLabel=${t('返回')} onBack=${() => setDetail(false)} /></div>` : null}
   </div>`;

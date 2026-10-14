@@ -55,14 +55,17 @@ class LocalStackTests(unittest.TestCase):
         coordinator = compose['services']['coordinator']
         self.assertIn(str(limits) + ':/run/limits:ro', coordinator['volumes'])
         self.assertEqual(coordinator['environment']['SP_ONLINE_LIMIT_FILE'], '/run/limits/online-limit.json')
+        self.assertEqual(coordinator['environment']['SP_OWNER_FILE'], '/run/limits/owner.json')
         for name, service in compose['services'].items():
             if name != 'coordinator':
                 self.assertNotIn('SP_ONLINE_LIMIT_FILE', service['environment'])
+                self.assertNotIn('SP_OWNER_FILE', service['environment'])
                 self.assertFalse(any(v.startswith(str(limits)) for v in service['volumes']))
         self.assertEqual(summary['onlineLimitDir'], str(limits))
         plain, plain_compose = self.stack('plain', instances=2)
         self.assertNotIn('onlineLimitDir', plain)
         self.assertNotIn('SP_ONLINE_LIMIT_FILE', plain_compose['services']['coordinator']['environment'])
+        self.assertNotIn('SP_OWNER_FILE', plain_compose['services']['coordinator']['environment'])
         loose = self.root / 'loose'
         loose.mkdir()
         os.chmod(loose, 0o777)

@@ -152,7 +152,8 @@ npm start          # 启动服务器：http://localhost:3000
 | `SP_LOCAL_REPLICA` | 开 | 服务器模拟时让浏览器本地演算自己的战场并接受校验；设为 `0` 时改为全部推流 |
 | `SP_SNAPSHOT_HZ` | `20` | 服务器战斗快照频率：`20` / `10` / `5` |
 | `SP_WS_COMPRESSION` | `off` | `on` 时对战斗流启用 WebSocket 压缩 |
-| `SP_ONLINE_LIMIT_FILE` | 空 | 在线人数上限文件（JSON，如 `{"limit": 3000}`），运行中修改后几秒内生效；不设或文件不存在时不限 |
+| `SP_ONLINE_LIMIT_FILE` | 空 | 在线人数上限文件（JSON，如 `{"limit": 3000}`），运行中修改后几秒内生效；不设或文件不存在时不限。`"maintenance": 1` 打开维护开关：暂停创建房间、开始模拟和匹配，进行中的对局不受影响 |
+| `SP_OWNER_FILE` | 空 | 服主文件（JSON：`{"names": ["保留昵称"], "keySha256": "<服主密钥的 SHA-256>"}`）：带对的密钥进入的玩家显示服主标记，保留昵称只有服主能用；运行中修改后几秒内生效；不设、文件不存在或格式不对时关闭 |
 | `SP_VERIFY` | `off` | 服务器复算客户端上报的战斗结果：`off` / `sample`（约 1/8 抽查）/ `all`（全部复算，更耗 CPU） |
 | `TRUST_PROXY` | `auto` | 是否信任 `X-Forwarded-For` 等转发头：`auto` 只信任来自本机 / 内网的代理；`1` 总是；`0` 从不 |
 | `DEBUG` | 空 | 设为任意值输出详细日志 |
@@ -289,6 +290,7 @@ node tools/perfbench.mjs --cpu 1,4,6 --profile             # 真实战斗的帧�
 ## 致谢与数据来源
 
 - 原项目：[sganggs/Stronghold-Protocol](https://github.com/sganggs/Stronghold-Protocol)。本 fork 的玩法、数据、素材流程和大部分代码都来自上游。
+- 界面：大厅、选择模拟协议 / 选择同盟方式、同盟房间、干员调配（物资调配处卡片视图）、S.W.E.E.P.报告、成就统计面板、大厅背景与大厅音乐、异形屏适配等界面（2026-10-14 起）由 **Bilibili@雨千代chiyo** 设计制作，前端界面问题可加 QQ 374360968 反馈。本服并入时保留了自己的匹配、AI 队友、实验性选项、皮肤与干员预设等功能，成就、奖杯、名片和服主标记改为不依赖账号的实现。
 - 扩展人数：人数、卡池分组和相关公式参考了 [LongQianChen/Stronghold-Protocol](https://github.com/LongQianChen/Stronghold-Protocol/tree/feat/IncreasePlayerCapacity) 的 `feat/IncreasePlayerCapacity` 分支，经选择性适配，不是整支合并（见 [docs/EXPERIMENTAL-MULTIPLAYER.md](docs/EXPERIMENTAL-MULTIPLAYER.md)）。
 - 游戏数据：[Kengxxiao/ArknightsGameData](https://github.com/Kengxxiao/ArknightsGameData)。
 - 素材来源：[yuanyan3060/ArknightsGameResource](https://github.com/yuanyan3060/ArknightsGameResource)、[fexli/ArknightsResource](https://github.com/fexli/ArknightsResource)、[isHarryh/Ark-Models](https://github.com/isHarryh/Ark-Models)、[ArknightsAssets/ArknightsAssets2](https://github.com/ArknightsAssets/ArknightsAssets2)；字体来自 [TimWangZi/The-font-of-Arknights](https://github.com/TimWangZi/The-font-of-Arknights) 与 Google Fonts（Noto Sans SC）。详见 [docs/ASSETS.md](docs/ASSETS.md)。

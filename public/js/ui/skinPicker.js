@@ -55,4 +55,3 @@ export function SkinPicker({ m, charId, record, choices = {}, sync = 'idle', onC
     <//>` : null}
   <//>`;
 }
-export function SkinSection() { return null; } 

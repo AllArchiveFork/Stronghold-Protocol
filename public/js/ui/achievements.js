@@ -1,51 +1,133 @@
-// 成就统计 (the event video 1:25–1:44, 2026-10-13): the lobby's top-left entry — a scene card with the trophies and the
-// LV — and the 卫戍协议：盟约 panel it opens:
-//   the player plate (LV, name, trophies, best round), the per-mode table (总模拟数 / 成功卫戍 / 绝境突破 = cleared on 绝境
-//   or 终极), the six 评语 round a hexagon;
+// 成就统计 (2026-10-14: the panel of the lobby design by 雨千代chiyo, rebuilt on this browser's 统计数据 — the owner's
+// decision: no accounts, so everything here is local and per browser, like 统计数据 itself, ui/stats.js): the hub's entry
+// card (the trophies, the LV) and the 卫戍协议：盟约 panel —
+//   the name card (头像 with the LV, 名片底图; ui/playerCard.js), 已获奖杯 / 已达成成就, the mode table (总模拟数 /
+//   成功卫戍 / 绝境突破 = cleared on 绝境 or 终极), the six 评语 round a hexagon;
+//   成就 — ACHIEVEMENTS, each with its progress;
 //   卫戍成就 — 战果纪录 (the match whose bond stacked highest: that bond, its layers, the lineup and its top bonds) and the
 //     single-match bests of funds spent, promotions and enemies defeated;
 //   盟约纪录 — the three bonds most often active, and the operators of the first;
 //   策略纪录 — the three strategies most often picked, and those that carry the mark (cleared on 绝境 or 终极 with them).
-// Everything is counted from match records: the logged-in player's account list (ui/cloudStats.js — the same on every
-// device and server, 2026-10-14) or a friend's account list (opened from 好友, ui/friends.js). The achievements belong
-// to the account (the owner, 2026-10-14): a guest's panel asks for a login instead (the device list stays on the stats
-// page and can be imported after logging in). The footer names the source where the official prints its daily refresh
-// time; the plate shows the trophies and the account's 获赞. The LV is the settlement's (screens/settle.js levelOf over
-// the rows' `reward`). The second reference clip (2026-10-14, 0:04–0:18) set the look: a diamond loader on the blurred
-// lobby until the data is in, then the panel fades in; a solid hexagon; the record's bonds in a 2×3 grid wired to the
-// emblem. The drawn shapes are original; icons and portraits come from the resource pack.
-
+// The LV is the settlement's (screens/settle.js levelOf over the rows' `reward`). 战果纪录 and 盟约纪录 read lineups and
+// bonds, which only the newest FULL_KEEP records keep (ui/stats.js compactRecord). The designer's panel (2026-10-14, second
+// package) read an account's records; its login, friends, import and likes are left out. Nothing is sent anywhere; the
+// trophy count and the 头像 travel with room.card (display only). Styles: css/screens/lobby.css (.hub-ach / .ach*).
 import { useEffect, useMemo, useState } from '../../vendor/hooks.module.js';
-import { html, Icon, MicroLabel, Button } from './components.js';
-import { useGameData, BandIcon, BondGlyph, UnitThumb } from './gameComponents.js';
+import { DIFFICULTIES } from '../../../shared/constants.js';
+import { html, Icon, MicroLabel, doctorNo } from './components.js';
+import { Img, BandIcon, BondGlyph, UnitThumb, useGameData } from './gameComponents.js';
+import { chessAvatarUrl } from './assetUrls.js';
 import { data } from '../data.js';
-import { loadStats, countsTowardStats, selfRowOf, roundsOf } from './stats.js';
-import { useCurrentAccount, openAccountPanel } from './accounts.js';
-import { useRecords, loadFriendRecords, importDeviceRecords } from './cloudStats.js';
-import { NameCardLayer } from './namecards.js';
+import { peekStatsRecords, aggregateStats, countsTowardStats, selfRowOf, roundsOf, FULL_KEEP } from './stats.js';
 import { TrophyBadge } from './trophies.js';
-import { toast } from './toasts.js';
+import { NameCardLayer, NameCardPicker } from './namecards.js';
+import { useMyCard, trophyTotal, setCardBackground, setCardAvatar } from './playerCard.js';
+import { cardOperators, cardAvatarUrl } from './seatArt.js';
+import { AvatarPicker } from './opPicker.js';
 import { Emblem } from '../screens/title.js';
 import { OpCard, levelOf } from '../screens/settle.js';
-import { t } from '../../../shared/i18n.js';
+import { t, N_ } from '../../../shared/i18n.js';
 
 const cx = (...p) => p.flat().filter(Boolean).join(' ');
 const ROMAN = ['', 'I', 'II', 'III', 'IV', 'V', 'VI'];
-/** 绝境突破: a clear on these difficulties. */
+
+const fmt = (n) => (Number.isFinite(n) ? Math.round(n).toLocaleString('zh-CN') : '0');
+
+/**
+ * The numbers the achievements read, from the stats records (only the records that count, ui/stats.js
+ * countsTowardStats; the trophies from every settled record).
+ * @param {any[]} records
+ */
+export function progressOf(records) {
+  const all = Array.isArray(records) ? records : [];
+  const agg = aggregateStats(all);
+  const modes = { solo: { games: 0, wins: 0, best: 0 }, coop: { games: 0, wins: 0, best: 0 } };
+  for (const rec of all.filter(countsTowardStats)) {
+    const m = modes[rec.roomMode];
+    if (!m) continue;
+    const self = selfRowOf(rec);
+    m.games++;
+    if (self ? self.victory : rec.victory) m.wins++;
+    const r = Number.isFinite(self?.roundsPassed) ? self.roundsPassed : rec.roundsPassed;
+    if (Number.isFinite(r)) m.best = Math.max(m.best, r);
+  }
+  const winsAt = (d) => agg.byDifficulty[d]?.wins || 0;
+  return {
+    agg, modes, trophies: trophyTotal(all),
+    games: agg.count, wins: agg.wins, hours: agg.duration.totalMs / 3.6e6,
+    clears: Object.fromEntries(DIFFICULTIES.map((d) => [d, winsAt(d)])),
+    hidden: agg.hidden.cleared, hiddenAbyss: agg.byDifficulty.ABYSS?.hiddenCleared || 0,
+    bandKinds: Object.keys(agg.bands).length, titleKinds: Object.keys(agg.titles).length,
+    sums: agg.sums,
+  };
+}
+
+/**
+ * The achievements (the owner reviews this list; 2026-10-14 first draft): `value(p)` reads progressOf, reached at `goal`.
+ * Groups: 模拟经历 / 胜利 / 难度 / 同盟 / 策略 / 战斗 / 奖杯.
+ */
+export const ACHIEVEMENTS = Object.freeze([
+  { id: 'games_1', group: 'career', name: N_('初次模拟'), desc: N_('完成 1 场模拟'), goal: 1, value: (p) => p.games },
+  { id: 'games_10', group: 'career', name: N_('例行演练'), desc: N_('完成 10 场模拟'), goal: 10, value: (p) => p.games },
+  { id: 'games_50', group: 'career', name: N_('久经推演'), desc: N_('完成 50 场模拟'), goal: 50, value: (p) => p.games },
+  { id: 'games_200', group: 'career', name: N_('卫戍常驻'), desc: N_('完成 200 场模拟'), goal: 200, value: (p) => p.games },
+  { id: 'hours_10', group: 'career', name: N_('长时值守'), desc: N_('累计模拟 10 小时'), goal: 10, value: (p) => Math.floor(p.hours) },
+  { id: 'wins_1', group: 'victory', name: N_('初战告捷'), desc: N_('取得 1 场胜利'), goal: 1, value: (p) => p.wins },
+  { id: 'wins_20', group: 'victory', name: N_('屡战屡胜'), desc: N_('取得 20 场胜利'), goal: 20, value: (p) => p.wins },
+  { id: 'wins_100', group: 'victory', name: N_('百战不殆'), desc: N_('取得 100 场胜利'), goal: 100, value: (p) => p.wins },
+  { id: 'clear_FUNNY', group: 'difficulty', name: N_('标准达成'), desc: N_('在标准模拟中获胜'), goal: 1, value: (p) => p.clears.FUNNY },
+  { id: 'clear_NORMAL', group: 'difficulty', name: N_('险境突破'), desc: N_('在险境模拟中获胜'), goal: 1, value: (p) => p.clears.NORMAL },
+  { id: 'clear_HARD', group: 'difficulty', name: N_('绝境求生'), desc: N_('在绝境模拟中获胜'), goal: 1, value: (p) => p.clears.HARD },
+  { id: 'clear_ABYSS', group: 'difficulty', name: N_('终极考验'), desc: N_('在终极模拟中获胜'), goal: 1, value: (p) => p.clears.ABYSS },
+  { id: 'hidden_1', group: 'difficulty', name: N_('触及核心'), desc: N_('击破隐秘核心 1 次'), goal: 1, value: (p) => p.hidden },
+  { id: 'hidden_10', group: 'difficulty', name: N_('核心猎手'), desc: N_('击破隐秘核心 10 次'), goal: 10, value: (p) => p.hidden },
+  { id: 'hidden_abyss', group: 'difficulty', name: N_('深渊之底'), desc: N_('在终极模拟中击破隐秘核心'), goal: 1, value: (p) => p.hiddenAbyss },
+  { id: 'coop_10', group: 'alliance', name: N_('同盟战友'), desc: N_('完成 10 场同盟模拟'), goal: 10, value: (p) => p.modes.coop.games },
+  { id: 'coop_wins_10', group: 'alliance', name: N_('同盟凯歌'), desc: N_('同盟模拟获胜 10 场'), goal: 10, value: (p) => p.modes.coop.wins },
+  { id: 'solo_wins_10', group: 'alliance', name: N_('独当一面'), desc: N_('独立模拟获胜 10 场'), goal: 10, value: (p) => p.modes.solo.wins },
+  { id: 'bands_10', group: 'strategy', name: N_('博采众长'), desc: N_('使用过 10 种不同的策略'), goal: 10, value: (p) => p.bandKinds },
+  { id: 'bands_25', group: 'strategy', name: N_('运筹帷幄'), desc: N_('使用过 25 种不同的策略'), goal: 25, value: (p) => p.bandKinds },
+  { id: 'titles_6', group: 'strategy', name: N_('评语收藏家'), desc: N_('获得全部 6 种评语'), goal: 6, value: (p) => p.titleKinds },
+  { id: 'kills_1000', group: 'combat', name: N_('千军辟易'), desc: N_('累计击倒 1,000 名敌人'), goal: 1000, value: (p) => p.sums.kills || 0 },
+  { id: 'kills_20000', group: 'combat', name: N_('万夫莫当'), desc: N_('累计击倒 20,000 名敌人'), goal: 20000, value: (p) => p.sums.kills || 0 },
+  { id: 'boss_1m', group: 'combat', name: N_('领袖克星'), desc: N_('累计对领袖造成 1,000,000 伤害'), goal: 1_000_000, value: (p) => p.sums.bossDamage || 0 },
+  { id: 'perfect_50', group: 'combat', name: N_('完美作战'), desc: N_('累计 50 回合完美作战'), goal: 50, value: (p) => p.sums.perfectRounds || 0 },
+  { id: 'merges_200', group: 'combat', name: N_('精英集结'), desc: N_('累计晋升干员 200 次'), goal: 200, value: (p) => p.sums.merges || 0 },
+  { id: 'trophy_10', group: 'trophy', name: N_('崭露头角'), desc: N_('累计获得 10 个奖杯（奖杯等级 2）'), goal: 10, value: (p) => p.trophies },
+  { id: 'trophy_30', group: 'trophy', name: N_('声名鹊起'), desc: N_('累计获得 30 个奖杯（奖杯等级 3）'), goal: 30, value: (p) => p.trophies },
+  { id: 'trophy_60', group: 'trophy', name: N_('威名远扬'), desc: N_('累计获得 60 个奖杯（奖杯等级 4）'), goal: 60, value: (p) => p.trophies },
+  { id: 'trophy_100', group: 'trophy', name: N_('卫戍传奇'), desc: N_('累计获得 100 个奖杯（奖杯等级 5）'), goal: 100, value: (p) => p.trophies },
+]);
+
+export const ACHIEVEMENT_GROUPS = Object.freeze([
+  ['career', N_('模拟经历'), 'hourglass'], ['victory', N_('胜利'), 'crown'], ['difficulty', N_('难度'), 'rook'],
+  ['alliance', N_('同盟'), 'users'], ['strategy', N_('策略'), 'book'], ['combat', N_('战斗'), 'sword'], ['trophy', N_('奖杯'), 'crown'],
+]);
+
+/** Each achievement with its value, done flag and fraction. */
+export function achievementsOf(progress) {
+  return ACHIEVEMENTS.map((a) => {
+    const v = Math.max(0, Number(a.value(progress)) || 0);
+    return { ...a, current: Math.min(v, a.goal), done: v >= a.goal, frac: Math.min(1, v / a.goal) };
+  });
+}
+
+/** 绝境突破 / the strategy mark: a clear on these difficulties. */
 const HARD_UP = new Set(['HARD', 'ABYSS']);
 /** The hexagon's 评语, clockwise from the top (the official order). */
 export const HEX_TITLES = ['comment_4', 'comment_5', 'comment_6', 'comment_1', 'comment_2', 'comment_3'];
 
 /**
- * Everything the panel shows, from the local records (any order). `hiddenLayers(bondId)`: a bond whose layers the game
- * never shows (bonds.json noStack) cannot be the 战果纪录.
+ * The designer's records (any order): the experience (the LV), the mode table, the 评语 counts, 战果纪录, the
+ * single-match bests, the bonds and strategies played most and the marked strategies. `hiddenLayers(bondId)`: a bond
+ * whose layers the game never shows (bonds.json noStack) cannot be the 战果纪录.
  * @param {any[]} records
  * @param {{ hiddenLayers?: (bondId: string) => boolean }} [o]
  */
 export function achievementStats(records, { hiddenLayers = () => false } = {}) {
   const num = (v) => (Number.isFinite(v) ? v : 0);
   const out = {
-    trophies: 0, exp: 0, bestRound: 0,
+    exp: 0, bestRound: 0,
     modes: { solo: { games: 0, wins: 0, hard: 0 }, coop: { games: 0, wins: 0, hard: 0 } },
     titles: {}, best: null, maxima: { gold: 0, merges: 0, kills: 0 },
     topBonds: [], topBands: [], markedBands: [],
@@ -56,7 +138,6 @@ export function achievementStats(records, { hiddenLayers = () => false } = {}) {
   for (const rec of Array.isArray(records) ? records : []) {
     const self = rec ? selfRowOf(rec) : null;
     if (!self) continue;
-    out.trophies += Math.max(0, num(self.trophies));
     out.exp += Math.max(0, num(self.reward));
     if (!countsTowardStats(rec)) continue;
     out.bestRound = Math.max(out.bestRound, roundsOf(rec));
@@ -95,56 +176,66 @@ export function bondOperators(chessList, bondId) {
     .filter((c) => { const k = c.charId || c.chessId; if (seen.has(k)) return false; seen.add(k); return true; });
 }
 
-/** My records' aggregate (the account's when logged in, else this device's), re-counted after every sync. */
-function useAchievements(hiddenLayers) {
-  const cur = useRecords();
-  const s = useMemo(() => achievementStats(cur.records, { hiddenLayers }), [cur, hiddenLayers]);
-  return { s, cur };
+/**
+ * The 战果纪录's bonds beside the lineup: that match's bonds (active ones first, then by layers), at most six — the
+ * 2×3 grid of the reference. `noStack(bondId)`: a bond whose layers the game never shows prints a dash.
+ */
+export function recordBonds(list, noStack = () => false) {
+  return (Array.isArray(list) ? list : [])
+    .filter((b) => b && b.bondId && (b.active || Number(b.layers) > 0))
+    .map((b) => ({ bondId: b.bondId, active: !!b.active, layers: Math.max(0, Number(b.layers) || 0), hidden: noStack(b.bondId) }))
+    .sort((a, b) => (b.active - a.active) || ((b.hidden ? -1 : b.layers) - (a.hidden ? -1 : a.layers)))
+    .slice(0, 6);
 }
-/** A friend's list (loaded once per open). */
-function useFriendAchievements(friend, hiddenLayers) {
-  const [got, setGot] = useState(null);
+
+/** This browser's records, read when a component mounts and again when the page comes back (they change between matches). */
+function useRecords() {
+  const [records, setRecords] = useState(() => peekStatsRecords());
   useEffect(() => {
-    let live = true;
-    loadFriendRecords(friend.id).then((d) => { if (live) setGot(d); }).catch((err) => { if (live) setGot({ error: err?.message || t('读取失败'), records: [] }); });
-    return () => { live = false; };
-  }, [friend.id]);
-  const s = useMemo(() => achievementStats(got?.records || [], { hiddenLayers }), [got, hiddenLayers]);
-  return { s, got };
+    const again = () => { if (document.visibilityState !== 'hidden') setRecords(peekStatsRecords()); };
+    document.addEventListener('visibilitychange', again);
+    return () => document.removeEventListener('visibilitychange', again);
+  }, []);
+  return records;
 }
 const noHidden = () => false;
 
-// ---- the lobby entry ---------------------------------------------------------------------------------------------------
+/** The low hills behind the entry card's emblem (original drawing). */
+function Land() {
+  return html`<svg class="hub-ach__land" viewBox="0 0 320 88" preserveAspectRatio="none" aria-hidden="true" focusable="false">
+    <rect width="320" height="88" fill="#d7a35a" />
+    <path d="M0 52 C40 40 70 58 110 46 S180 30 220 44 S290 56 320 40 V88 H0z" fill="#b97a34" />
+    <path d="M0 66 C50 58 90 74 140 64 S230 54 270 66 S310 72 320 68 V88 H0z" fill="#8a5420" />
+  </svg>`;
+}
 
-/**
- * The hub's top-left 成就统计 card: a dusk scene with the emblem, my trophies, and the label strip with my LV — the
- * account's; a guest's card says the achievements need a login.
- */
+/** The hub's 成就统计 card: the trophies, the LV; opens the panel. */
 export function AchievementEntry({ onOpen }) {
-  const { s, cur } = useAchievements(noHidden);
-  const lv = levelOf(s.exp);
-  const guest = cur.source !== 'account';
-  return html`<button type="button" class=${cx('hub-ach', guest && 'is-guest')} onClick=${onOpen} title=${guest ? t('成就统计 · 登录账号后记录') : t('成就统计（本机记录）')}>
-    <span class="hub-ach__scene" aria-hidden="true">
-      <svg class="hub-ach__land" viewBox="0 0 320 110" preserveAspectRatio="none">
-        <defs><linearGradient id="hubAchSky" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stop-color="#2a2114" /><stop offset=".5" stop-color="#b8741c" /><stop offset="1" stop-color="#f0a636" /></linearGradient></defs>
-        <rect width="320" height="110" fill="url(#hubAchSky)" />
-        <path d="M0 110V80l28-12 22 9 34-27 27 18 30-13 41 23 27-11 31 17 33-21 47 25V110z" fill="#3a2a16" />
-        <path d="M0 110V94l46-11 41 8 50-15 44 13 50-9 40 11 49-7V110z" fill="#18120b" />
-        <path d="M262 110V70M262 80l-9-8M262 76l8-7M262 86l10-6" stroke="#18120b" stroke-width="2.5" fill="none" />
-      </svg>
-      <span class="hub-ach__mark"><${Emblem} /></span>
-      <span class="hub-ach__rank">${guest ? html`<${Icon} name="rook" />` : html`<${TrophyBadge} count=${s.trophies} />`}<small><${Icon} name="crown" /><b class="num">${guest ? '—' : s.trophies}</b></small></span>
+  const card = useMyCard();
+  const records = useRecords();
+  const trophies = card.trophies ?? trophyTotal(records);
+  const lv = useMemo(() => levelOf(achievementStats(records).exp).lv, [records]);
+  return html`<button type="button" class="hub-ach" onClick=${onOpen} aria-haspopup="dialog" title=${t('成就统计：本机的模拟纪录、奖杯与成就')}>
+    <span class="hub-ach__scene"><${Land} /><span class="hub-ach__mark"><${Emblem} /></span>
+      <span class="hub-ach__rank"><${TrophyBadge} count=${trophies} /><small><${Icon} name="crown" />${fmt(trophies)}</small></span>
     </span>
-    <span class="hub-ach__label">
-      <svg class="hub-ach__badge" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h14v12l-7 6-7-6zm4 5v2h2V8zm4 0v2h2V8zm-4.5 4.2a4.5 4.5 0 0 0 7 0l-1.3-1a3 3 0 0 1-4.4 0z" fill-rule="evenodd" /></svg>
-      <span>${t('成就统计')}</span>${guest ? html`<b class="hub-ach__lv hub-ach__login">${t('需登录')}</b>` : html`<b class="hub-ach__lv num">LV.${lv.lv}</b>`}
-    </span>
+    <span class="hub-ach__label">${t('成就统计')}<span class="hub-ach__lv num">LV.${lv}</span></span>
   </button>`;
 }
 
 // ---- the panel ---------------------------------------------------------------------------------------------------------
+
+/** One achievement mark: the group icon, the name, the description, a bar while it is not reached. */
+function Mark({ a, icon }) {
+  return html`<div class=${`ach-mark ach-mark--row${a.done ? ' is-done' : ''}`} title=${t(a.desc)}>
+    <span class="ach-mark__frame"><${Icon} name=${icon} />${a.done ? html`<span class="ach-mark__badge"><${Icon} name="check" /></span>` : null}</span>
+    <span class="ach-mark__text">
+      <b>${t(a.name)}</b><small>${t(a.desc)}</small>
+      ${a.done ? html`<span class="ach-mark__got">${t('已达成')}</span>`
+        : html`<span class="ach-mark__bar" aria-label=${`${fmt(a.current)} / ${fmt(a.goal)}`}><i style=${`width:${(a.frac * 100).toFixed(1)}%`}></i><em class="num">${fmt(a.current)} / ${fmt(a.goal)}</em></span>`}
+    </span>
+  </div>`;
+}
 
 function SectionBar({ title, micro }) {
   return html`<h3 class="ach-bar">
@@ -203,77 +294,43 @@ function TitleHex({ titles, gd }) {
   </div>`;
 }
 
-const THUMB = 'M2 10h4v11H2zm6 11V10l5-8 1.2.6c.9.5 1.3 1.5 1.1 2.5L14.6 9H20a2 2 0 0 1 2 2.3l-1.4 8A2 2 0 0 1 18.6 21z';
-
-/**
- * `acct`: the account shown ({ name, tag, avatar, card }), null for a guest (then `me`, the store's player, names it).
- * The card: the avatar with the LV at its top-left corner, on the account's namecard (the owner, 2026-10-14).
- */
-function Plate({ me, acct, s, likes }) {
+/** The name card (头像 with the LV, the name, DOCTOR #, 名片底图) and the counts beside it. */
+function Plate({ me, card, s, p, done, total, gd, onAvatar, onBg }) {
   const lv = levelOf(s.exp);
-  const name = acct?.name || me?.name || t('博士');
+  const opRec = card.charId && gd.ready ? gd.list('chess').find((c) => c.charId === card.charId) : null;
+  // 头像 (room.card avatar), else the 名片干员's avatar, else the name's first letter
+  const face = cardAvatarUrl(card.avatar, gd.m) || (opRec ? chessAvatarUrl(gd.m, opRec) : null);
   return html`<div class="ach-plate">
-    <div class=${cx('ach-card', acct?.card && 'has-nc')}>
-      <${NameCardLayer} card=${acct?.card} small=${false} />
-      <span class="ach-card__ava">
-        ${acct?.avatar ? html`<img src=${acct.avatar} alt="" />` : html`<span class="ach-card__glyph">${[...name][0]}</span>`}
-        <span class="ach-card__lv" title=${t('等级')}><b class="num">${lv.lv}</b><small>LV</small></span>
-      </span>
+    <div class=${cx('ach-card', card.bg && 'has-nc')}>
+      <${NameCardLayer} card=${card.bg} />
+      <button type="button" class="ach-card__ava" onClick=${onAvatar} title=${t('更换头像')} aria-label=${t('更换头像')}>
+        <${Img} src=${face} alt="" fallback=${html`<span class="ach-card__glyph">${[...(me?.name || '?')][0]}</span>`} />
+        <span class="ach-card__lv" title=${t('等级')}><b class="num">${lv.lv}</b><small>LV</small></span></button>
       <span class="ach-card__who">
-        <b class="ach-card__name">${name}${acct?.tag ? html`<span class="ach-card__tag">#${acct.tag}</span>` : null}</b>
-        <span class="ach-card__id">${acct ? (acct.local ? t('本机账号 {name}', { name: `${acct.name}#${acct.tag}` }) : t('账号 {name}', { name: `${acct.name}#${acct.tag}` })) : t('本机记录')}</span>
+        <span class="ach-card__name">${me?.name || t('博士')}</span>
+        <span class="ach-card__id num">${me?.playerId != null ? `DOCTOR #${doctorNo(me.playerId)}` : 'DOCTOR'}</span>
+        <span class="ach-card__edits">
+          <button type="button" class="ach-card__nc" onClick=${onAvatar}><${Icon} name="edit" />${t('头像')}</button>
+          <button type="button" class="ach-card__nc" onClick=${onBg}><${Icon} name="edit" />${t('名片底图')}</button>
+        </span>
       </span>
       <span class="ach-card__brand" aria-hidden="true">STRONGHOLD<br />PROTOCOL</span>
     </div>
     <div class="ach-counts">
-      <span class="ach-counts__badge is-trophy"><${TrophyBadge} count=${s.trophies} /></span>
-      <span class="ach-counts__row" title=${s.bestRound ? t('最高回合 {n}', { n: s.bestRound }) : ''}><small><${Icon} name="crown" />${t('已获奖杯')}</small><b class="num">${s.trophies}</b></span>
-      <span class="ach-counts__badge is-like" aria-hidden="true"><svg viewBox="0 0 40 40"><rect x="4" y="4" width="32" height="32" rx="6" /><path class="ach-counts__ink" d="M11 19h4v10h-4zm6 10V19l4.5-7 1 .5c.8.4 1.1 1.3.9 2.2L22.6 18H28a2 2 0 0 1 2 2.3l-1.2 6.9A2 2 0 0 1 26.8 29z" /></svg></span>
-      <span class="ach-counts__row ach-counts__likes" title=${t('在结算界面收到的队友点赞')}><small><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d=${THUMB} /></svg>${t('获赞数')}</small><b class="num">${likes ? likes.got : '—'}</b></span>
+      <span class="ach-counts__badge is-trophy"><${TrophyBadge} count=${p.trophies} /></span>
+      <span class="ach-counts__row" title=${s.bestRound ? t('最高回合 {n}', { n: s.bestRound }) : ''}><small><${Icon} name="crown" />${t('已获奖杯')}</small><b class="num">${fmt(p.trophies)}</b></span>
+      <span class="ach-counts__badge"><${Icon} name="check" /></span>
+      <span class="ach-counts__row"><small>${t('已达成成就')}</small><b class="num">${done}<small> / ${total}</small></b></span>
     </div>
-  </div>`;
-}
-
-/** 导入本机记录: shown on my account's panel while this device holds matches the account lacks. */
-function ImportBar({ cur }) {
-  const [busy, setBusy] = useState(false);
-  const n = useMemo(() => {
-    if (cur.source !== 'account' || !cur.ready) return 0;
-    const have = new Set(cur.records.map((r) => r.id));
-    return loadStats().records.filter((r) => !have.has(r.id)).length;
-  }, [cur]);
-  if (!n) return null;
-  const go = async () => {
-    setBusy(true);
-    try { const sent = await importDeviceRecords(); toast(t('已导入 {n} 局本机记录到账号', { n: sent }), 'success'); }
-    catch (err) { toast(err?.message || t('导入失败'), 'error'); }
-    finally { setBusy(false); }
-  };
-  return html`<div class="ach-import"><${Icon} name="info" /><span>${t('这台设备上还有 {n} 局记录不在账号里（登录前或其他账号玩的也在内）。', { n })}</span>
-    <${Button} size="sm" variant="primary" loading=${busy} onClick=${go}>${t('导入到账号')}<//></div>`;
-}
-
-/**
- * A guest's panel: the achievements are the account's. The login dialog (ui/accounts.js, above this panel) opens on
- * top; once logged in, the panel turns into the account's.
- */
-function GuestGate() {
-  const n = useMemo(() => loadStats().records.length, []);
-  return html`<div class="ach-gate">
-    <span class="ach-gate__mark" aria-hidden="true"><${Emblem} /></span>
-    <b class="ach-gate__title">${t('成就记录绑定在账号上')}</b>
-    <p>${t('登录后每局战绩自动记入账号：奖杯、等级、获赞和各项纪录。')}</p>
-    ${n ? html`<p class="ach-gate__local">${t('这台设备上有 {n} 局记录，登录后可以导入到账号。', { n })}</p>` : null}
-    <${Button} variant="primary" size="lg" onClick=${() => openAccountPanel()}>${t('登录 / 注册')}<//>
   </div>`;
 }
 
 function ModeTable({ modes }) {
   const row = (key, icon, label) => html`<div class="ach-modes__row">
     <span class="ach-modes__mode"><${Icon} name=${icon} /><b>${label}</b></span>
-    <span class="ach-modes__cell"><b class="num">${modes[key].games}</b><small>${t('总模拟数')}</small></span>
-    <span class="ach-modes__cell"><b class="num">${modes[key].wins}</b><small>${t('成功卫戍')}</small></span>
-    <span class="ach-modes__cell" title=${t('在绝境模拟或终极模拟中成功卫戍')}><b class="num">${modes[key].hard}</b><small>${t('绝境突破')}</small></span>
+    <span class="ach-modes__cell"><b class="num">${fmt(modes[key].games)}</b><small>${t('总模拟数')}</small></span>
+    <span class="ach-modes__cell"><b class="num">${fmt(modes[key].wins)}</b><small>${t('成功卫戍')}</small></span>
+    <span class="ach-modes__cell" title=${t('在绝境模拟或终极模拟中成功卫戍')}><b class="num">${fmt(modes[key].hard)}</b><small>${t('绝境突破')}</small></span>
   </div>`;
   return html`<div class="ach-modes">${row('solo', 'user', t('独立模拟'))}${row('coop', 'users', t('同盟模拟'))}</div>`;
 }
@@ -282,8 +339,8 @@ function BestRecord({ best, gd }) {
   if (!best) return html`<p class="ach-empty">${t('还没有可展示的战果：完成一局模拟后在这里记录盟约叠加最高的一局')}</p>`;
   const lineup = Array.isArray(best.self.lineup) ? best.self.lineup : [];
   const slots = Array.from({ length: 10 }, (_, i) => lineup[i] || null);
-  const bonds = recordBonds(best.self.bonds, (id) => !!gd.bond?.(id)?.noStack);
-  const bond = gd.bond?.(best.bondId);
+  const bonds = recordBonds(best.self.bonds, (id) => !!gd.bond(id)?.noStack);
+  const bond = gd.bond(best.bondId);
   return html`<div class="ach-best">
     <div class="ach-best__left">
       <span class="ach-pill">${t('战果纪录')}<${Icon} name="chevrons" /></span>
@@ -299,27 +356,15 @@ function BestRecord({ best, gd }) {
         <div class="ach-best__row">${slots.slice(0, 5).map((u, i) => html`<${OpCard} key=${i} u=${u} gd=${gd} i=${i} />`)}</div>
         <div class="ach-best__row">${slots.slice(5).map((u, i) => html`<${OpCard} key=${i} u=${u} gd=${gd} i=${i + 5} />`)}</div>
       </div>
-      <div class="ach-best__bonds">${bonds.map((b, i) => html`<span key=${b.bondId} class=${cx('sbond', b.active && 'is-on')} style=${`--i:${i}`} title=${gd.bond?.(b.bondId)?.name || b.bondId}>
+      <div class="ach-best__bonds">${bonds.map((b, i) => html`<span key=${b.bondId} class=${cx('sbond', b.active && 'is-on')} style=${`--i:${i}`} title=${gd.bond(b.bondId)?.name || b.bondId}>
         <span class="sbond__disc"><${BondGlyph} bondId=${b.bondId} /></span><b class="num">${b.hidden ? '—' : b.layers}</b></span>`)}</div>
     </div>
   </div>`;
 }
 
-/**
- * The 战果纪录's bonds beside the lineup: that match's bonds (active ones first, then by layers), at most six — the
- * 2×3 grid of the reference. `noStack(bondId)`: a bond whose layers the game never shows prints a dash.
- */
-export function recordBonds(list, noStack = () => false) {
-  return (Array.isArray(list) ? list : [])
-    .filter((b) => b && b.bondId && (b.active || Number(b.layers) > 0))
-    .map((b) => ({ bondId: b.bondId, active: !!b.active, layers: Math.max(0, Number(b.layers) || 0), hidden: noStack(b.bondId) }))
-    .sort((a, b) => (b.active - a.active) || ((b.hidden ? -1 : b.layers) - (a.hidden ? -1 : a.layers)))
-    .slice(0, 6);
-}
-
 function Maxima({ maxima }) {
   const box = (cls, label, v, glyph) => html`<div class=${cx('ach-max', cls)}>
-    <span class="ach-max__label">${label}</span><b class="ach-max__num"><small>x</small><span class="num">${v}</span></b>
+    <span class="ach-max__label">${label}</span><b class="ach-max__num"><small>x</small><span class="num">${fmt(v)}</span></b>
     <svg class="ach-max__glyph" viewBox="0 0 48 48" aria-hidden="true"><path d=${glyph} /></svg>
   </div>`;
   return html`<div class="ach-maxima">
@@ -336,7 +381,7 @@ function BondRecord({ topBonds, gd }) {
     <p class="ach-sub">${t('最常使用的盟约:')}</p>
     <div class="ach-tops">${topBonds.map((b, i) => html`<div key=${b.bondId} class="ach-top ach-top--bond" title=${t('{n} 局中激活', { n: b.games })}>
       <span class="ach-top__frame"><i class="ach-top__rank">TOP${i + 1}</i><${BondGlyph} bondId=${b.bondId} /></span>
-      <b class="ach-top__name">${gd.bond?.(b.bondId)?.name || b.bondId}</b></div>`)}</div>
+      <b class="ach-top__name">${gd.bond(b.bondId)?.name || b.bondId}</b></div>`)}</div>
     ${ops.length ? html`<p class="ach-sub">${t('盟约下干员为:')}</p>
       <div class="ach-ops">${ops.map((c) => html`<span key=${c.chessId} class=${cx('ach-op', `sop--t${c.tier}`)} title=${c.name}>
         <${UnitThumb} kind="chess" id=${c.chessId} size="md" showTier=${false} /><b class="ach-op__tier">${ROMAN[c.tier] || ''}</b></span>`)}</div>` : null}
@@ -345,7 +390,7 @@ function BondRecord({ topBonds, gd }) {
 
 function BandRecord({ topBands, marked, gd }) {
   if (!topBands.length) return html`<p class="ach-empty">${t('暂无策略记录')}</p>`;
-  const name = (id) => gd.band?.(id)?.name || id;
+  const name = (id) => gd.band(id)?.name || id;
   return html`<div class="ach-list">
     <p class="ach-sub">${t('最常使用的策略:')}</p>
     <div class="ach-tops ach-tops--band">${topBands.map((b, i) => html`<div key=${b.bandId} class="ach-top ach-top--band">
@@ -358,61 +403,44 @@ function BandRecord({ topBands, marked, gd }) {
   </div>`;
 }
 
-/**
- * The 卫戍协议：盟约 panel. `me`: the store's player (its name when not logged in). `friend` ({ id, name, tag, avatar }):
- * that friend's account list instead of mine.
- */
-export function AchievementPanel({ me, onClose, friend = null }) {
-  const gd = useGameData();
-  const { me: myAcct, loaded } = useCurrentAccount();
-  const hidden = useMemo(() => (gd.ready ? (id) => !!gd.bond?.(id)?.noStack : noHidden), [gd.ready]);
-  return friend
-    ? html`<${FriendPanel} gd=${gd} hidden=${hidden} friend=${friend} onClose=${onClose} />`
-    : html`<${MyPanel} gd=${gd} hidden=${hidden} me=${me} acct=${myAcct} loaded=${loaded} onClose=${onClose} />`;
-}
-function MyPanel({ gd, hidden, me, acct, loaded, onClose }) {
-  const { s, cur } = useAchievements(hidden);
-  if (loaded && !acct) {
-    return html`<${PanelFrame} gd=${gd} onClose=${onClose} foot=${t('成就数据保存在账号上')} loading=${false} gate=${html`<${GuestGate} />`} />`;
-  }
-  // the account's list (its copy shows at once; the very first load waits for the service, a failure shows the copy)
-  const loading = !loaded || cur.source !== 'account' || (!cur.ready && !cur.failed && !cur.records.length);
-  const foot = cur.local ? t('本机记录 · 保存在这台设备的浏览器里 · 每局结束后更新') : cur.failed ? t('账号服务暂时连不上 · 显示上次同步的数据') : t('账号数据 · 每局结束后更新');
-  return html`<${PanelFrame} gd=${gd} s=${s} onClose=${onClose} foot=${foot} loading=${loading}
-    plate=${html`<${Plate} me=${me} acct=${acct} s=${s} likes=${cur.likes} />`} extra=${html`<${ImportBar} cur=${cur} />`} />`;
-}
-function FriendPanel({ gd, hidden, friend, onClose }) {
-  const { s, got } = useFriendAchievements(friend, hidden);
-  const acct = got?.owner || friend;
-  return html`<${PanelFrame} gd=${gd} s=${s} onClose=${onClose} foot=${got?.error || t('好友的账号数据')} loading=${!got}
-    plate=${html`<${Plate} me=${null} acct=${acct} s=${s} likes=${got?.likes || null} />`} extra=${null} />`;
-}
-
-/** The diamond loader stays at least this long, so a panel read from the copy does not flash it. */
+/** The diamond loader stays at least this long, so a panel whose data is already in does not flash it. */
 const LOADER_MIN_MS = 260;
 
 /**
- * The dialog: the blurred lobby with the diamond loader until the data is in, then the panel fades in (the reference
- * clip's order). `gate`: a guest's login block in place of the counts.
+ * The 卫戍协议：盟约 panel (local data; Esc / ✕ / the backdrop close it): the blurred lobby with the diamond loader until
+ * the game data is in (names, icons), then the panel fades in (the reference clip's order).
  */
-function PanelFrame({ gd, s, onClose, foot, loading, plate, extra, gate = null }) {
+export function AchievementPanel({ me, onClose }) {
+  const gd = useGameData();
+  const card = useMyCard();
+  const records = useRecords();
+  const hidden = useMemo(() => (gd.ready ? (id) => !!gd.bond(id)?.noStack : noHidden), [gd.ready]);
+  const p = useMemo(() => progressOf(records), [records]);
+  const s = useMemo(() => achievementStats(records, { hiddenLayers: hidden }), [records, hidden]);
+  const list = useMemo(() => achievementsOf(p), [p]);
+  const cardList = useMemo(() => (gd.ready ? cardOperators(gd.list('chess')) : []), [gd.ready]);
+  const [picking, setPicking] = useState(null); // 'bg' | 'avatar'
   const [closing, setClosing] = useState(false);
   const [shown, setShown] = useState(false);
   const opened = useMemo(() => Date.now(), []);
-  const ready = gd.ready && !loading;
   const close = () => { if (closing) return; setClosing(true); setTimeout(onClose, 180); };
   useEffect(() => {
-    const onKey = (e) => { if (e.key === 'Escape') close(); };
+    const onKey = (e) => { if (e.key === 'Escape' && !picking) close(); };
     addEventListener('keydown', onKey);
-    // the lobby chat (z 180, ui/communityChat.js) steps aside while a hub dialog is open
+    return () => removeEventListener('keydown', onKey);
+  }, [picking, closing]);
+  useEffect(() => {
+    // the lobby chat steps aside while a hub dialog is open (as for the lobby's other dialogs)
     document.body.classList.add('hub-dialog-open');
-    return () => { removeEventListener('keydown', onKey); document.body.classList.remove('hub-dialog-open'); };
+    return () => document.body.classList.remove('hub-dialog-open');
   }, []);
   useEffect(() => {
-    if (!ready || shown) return undefined;
+    if (!gd.ready || shown) return undefined;
     const id = setTimeout(() => setShown(true), Math.max(0, LOADER_MIN_MS - (Date.now() - opened)));
     return () => clearTimeout(id);
-  }, [ready, shown]);
+  }, [gd.ready, shown]);
+  const done = list.filter((a) => a.done).length;
+  const icons = Object.fromEntries(ACHIEVEMENT_GROUPS.map(([g, , icon]) => [g, icon]));
   return html`<div class=${cx('ach', closing && 'is-closing')} role="presentation" onMouseDown=${(e) => { if (e.target === e.currentTarget) close(); }}>
     ${!shown ? html`<span class="ach__loader" role="status" aria-label=${t('读取中')}><i></i><i></i><b></b></span>` : html`
     <div class="ach__box" role="dialog" aria-modal="true" aria-label=${t('成就统计')}>
@@ -427,22 +455,36 @@ function PanelFrame({ gd, s, onClose, foot, loading, plate, extra, gate = null }
         </span>
       </header>
       <div class="ach__body">
-        ${gate || html`
-          ${extra}
-          <section class="ach-top-area">
-            <div class="ach-top-area__left">${plate}<${ModeTable} modes=${s.modes} /></div>
-            <${TitleHex} titles=${s.titles} gd=${gd} />
-          </section>
-          <${SectionBar} title=${t('卫戍成就')} micro="ACHIEVEMENTS" />
-          <${BestRecord} best=${s.best} gd=${gd} />
-          <${Maxima} maxima=${s.maxima} />
-          <${SectionBar} title=${t('盟约纪录')} micro="BONDS" />
-          <${BondRecord} topBonds=${s.topBonds} gd=${gd} />
-          <${SectionBar} title=${t('策略纪录')} micro="STRATEGIES" />
-          <${BandRecord} topBands=${s.topBands} marked=${s.markedBands} gd=${gd} />`}
+        <section class="ach-top-area">
+          <div class="ach-top-area__left">
+            <${Plate} me=${me} card=${card} s=${s} p=${p} done=${done} total=${list.length} gd=${gd}
+              onAvatar=${() => cardList.length && setPicking('avatar')} onBg=${() => setPicking('bg')} />
+            <${ModeTable} modes=${s.modes} />
+          </div>
+          <${TitleHex} titles=${s.titles} gd=${gd} />
+        </section>
+
+        <${SectionBar} title=${t('成就')} micro="ACHIEVEMENTS" />
+        ${ACHIEVEMENT_GROUPS.map(([g, label]) => html`<div key=${g} class="ach-list">
+          <p class="ach-sub">${t(label)}</p>
+          <div class="ach-marks ach-marks--list">${list.filter((a) => a.group === g).map((a) => html`<${Mark} key=${a.id} a=${a} icon=${icons[g]} />`)}</div>
+        </div>`)}
+
+        <${SectionBar} title=${t('卫戍成就')} micro="RECORDS" />
+        <${BestRecord} best=${s.best} gd=${gd} />
+        <${Maxima} maxima=${s.maxima} />
+        <${SectionBar} title=${t('盟约纪录')} micro="BONDS" />
+        <${BondRecord} topBonds=${s.topBonds} gd=${gd} />
+        <${SectionBar} title=${t('策略纪录')} micro="STRATEGIES" />
+        <${BandRecord} topBands=${s.topBands} marked=${s.markedBands} gd=${gd} />
+        <p class="ach-local"><${Icon} name="info" />${t('成就统计只读取本机的统计数据，不会上传；换浏览器或清除数据后会重新开始，可在「统计数据」里导出、导入。')}
+          ${t('战果纪录与盟约纪录只统计最近 {n} 局的详细记录。', { n: FULL_KEEP })}</p>
       </div>
       <button type="button" class="ach__close" onClick=${close} aria-label=${t('关闭')}><${Icon} name="close" /></button>
-      <span class="ach__foot">${foot}</span>
+      <span class="ach__foot">${t('本机记录 · 保存在这台设备的浏览器里 · 每局结束后更新')}</span>
     </div>`}
+    ${picking === 'bg' ? html`<${NameCardPicker} current=${card.bg} onPick=${setCardBackground} onClose=${() => setPicking(null)} />` : null}
+    ${picking === 'avatar' ? html`<${AvatarPicker} current=${card.avatar} list=${cardList} m=${gd.m} onPick=${(id) => { setCardAvatar(id); setPicking(null); }}
+      onClose=${() => setPicking(null)} />` : null}
   </div>`;
 }

@@ -34,6 +34,7 @@ import { PLAYER_CAPACITY_VERSION } from '../../shared/playerCapacity.js';
 import { validateC2S, normalizeServerLoad, normalizeLoadDetails } from '../../shared/protocol.js';
 import { normalizeClusterLoad } from '../../shared/cluster-load.js';
 import { N_ } from '../../shared/i18n.js';
+import { ownerKey } from './ownerKey.js';
 
 export const REQUEST_TIMEOUT_MS = 8000;
 export const HELLO_TIMEOUT_MS = 8000;
@@ -67,6 +68,9 @@ const QUIET_SWAP_MIN_AGE_MS = 5000;
  * @param {string} [msg] server-provided message (fallback)
  * @returns {string}
  */
+/** The rejection of a nickname reserved for the server's owner (NAME_REJECTED, detail 'reserved'). */
+export const NAME_RESERVED_TEXT = N_('该代号为服主保留，请换一个昵称。');
+
 export function errorText(code, msg) {
   return ERR_TEXT[code] || CLIENT_ERR_TEXT[code] || (typeof msg === 'string' && msg) || String(code || N_('未知错误'));
 }
@@ -76,7 +80,8 @@ export class NetError extends Error {
   /** @param {string} code @param {string} [msg] server text @param {string} [detail] server developer detail */
   constructor(code, msg, detail) {
     const versionMismatch = typeof detail === 'string' && /version/i.test(detail);
-    super(versionMismatch ? CLIENT_ERR_TEXT.VERSION : errorText(code, msg));
+    // a nickname the server keeps for its owner (server/ownerFile.js): NAME_REJECTED with detail 'reserved'
+    super(versionMismatch ? CLIENT_ERR_TEXT.VERSION : code === 'NAME_REJECTED' && detail === 'reserved' ? NAME_RESERVED_TEXT : errorText(code, msg));
     this.name = 'NetError';
     this.code = String(code || 'INTERNAL');
     this.serverMsg = msg ?? null;
@@ -409,6 +414,9 @@ export class Net {
       if (claim?.noReplace) msg.noReplace = true;
       if (Number.isFinite(claim?.claimAt)) msg.claimAt = claim.claimAt;
     }
+    // the 服主 key (ownerKey.js): the server marks the owner's seats; an older server ignores the field
+    const owner = ownerKey();
+    if (owner) msg.owner = owner;
     this._helloToken = token;
     this._helloRid = rid;
     this._helloSentName = this.name;

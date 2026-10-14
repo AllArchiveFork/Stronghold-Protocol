@@ -114,6 +114,19 @@
 //     time → room.closed {kicked} to it. A spectator in a LOBBY room may take a free player seat with room.join of the same
 //     code; a player never switches to spectating in place (ALREADY). Disconnect / grace / reconnect / expiry work as for
 //     a player seat (the seat is kept and given back on resume).
+//   * Display card (fork lobby, 2026-10-14): room.card { charId?, avatar?, bg?, trophies? } — a portrait operator and an
+//     avatar operator (real operators of the game data: cardCharIds, else BAD_MSG), a namecard background id (format
+//     only) and a self-reported trophy
+//     count (cosmetic, never used by a match) — is stored on the session (it follows the player into every room; a field
+//     the message leaves out keeps its value, '' / 0 clears it) and copied to the player's seat; room.state shows it as
+//     seats[].card on human seats that have one (spectators: none). A change is broadcast to the room, at most
+//     CARD_CHANGES per CARD_WINDOW_MS per session (RATE beyond); the card never enters a match.
+//   * Owner mark (服主, server/ownerFile.js): a session whose latest hello carried the owner key (net.js session.owner) is
+//     shown as `owner: true` on its room.state seat or spectator entry; a hello updates it like the name.
+//   * Maintenance (the limits file's `maintenance`, server/onlineLimit.js): while it is on, room.create, room.start and
+//     queue.join answer MAINTENANCE and the matchmaker forms no offer; switching it on ends matchmaking (tickets go idle
+//     with reason 'maintenance') and every switch reaches every online session as presence.state at once
+//     (`maintenance: true` while on). Running matches, rooms, room.join and room.spectate go on; nobody is removed.
 
 import { randomBytes, randomInt } from 'node:crypto';
 import { ERR, MAX_SEATS, MAX_SPECTATORS, ROOM_CODE_LEN, MATCHMAKING_VERSION, modeIdFor } from '../shared/constants.js';
@@ -121,7 +134,7 @@ import { checkLoadout, checkLoadoutOps, cultivationCharIds, checkNotOwned, check
 import { isSkinChoices } from '../shared/skins.js';
 import { EXPERIMENTAL_DEFAULTS, experimentalOptions, isExperimental, sameExperimental } from '../shared/experimental.js';
 import { MAX_PLAYER_CAPACITY, PLAYER_CAPACITY_VERSION, roomCapacity } from '../shared/playerCapacity.js';
-import { encode, isDroppable, isErrCode, sendEncodedMany, sendRaw, sendSession } from './net.js';
+import { encode, isDroppable, isErrCode, sendEncodedMany, sendRaw, sendSession, TokenBucket } from './net.js';
 import { isCompressibleType } from './wsCompression.js';
 import { getData as defaultGetData, lookup } from './data.js';
 import { Match as DefaultMatch, AFK_REMOVE_ROUNDS } from './match/Match.js';
@@ -159,6 +172,10 @@ export const PRESENCE_SLICE = 200;
  */
 export const PRESENCE_IN_MATCH_MS = 10_000;
 
+/** room.card: at most this many card changes per session in CARD_WINDOW_MS (a token bucket; RATE beyond). */
+export const CARD_CHANGES = 6;
+export const CARD_WINDOW_MS = 10_000;
+
 /** Official `singleReconnectTime` (s) when the data lacks it (constData, research 01 §1). */
 export const SOLO_RECONNECT_FALLBACK_SEC = 86_400;
 
@@ -181,8 +198,10 @@ const noopLog = { info() {}, warn() {}, error() {}, debug() {} };
  *             connected: boolean, left: boolean, loadout?: Record<string, { skill: number, module: string|null }> | null,
  *             ops?: Readonly<Record<string, { potential: number, cultivate: number }>> | null,
  *             notOwned?: readonly string[] | null, diy?: Readonly<Record<string, DiyLoadout>> | null,
- *             skins?: Readonly<Record<string, string>>, band?: string | null }} Seat
- *   (`band`: AI seats only — the strategy room.setBotBand designated, null = the AI picks by itself)
+ *             skins?: Readonly<Record<string, string>>, band?: string | null, card?: Card | null, owner?: boolean }} Seat
+ *   (`band`: AI seats only — the strategy room.setBotBand designated, null = the AI picks by itself; `card` / `owner`:
+ *   human seats only, display only — room.card and the 服主 mark)
+ * @typedef {Readonly<{ charId?: string, avatar?: string, bg?: string, trophies?: number }>} Card
  * @typedef {{ charId: string, skillIndex: number, uniEquipId: string|null }} DiyLoadout
  */
 
@@ -208,6 +227,22 @@ function opsCharIds(data) {
   if (!ids) { ids = cultivationCharIds(data.chess, data.backups); OPS_IDS.set(data, ids); }
   return ids;
 }
+
+/** The operators a display card may show (room.card charId / avatar): every chess record's charId and the 自选 owned pool. */
+const CARD_IDS = new WeakMap();
+function cardCharIds(data) {
+  if (!data || typeof data !== 'object') return new Set();
+  let ids = CARD_IDS.get(data);
+  if (!ids) {
+    ids = new Set();
+    for (const c of Object.values(data.chess && typeof data.chess === 'object' ? data.chess : {})) if (typeof c?.charId === 'string') ids.add(c.charId);
+    for (const id of Array.isArray(data.backups?.diy?.ownedPool) ? data.backups.diy.ownedPool : []) if (typeof id === 'string') ids.add(id);
+    CARD_IDS.set(data, ids);
+  }
+  return ids;
+}
+const sameCard = (a, b) => (a?.charId ?? '') === (b?.charId ?? '') && (a?.avatar ?? '') === (b?.avatar ?? '') && (a?.bg ?? '') === (b?.bg ?? '')
+  && (a?.trophies ?? 0) === (b?.trophies ?? 0);
 
 /**
  * The GameData a room's next match builds (Match: mode, difficulty and the expanded-room 鸭爵 switch), per data object —
@@ -255,7 +290,7 @@ export class Room {
     this.experimental = experimentalOptions(experimental);
     // Solo keeps its legacy four-slot DTO, but admits only seat zero.
     this.seats = new Array(mode === 'solo' ? MAX_SEATS : this.capacity).fill(null);
-    /** @type {{ playerId: string, name: string, connected: boolean }[]} observers; MAX_SPECTATORS > 0 opts into a cap */
+    /** @type {{ playerId: string, name: string, connected: boolean, owner?: boolean }[]} observers; MAX_SPECTATORS > 0 opts into a cap */
     this.spectators = [];
     /** @type {any} running Match instance */
     this.match = null;
@@ -326,9 +361,11 @@ export class Room {
       seats: this.seats.map((s) => (s
         ? { seat: s.seat, playerId: s.playerId, name: s.name, isBot: s.isBot, ready: s.ready, connected: s.connected && !s.left, revivalVote: s.isBot ? null : s.revivalVote ?? null,
           // an AI seat's designated strategy (room.setBotBand; null = it picks by itself)
-          ...(s.isBot ? { band: s.band ?? null } : {}) }
+          ...(s.isBot ? { band: s.band ?? null } : {}),
+          // display only: the player's room.card and the 服主 mark (absent when none)
+          ...(!s.isBot && s.card ? { card: s.card } : {}), ...(!s.isBot && s.owner ? { owner: true } : {}) }
         : null)),
-      spectators: this.spectators.map((s) => ({ playerId: s.playerId, name: s.name, connected: s.connected })),
+      spectators: this.spectators.map((s) => ({ playerId: s.playerId, name: s.name, connected: s.connected, ...(s.owner ? { owner: true } : {}) })),
     };
   }
 }
@@ -378,16 +415,21 @@ export class Lobby {
     this.presenceSeq = 0;
     this.presenceTimer = null;
     this.presencePublishedAt = -Infinity;
-    /** @type {{ frame: string | null, sessions: import('./net.js').Session[], index: number, at: number, immediate: any } | null} unfinished fan-out */
+    /** @type {{ frame: string | null, sessions: import('./net.js').Session[], index: number, at: number, immediate: any, force: boolean } | null} unfinished fan-out */
     this.presenceBatch = null;
     /** diagnostics only (server/phaseMetrics.js) */
     this.metrics = metrics;
+    /** @type {WeakMap<import('./net.js').Session, TokenBucket>} room.card change budget per session */
+    this.cardBuckets = new WeakMap();
     this.queue = new Matchmaking({
       now, options: this.opts.matchmaking || {}, send: sendSession, metrics,
       available: (s, entry) => this.matchmakingAvailable(s, entry),
       members: (s, difficulty, party) => this.matchmakingMembers(s, difficulty, party),
       allocate: (sessions, difficulty) => this.allocateMatchmadeRoom(sessions, difficulty),
+      paused: () => this.maintenance(),
     });
+    /** stops following the limits file's maintenance switch (server/onlineLimit.js onMaintenance) */
+    this.unwatchMaintenance = typeof limits?.onMaintenance === 'function' ? limits.onMaintenance((on) => this.maintenanceChanged(on)) : null;
   }
 
   /** @param {string} code @returns {Room | null} */
@@ -453,7 +495,26 @@ export class Lobby {
     return room?.capacity > MAX_SEATS && message.playerCapacityVersion !== PLAYER_CAPACITY_VERSION ? fail(ERR.BAD_MSG) : OK;
   }
 
-  presenceState() { return { t: 'presence.state', online: this.online.size, seq: this.presenceSeq, serverNow: this.now() }; }
+  presenceState() {
+    return { t: 'presence.state', online: this.online.size, seq: this.presenceSeq, serverNow: this.now(), ...(this.maintenance() ? { maintenance: true } : {}) };
+  }
+
+  /** The limits file's maintenance switch is on (server/onlineLimit.js): no new room, match start or matchmaking. */
+  maintenance() {
+    try { return this.limits?.maintenance?.() === true; } catch { return false; }
+  }
+
+  /**
+   * The maintenance switch flipped (header): switching it on ends matchmaking — queued and offered tickets go idle with
+   * reason 'maintenance' (their parties' rooms stay) —, and either way every online session gets a presence.state now,
+   * one in a running match too (not held back to PRESENCE_IN_MATCH_MS).
+   * @param {boolean} on
+   */
+  maintenanceChanged(on) {
+    if (on) this.queue.clear('maintenance');
+    this.presenceSeq++;
+    this.publishPresence(true);
+  }
 
   /** Connected sessions — the number the online cap (server/onlineLimit.js, Network.serverFull) compares. */
   onlineCount() { return this.online.size; }
@@ -469,14 +530,16 @@ export class Lobby {
     this.presenceTimer.unref?.();
   }
 
-  publishPresence() {
+  /** @param {boolean} [force] reach sessions in a running match too (presenceDue does not hold them back) */
+  publishPresence(force = false) {
     if (this.presenceTimer != null) clearTimeout(this.presenceTimer);
     this.presenceTimer = null;
     this.presencePublishedAt = this.now();
-    // A newer publication replaces an unfinished fan-out: everyone it had not reached gets the newer frame.
+    // A newer publication replaces an unfinished fan-out: everyone it had not reached gets the newer frame (forced
+    // when the replaced one was).
     if (this.presenceBatch?.immediate) clearImmediate(this.presenceBatch.immediate);
     this.presenceBatch = { frame: encode(this.presenceState()), sessions: [...this.online.values()], index: 0,
-      at: this.presencePublishedAt, immediate: null };
+      at: this.presencePublishedAt, immediate: null, force: force || !!this.presenceBatch?.force };
     this.presenceSlice(); // the first slice synchronously (a small lobby is reached at once, as before)
   }
 
@@ -488,7 +551,7 @@ export class Lobby {
     const t0 = this.metrics.start(), end = Math.min(batch.sessions.length, batch.index + PRESENCE_SLICE), sockets = [];
     for (; batch.index < end; batch.index++) {
       const session = batch.sessions[batch.index];
-      if (!this.isOnline(session) || !this.presenceDue(session, batch.at)) continue;
+      if (!this.isOnline(session) || (!batch.force && !this.presenceDue(session, batch.at))) continue;
       session.presenceAt = batch.at;
       sockets.push(session.ws);
     }
@@ -541,6 +604,7 @@ export class Lobby {
     let changed = !seat.connected;
     seat.connected = true;
     if (!room.match && seat.name !== session.name) { seat.name = session.name; changed = true; }
+    if (!!seat.owner !== session.owner) { seat.owner = session.owner; changed = true; } // the 服主 mark (display only)
     if (!room.hostId) { this.migrateHost(room); changed = true; }
     if (changed) this.broadcastState(room);
     else this.sendState(room, session);
@@ -579,6 +643,7 @@ export class Lobby {
       case 'room.ownership': return this.ownership(session, msg);
       case 'room.diy': return this.diy(session, msg);
       case 'room.skins': return this.skins(session, msg);
+      case 'room.card': return this.setCard(session, msg);
       case 'room.spectate': return this.spectate(session, msg);
       case 'room.removeSpectator': return this.removeSpectator(session, msg);
       default:
@@ -658,6 +723,8 @@ export class Lobby {
    * @param {string} [reason]
    */
   shutdown(reason = 'shutdown') {
+    this.unwatchMaintenance?.();
+    this.unwatchMaintenance = null;
     this.queue.close();
     if (this.presenceTimer != null) clearTimeout(this.presenceTimer);
     this.presenceTimer = null;
@@ -679,6 +746,7 @@ export class Lobby {
   create(session, { mode, difficulty, experimental = EXPERIMENTAL_DEFAULTS }) {
     if (!isExperimental(experimental)) return fail(ERR.BAD_MSG);
     if (roomCapacity(mode, experimental) > MAX_SEATS && !this.supportsCapacity(session)) return fail(ERR.BAD_MSG);
+    if (this.maintenance()) return fail(ERR.MAINTENANCE);
     if (this.queue.has(session)) return fail(ERR.QUEUED);
     const cur = this.roomOf(session);
     if (cur && cur.match) return fail(ERR.ROOM_STARTED, 'leave your running match first');
@@ -773,7 +841,7 @@ export class Lobby {
     if (room.mode === 'solo') return fail(ERR.ROOM_FULL, 'solo room');
     if (MAX_SPECTATORS > 0 && room.spectators.length >= MAX_SPECTATORS) return fail(ERR.ROOM_FULL, 'no free spectator seat');
     if (cur) this.removeMember(cur, session.playerId);
-    room.spectators.push({ playerId: session.playerId, name: session.name, connected: session.connected });
+    room.spectators.push({ playerId: session.playerId, name: session.name, connected: session.connected, owner: session.owner === true });
     session.roomCode = room.code;
     session.notice = null;
     session.pendingResult = null;
@@ -976,6 +1044,7 @@ export class Lobby {
     if (!room) return fail(ERR.NOT_IN_ROOM);
     if (room.hostId !== session.playerId) return fail(ERR.NOT_HOST);
     if (room.match) return fail(ERR.ROOM_STARTED);
+    if (this.maintenance()) return fail(ERR.MAINTENANCE);
     if (this.roomQueued(room)) return fail(ERR.QUEUED);
     if (!room.validCapacity() || !this.capacityClients(room)) return fail(ERR.BAD_MSG);
     const humans = room.activeHumans();
@@ -1138,8 +1207,9 @@ export class Lobby {
   }
 
   /**
-   * /healthz `limits`: the caps in force, the largest use any one network makes of each per-network cap, and the
-   * refusals since start (limitRefusal; matchmaking allocation refusals are not counted).
+   * /healthz `limits`: the caps in force, the maintenance switch (0 / 1, server/onlineLimit.js), the largest use any one
+   * network makes of each per-network cap, and the refusals since start (limitRefusal; matchmaking allocation refusals
+   * are not counted).
    */
   limitStats() {
     const rooms = new Map(), matches = new Map(), bots = new Map();
@@ -1153,7 +1223,7 @@ export class Lobby {
     const largest = (map) => { let m = 0; for (const n of map.values()) if (n > m) m = n; return m; };
     const caps = {};
     for (const name of Object.keys(this.limitRefusals)) caps[name] = this.cap(name);
-    return { ...caps, perAddrPeak: { rooms: largest(rooms), matches: largest(matches), bots: largest(bots) },
+    return { ...caps, maintenance: this.maintenance() ? 1 : 0, perAddrPeak: { rooms: largest(rooms), matches: largest(matches), bots: largest(bots) },
       refused: { ...this.limitRefusals } };
   }
 
@@ -1284,6 +1354,38 @@ export class Lobby {
     }
     if (r && typeof r === 'object' && r.error) {
       return fail(isErrCode(r.error) ? r.error : ERR.INTERNAL, typeof r.detail === 'string' ? r.detail : undefined);
+    }
+    return OK;
+  }
+
+  /**
+   * room.card (header): merge the message into the session's display card — a field left out keeps its value, '' / 0
+   * clears it; an unknown operator is BAD_MSG — and copy it to the player's seat (never a spectator's), broadcasting the
+   * room state when it changed. An unchanged card costs nothing; a change beyond CARD_CHANGES per CARD_WINDOW_MS is RATE.
+   */
+  setCard(session, { charId, avatar, bg, trophies }) {
+    const known = cardCharIds(this.safeData());
+    if ((charId && !known.has(charId)) || (avatar && !known.has(avatar))) return fail(ERR.BAD_MSG, 'unknown operator');
+    const prev = session.card || {};
+    const next = {};
+    const id = charId === undefined ? prev.charId : charId, back = bg === undefined ? prev.bg : bg;
+    const face = avatar === undefined ? prev.avatar : avatar;
+    const count = trophies === undefined ? prev.trophies : trophies;
+    if (id) next.charId = id;
+    if (face) next.avatar = face;
+    if (back) next.bg = back;
+    if (count > 0) next.trophies = count;
+    const card = Object.keys(next).length ? Object.freeze(next) : null;
+    if (sameCard(card, session.card)) return OK;
+    let bucket = this.cardBuckets.get(session);
+    if (!bucket) { bucket = new TokenBucket(CARD_CHANGES * 1000 / CARD_WINDOW_MS, CARD_CHANGES, this.now()); this.cardBuckets.set(session, bucket); }
+    if (!bucket.take(this.now())) return fail(ERR.RATE, 'card changed too often');
+    session.card = card;
+    const room = this.roomOf(session);
+    const seat = room ? room.seatOf(session.playerId) : null;
+    if (seat && !sameCard(seat.card, card)) {
+      seat.card = card;
+      this.broadcastState(room);
     }
     return OK;
   }
@@ -1633,6 +1735,8 @@ export class Lobby {
       notOwned: session.notOwned || null,
       diy: session.diy || null,
       skins: Object.freeze({ ...(session.skins || {}) }),
+      card: session.card || null,
+      owner: session.owner === true,
     };
   }
 

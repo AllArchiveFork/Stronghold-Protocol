@@ -640,203 +640,49 @@
 .lo-voice > small { flex-basis: 100%; color: var(--text-dim); font-size: calc(.15 * var(--t)); }
 .lo-voice .lo-select { min-width: 1.6rem; max-width: 100%; }
 
-/* Server custom skin picker */
-
-
-/* ---- 皮肤选择 (docs/SKINS.md, ui/skinPicker.js) --------------------------------------------------------------
-   单行垂直列表：每款皮肤独占一行，左侧头像、中间完整名称与系列、右侧状态标签。兼容旧机型 (Chromium 80-84)。 */
-.lo-skins {
-  display: flex;
-  flex-direction: column;
-  gap: max(.08rem, 6px);
-  width: 100%;
-}
-
+/* ---- display-only operator appearances -------------------------------------------------------------------------- */
+.lo-skins { display: grid; grid-template-columns: repeat(auto-fit, minmax(max(.92rem, 92px), 1fr)); gap: .1rem; }
 .lo-skin {
-  position: relative;
-  width: 100%;
-  box-sizing: border-box;
-  display: flex;
-  align-items: center;
-  gap: max(.12rem, 8px);
-  padding: max(.06rem, 5px) max(.12rem, 10px) max(.06rem, 5px) max(.06rem, 5px);
-  font: inherit;
-  color: var(--text-md);
-  text-align: left;
-  cursor: pointer;
-  background: rgba(255, 255, 255, .03);
-  border: 1px solid var(--line);
-  border-radius: 2px;
-  transition: background var(--t-fast), border-color var(--t-fast);
-  touch-action: manipulation;
+  position: relative; display: flex; flex-direction: column; gap: .04rem; min-width: 0; padding: .1rem;
+  border: 1px solid var(--line); background: var(--bg-1); color: var(--text-hi); text-align: left;
+  cursor: pointer; transition: border-color 150ms, transform 150ms;
 }
+.lo-skin:hover:not(:disabled) { border-color: var(--mint-500); }
+.lo-skin:active:not(:disabled) { transform: scale(.98); }
+.lo-skin:focus-visible { outline: 2px solid var(--mint-400); outline-offset: 2px; }
+.lo-skin.is-on { border-color: var(--mint-400); background: var(--bg-2); }
+.lo-skin:disabled { opacity: .5; cursor: not-allowed; }
+.lo-skin__art { display: flex; align-items: center; justify-content: center; height: max(1.24rem, 110px); overflow: hidden; }
+.lo-skin__art img { max-width: 100%; width: auto; height: 100%; object-fit: contain; }
+.lo-skin__name { font-size: max(.16rem, 12px); font-weight: 700; overflow-wrap: anywhere; }
+.lo-skin__brand { font-size: max(.12rem, 10px); color: var(--text-lo); overflow-wrap: anywhere; }
+.lo-skin__mark { display: flex; align-items: center; gap: .03rem; color: var(--mint-400); font-size: max(.12rem, 10px); }
+.lo-skin__mark .icon { width: max(.12rem, 12px); height: max(.12rem, 12px); }
+.lo-skin__note { color: var(--text-lo); font-size: max(.13rem, 11px); line-height: 1.6; margin: .12rem 0 0; }
+.lo-skin-sync { color: var(--text-lo); font-size: max(.12rem, 10px); }
+.lo-skin-preview { display: flex; align-items: center; justify-content: center; }
+.lo-skin-preview img { max-width: 100%; max-height: 65vh; max-height: 65dvh; object-fit: contain; }
+.lo-skin__dynamic { font-size: max(.12rem, 10px); color: var(--mint-400); }
+.lo-dynamic__stage { position: relative; width: 100%; height: min(60vh, 560px); height: min(60dvh, 560px); min-height: 200px; }
+.lo-dynamic__canvas { position: absolute; inset: 0; }
+.lo-dynamic__canvas canvas { display: block; max-width: 100%; }
+.lo-dynamic__fallback { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.lo-dynamic__controls { display: flex; flex-wrap: wrap; align-items: center; gap: .1rem; margin-top: .12rem; font-size: max(.14rem, 12px); color: var(--text-lo); }
+.lo-dynamic__controls select { max-width: 100%; background: var(--bg-1); color: var(--text-hi); border: 1px solid var(--line); min-height: 36px; }
+.lo-dynamic-switch { display: flex; justify-content: flex-end; margin-bottom: .08rem; }
+.lo-skin__tools { display: flex; flex-wrap: wrap; gap: .08rem; margin-top: .08rem; }
+.lo-skin__error { color: var(--red-400, #ef8f8f); font-size: max(.16rem, 12px); }
+@media (pointer: coarse) { .lo-skin__tools .btn { min-height: 44px; } }
+@media (prefers-reduced-motion: reduce) { .lo-skin { transition: none; } }
 
-.lo-skin:hover:not(:disabled) {
-  border-color: var(--line-3);
-  background: rgba(255, 255, 255, .06);
-}
-
-.lo-skin.is-on {
-  color: var(--text-hi);
-  background: linear-gradient(90deg, rgba(78, 216, 175, .16), rgba(78, 216, 175, .03) 80%);
-  border-color: rgba(78, 216, 175, .75);
-}
-
-.lo-skin:disabled {
-  cursor: default;
-  opacity: .45;
-}
-
-.lo-skin__art {
-  flex: 0 0 auto;
-  width: max(.48rem, 36px);
-  height: max(.48rem, 36px);
-  display: grid;
-  place-items: center;
-  overflow: hidden;
-  background: rgba(0, 0, 0, .4);
-  border: 1px solid var(--line);
-  border-radius: 2px;
-}
-
-.lo-skin__art img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  object-position: center top;
-}
-
-.lo-skin__art-fallback.is-hidden {
-  display: none !important;
-}
-
-.lo-skin__art--none {
-  width: 100%;
-  height: 100%;
-  background: repeating-linear-gradient(45deg, rgba(255, 255, 255, .06) 0 3px, transparent 3px 7px);
-}
-
-.lo-skin__text {
-  flex: 1 1 auto;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: max(.02rem, 1px);
-}
-
-.lo-skin__name {
-  font-size: max(.17rem, 12px);
-  font-weight: 700;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  color: var(--text-hi);
-}
-
-.lo-skin__group {
-  font-family: var(--font-num);
-  font-size: max(.12rem, 9px);
-  letter-spacing: .06em;
-  color: var(--text-dim);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.lo-skin__badge {
-  flex: 0 0 auto;
-  font-size: max(.12rem, 9px);
-  font-weight: 700;
-  letter-spacing: .04em;
-  padding: max(.02rem, 2px) max(.06rem, 5px);
-  border-radius: 2px;
-  background: rgba(78, 216, 175, .15);
-  color: var(--mint-400);
-  border: 1px solid rgba(78, 216, 175, .4);
-}
-
-
-/* ---- 自选专属皮肤选择网格 (嵌入 DiyPicker) ------------------------------------------------------------- */
-.diy-skin-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(max(1.8rem, 120px), 1fr));
-  gap: max(.06rem, 5px);
-  margin-top: .04rem;
-}
-
-.diy-skin-card {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: max(.08rem, 6px);
-  padding: max(.05rem, 4px) max(.08rem, 6px);
-  font: inherit;
-  color: var(--text-md);
-  text-align: left;
-  cursor: pointer;
-  background: rgba(255, 255, 255, .03);
-  border: 1px solid var(--line);
-  border-radius: 2px;
-  transition: background var(--t-fast), border-color var(--t-fast);
-  touch-action: manipulation;
-}
-
-.diy-skin-card:hover { border-color: var(--line-3); background: rgba(255, 255, 255, .06); }
-
-.diy-skin-card.is-on {
-  color: var(--text-hi);
-  background: linear-gradient(90deg, rgba(78, 216, 175, .2), rgba(78, 216, 175, .06));
-  border-color: var(--mint-400);
-  box-shadow: 0 0 8px rgba(78, 216, 175, .35);
-}
-
-.diy-skin-card__img {
-  flex: 0 0 auto;
-  width: max(.36rem, 28px);
-  height: max(.36rem, 28px);
-  border-radius: 2px;
-  background: #0a0d0c;
-  border: 1px solid var(--line-2);
-  object-fit: cover;
-  object-position: center top;
-}
-
-.diy-skin-card__img--none {
-  background: repeating-linear-gradient(45deg, rgba(255, 255, 255, .06) 0 3px, transparent 3px 7px);
-}
-
-.diy-skin-card__info {
-  flex: 1 1 auto;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-
-.diy-skin-card__name {
-  font-size: max(.14rem, 11px);
-  font-weight: 700;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  color: var(--text-hi);
-}
-
-.diy-skin-card__tag {
-  font-family: var(--font-num);
-  font-size: max(.11rem, 9px);
-  letter-spacing: .04em;
-  color: var(--text-dim);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.diy-skin-card.is-on .diy-skin-card__tag {
-  color: var(--mint-400);
-  font-weight: 700;
+/* One complete preset needs readable copy and controls even on a short touch viewport. */
+.lo-preset-io { width: 560px; max-width: calc(100vw - 32px); max-height: calc(100vh - 32px); max-height: calc(100dvh - 32px); overflow-y: auto; }
+.lo-preset-io .modal__actions { flex-wrap: wrap; gap: 8px; }
+.lo-preset-io .modal__actions .btn { min-height: 44px; padding-inline: 14px; font-size: 14px; }
+.lo-preset-io .lo-io__text { height: 160px; min-height: 120px; }
+.sp-coarse .lo [data-preset-action] { min-height: 44px; font-size: 14px; }
+@media (max-height: 520px) {
+  .lo-preset-io .lo-io__text { height: 120px; }
 }
 /* DIY uses the same aligned rows and detail sections as operator loadout. */
 .diy-pick__list .diy-opt { min-height: 64px; padding: .1rem; }

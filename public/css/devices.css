@@ -194,13 +194,9 @@ html:not(.sp-in-match) .toast-host { margin-top: var(--sa-t); }
 /* ---- 6. 异形屏适配 (设置, ui/screenFit.js) ------------------------------------------------------------------------
    The player's own insets for a screen whose cutout / curved edge the browser does not report (or reports wrongly in
    fullscreen): .app-root becomes the inset box — every .screen is absolute inset 0, so it lands inside, and the board is
-   sized from its host — and the layout root 1rem is computed from that box (theme.css's rule with the insets taken
-   off). Only while <html data-fit> is set: with all four at 0 nothing here applies. The bands outside show the page
+   sized from its host — and the layout root 1rem is computed from that box (theme.css html[data-fit], the root rule
+   with the insets taken off). Only while <html data-fit> is set: with all four at 0 nothing here applies. The bands outside show the page
    background; fixed overlays (dialogs, toasts) still use the whole screen. */
-html[data-fit] {
-  font-size: clamp(40px, min(calc((100vw - var(--fit-l, 0px) - var(--fit-r, 0px)) / 19.2), calc((100vh - var(--fit-t, 0px) - var(--fit-b, 0px)) / 10.8)), 240px);
-  font-size: clamp(40px, min(calc((100vw - var(--fit-l, 0px) - var(--fit-r, 0px)) / 19.2), calc((100svh - var(--fit-t, 0px) - var(--fit-b, 0px)) / 10.8)), 240px);
-}
 /* the screens' own box (theme.css .app-root: fixed, inset 0) and the full-page panels fixed over the screens (统计,
    S.W.E.E.P., the protocol pages, 干员调配, 玩法说明, 成就统计) */
 html[data-fit] :is(.app-root, .st, .sw, .proto, .lo, .guide, .ach) {

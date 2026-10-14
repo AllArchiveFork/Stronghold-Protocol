@@ -24,6 +24,7 @@ import { CombatWorkerPool } from './match/combat/pool.js';
 import { createHealthMetrics, serverLoadState, publicLoadDetails } from './healthMetrics.js';
 import { resolveWsCompression } from './wsCompression.js';
 import { createOnlineLimit } from './onlineLimit.js';
+import { createOwnerFile } from './ownerFile.js';
 import { parseSnapshotHz } from './match/fields.js';
 
 export {
@@ -84,9 +85,12 @@ export async function startServer(opts = {}) {
   const startedAt = Date.now();
   // The online cap and the lobby's room / AI caps (server/onlineLimit.js): a JSON file re-read while the server runs; none = no cap.
   const onlineLimit = createOnlineLimit({ file: opts.onlineLimitFile ?? process.env.SP_ONLINE_LIMIT_FILE ?? null, log });
+  // The owner (服主) mark (server/ownerFile.js): the owner key's hash and reserved names, re-read while the server runs; none = off.
+  const ownerFile = createOwnerFile({ file: opts.ownerFile ?? process.env.SP_OWNER_FILE ?? null, log });
+  await ownerFile.refresh(); // the first read before any hello: reserved names hold from the start (never rejects)
   try {
     ({ registry, lobby, network } = createSessionStack({ ...opts, snapshotHz }, {
-      data, log, combatPool, trialPool, onlineLimit,
+      data, log, combatPool, trialPool, onlineLimit, ownerFile,
       getLoadState: () => serverLoadState(healthMetrics?.snapshot?.()),
       getLoadDetails: () => publicLoadDetails(healthMetrics?.snapshot?.()),
     }));
@@ -102,6 +106,7 @@ export async function startServer(opts = {}) {
     network?.close();
     lobby?.shutdown('boot-failed');
     onlineLimit.close();
+    ownerFile.close();
     assetIndex?.close();
     await closePools();
     throw e;
@@ -146,6 +151,7 @@ export async function startServer(opts = {}) {
     network.close();
     lobby.shutdown('boot-failed');
     onlineLimit.close();
+    ownerFile.close();
     assetIndex?.close();
     await closePools();
     throw e;
@@ -173,6 +179,7 @@ export async function startServer(opts = {}) {
       try { lobby.shutdown('shutdown'); } catch (e) { log.error('[shutdown] lobby', e); }
       network.close();
       onlineLimit.close();
+      ownerFile.close();
       assetIndex?.close();
       await closePools();
       await new Promise(resolve => {

@@ -174,7 +174,7 @@ function onWelcome(msg) {
     identity.saveName(name);
     try { localStorage.setItem('ark.callsign', name); } catch { /* storage may be unavailable */ }
   }
-  store.set({ me: { playerId: msg.playerId ?? null, name, token: typeof msg.token === 'string' ? msg.token : null } });
+  store.set({ me: { playerId: msg.playerId ?? null, name, token: typeof msg.token === 'string' ? msg.token : null, ...(msg.owner === true ? { owner: true } : {}) } });
   welcomeAt = Date.now();
   // A retained ticket is not a fresh population sample from this new socket.
   if (Object.hasOwn(prev.queue || {}, 'waitingCount')) store.set({ queue: { ...prev.queue, waitingCount: undefined } });
