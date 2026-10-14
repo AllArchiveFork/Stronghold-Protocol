@@ -219,7 +219,7 @@ async function main() {
 
   section('运行环境');
   const node = checkNode();
-  row(node.ok ? (node.recommended ? 'ok' : 'warn') : 'err', 'Node.js', `v${node.version}` + (node.ok ? (node.recommended ? '' : '（推荐 22 / 24 LTS）') : `（需要 ≥ ${MIN_NODE}：https://nodejs.org/zh-cn/download）`));
+  row(node.ok ? (node.recommended ? 'ok' : 'warn') : 'err', 'Node.js', `v${node.version}` + (node.ok ? (node.recommended ? '' : '（只支持 Node.js 24 LTS）') : `（只支持 Node.js ${MIN_NODE} LTS：https://nodejs.org/zh-cn/download）`));
   const npmV = tool(IS_WIN ? 'npm.cmd' : 'npm', ['--version']);
   row(npmV ? 'ok' : 'warn', 'npm', npmV ? `v${npmV}` : '未找到（安装 Node.js 时会自带）');
 

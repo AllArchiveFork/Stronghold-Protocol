@@ -15,7 +15,7 @@
 # Run:  docker run -d --name stronghold -p 3000:3000 --restart unless-stopped stronghold-protocol
 # Env:  PORT (3000), HOST (0.0.0.0), SP_COMBAT (client|server), SP_VERIFY (off|sample|all), TRUST_PROXY (auto|1|0), DEBUG
 
-ARG NODE_IMAGE=node:22-alpine
+ARG NODE_IMAGE=node:24-alpine
 
 # ---- 1. production dependencies (cached while package*.json are unchanged) -------------------------
 FROM ${NODE_IMAGE} AS deps

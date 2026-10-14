@@ -24,8 +24,8 @@ import { openBrowser as openInBrowser } from './open-browser.mjs';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const IS_WIN = process.platform === 'win32';
 
-if (Number(process.versions.node.split('.')[0]) < 22) {
-  console.error(`Node.js ${process.versions.node} 太旧，需要 22 或更高（22 / 24 LTS）：https://nodejs.org/zh-cn/download`);
+if (Number(process.versions.node.split('.')[0]) < 24) {
+  console.error(`Node.js ${process.versions.node} 太旧，只支持 Node.js 24（LTS）：https://nodejs.org/zh-cn/download`);
   process.exit(1);
 }
 

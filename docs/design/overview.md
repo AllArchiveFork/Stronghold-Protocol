@@ -25,7 +25,7 @@ Out of scope v1: matchmaking queue, training/tutorial, DIY (甄选) slots (the 4
 
 ## 1. Tech stack
 
-- **Node.js ≥ 22** (CI: 22 and 24), ESM (`"type": "module"`), single dependency `ws@8`. No bundler, no TypeScript. JSDoc types where helpful.
+- **Node.js 24** (the only supported version; CI: 24), ESM (`"type": "module"`), single dependency `ws@8`. No bundler, no TypeScript. JSDoc types where helpful.
 - **Server-authoritative simulation.** Clients send *intents*; the server validates, mutates state and pushes state/snapshots.
 - **Client:** static files, native ES modules. Vendored libs in `public/vendor/`: `pixi.min.js` (PixiJS **7.4.2** UMD, global `PIXI`), `pixi-spine.js` (**4.0.6** UMD, `PIXI.spine`), `preact.module.js` + `hooks.module.js` + `htm.module.js` (Preact 10 + htm, no build step). No CDN at runtime (LAN play must work offline).
 - **Shared code** in `shared/` is imported by both server and browser (pure ESM, no Node APIs).

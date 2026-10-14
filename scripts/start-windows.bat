@@ -10,7 +10,7 @@ cd /d "%~dp0.."
 
 where node >nul 2>nul
 if errorlevel 1 goto :nonode
-node -e "process.exit(Math.max(0, Math.sign(22 - parseInt(process.versions.node))))"
+node -e "process.exit(Math.max(0, Math.sign(24 - parseInt(process.versions.node))))"
 if errorlevel 1 goto :oldnode
 
 if not exist "node_modules\ws\package.json" (
@@ -25,7 +25,7 @@ exit /b 0
 
 :nonode
 echo.
-echo 未找到 Node.js（需要 22 或更高，22 / 24 LTS）。Node.js not found.
+echo 未找到 Node.js（只支持 Node.js 24 LTS）。Node.js not found.
 echo.
 echo   方法一：在 PowerShell 或命令提示符中运行
 echo       winget install OpenJS.NodeJS.LTS
@@ -38,7 +38,7 @@ exit /b 1
 
 :oldnode
 echo.
-for /f "delims=" %%v in ('node -v') do echo 当前 Node.js 版本 %%v 太旧，需要 22 或更高（22 / 24 LTS）。
+for /f "delims=" %%v in ('node -v') do echo 当前 Node.js 版本 %%v 太旧，只支持 Node.js 24（LTS）。
 echo   升级：winget upgrade OpenJS.NodeJS.LTS   或   https://nodejs.org/zh-cn/download
 echo.
 pause

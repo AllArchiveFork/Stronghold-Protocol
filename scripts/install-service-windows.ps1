@@ -118,7 +118,7 @@ try {
   if (-not $nodeCmd) { throw '未找到 Node.js：请先安装（winget install OpenJS.NodeJS.LTS），然后重新打开 PowerShell。' }
   $nodeExe = $nodeCmd.Source
   $major = [int](((& $nodeExe -v) -replace '^v', '').Split('.')[0])
-  if ($major -lt 22) { throw "Node.js 版本太旧（需要 22+）：$(& $nodeExe -v)" }
+  if ($major -lt 24) { throw "Node.js 版本太旧（只支持 Node.js 24 LTS）：$(& $nodeExe -v)" }
   if ($nodeExe -like "$env:USERPROFILE*") {
     Write-Host "注意：node.exe 位于用户目录（$nodeExe，nvm/便携版？）。SYSTEM 账户一般也能运行它；若服务起不来，请改用 winget / 官网安装包安装的 Node.js。" -ForegroundColor Yellow
   }

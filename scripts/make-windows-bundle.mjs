@@ -40,14 +40,14 @@ const NODE_CACHE_DIR = path.join(ROOT, '.cache');
 /**
  * 便携版 Node：版本与 sha256 **钉死在仓库里**，运行时只认这个常量。
  *
- * 不用 `latest-v22.x`：那样今天打的包和上个月打的包内容不同，出了问题也无从复现；而且校验哈希是运行时
+ * 不用 `latest-v24.x`：那样今天打的包和上个月打的包内容不同，出了问题也无从复现；而且校验哈希是运行时
  * 现去 nodejs.org 抓的，等于把「发出去的二进制是什么」交给当时的网络应答决定。换版本请改这里
  * （并在 `--node-version` 的同时用 `--sha256` 显式覆盖）。
  */
 const NODE_PIN = Object.freeze({
-  version: 'v22.23.3',
-  file: 'node-v22.23.3-win-x64.zip',
-  sha256: '2b0ff57b049cda1bbcea2240eec20467018713c1efe1f7360c2681859b90ed71',
+  version: 'v24.21.0',
+  file: 'node-v24.21.0-win-x64.zip',
+  sha256: '158f7685b44de51f6c0df1d153526cbcd3e1bc739a8dfc607721cef75de9e541',
 });
 
 /** 这几份不进版本库（npm / tools/setup.mjs 生成），但必须进包，否则游戏缺素材或缺前端库。 */
@@ -86,7 +86,7 @@ function parseArgs(argv) {
 const HELP = `node scripts/make-windows-bundle.mjs — 生成 Windows 开箱即用便携包
 
   --out <dir>        产物目录（默认 <仓库上一级>/Stronghold-Protocol-Windows）
-  --no-node          不下载便携版 Node（目标机器需自备 Node 22+）
+  --no-node          不下载便携版 Node（目标机器需自备 Node 24）
   --force            目录已存在时先删掉（只肯删空目录，或上一次打的便携包；其余情况拒绝）
   --node-version X   换一个 Node 版本（默认 ${NODE_PIN.version}）；换版本必须同时给 --sha256
   --sha256 <hash>    该版本 win-x64.zip 的 sha256（取自官方 SHASUMS256.txt）
@@ -350,7 +350,7 @@ async function ensureNodeZip(version, wantHash) {
  * 每次都新建一个临时目录重新解压，绝不复用上一次解压出来的文件 —— 缓存的是 zip，不是解压结果：
  * 解压中断留下的残缺 node.exe 与 zip 没有任何对应关系，直接复制就会把坏文件发出去。
  * @param {string} bundleNodeDir
- * @param {string} version 形如 v22.23.3
+ * @param {string} version 形如 v24.21.0
  * @param {string} zipPath 已校验 sha256 的官方 win-x64 zip
  */
 async function extractPortableNode(bundleNodeDir, version, zipPath) {
@@ -390,7 +390,7 @@ function bat(body) {
 export function bundleReadme({ version, withNode }) {
   const nodeNeed = withNode
     ? `目标机器**不需要安装 Node**：包内的 \`node\\node.exe\` 就是便携版 Node ${version}。`
-    : '这个包**没有带便携版 Node**，请先在这台机器上安装 Node 22 或 24（LTS）。';
+    : '这个包**没有带便携版 Node**，请先在这台机器上安装 Node 24（LTS）。';
   const nodeLicence = withNode ? ' 与 `node\\LICENSE-node.txt`（Node 自己的 MIT 许可证）' : '';
   const tree = withNode
     ? `node\\node.exe            便携版 Node ${version}（官方 x64，已经 sha256 校验）
@@ -404,7 +404,7 @@ LICENSE / NOTICE.md / THIRD-PARTY-NOTICES.md`
 README-开箱即用.md       本文件
 LICENSE / NOTICE.md / THIRD-PARTY-NOTICES.md
 
-（没有 node\\ 这一层：本包不带便携版 Node，请自行安装 Node 22/24 LTS）`;
+（没有 node\\ 这一层：本包不带便携版 Node，请自行安装 Node 24 LTS）`;
 
   return `# 卫戍协议：盟约 · Windows 开箱即用包
 
@@ -462,7 +462,7 @@ async function main() {
   let nodeHash = NODE_PIN.sha256;
   if (o.nodeSpec) {
     if (!/^v?\d+\.\d+\.\d+$/.test(o.nodeSpec)) {
-      console.error(`✖ --node-version 要写成 v22.23.3 这样的具体版本，收到的是 ${o.nodeSpec}（latest-22.x 这类浮动版本不行，那样两次打包内容会不一样）。`);
+      console.error(`✖ --node-version 要写成 v24.21.0 这样的具体版本，收到的是 ${o.nodeSpec}（latest-24.x 这类浮动版本不行，那样两次打包内容会不一样）。`);
       return 1;
     }
     nodeVersion = o.nodeSpec.startsWith('v') ? o.nodeSpec : `v${o.nodeSpec}`;
@@ -537,7 +537,7 @@ async function main() {
   console.log(`    完成：${deps.files} 个文件 / ${MB(deps.bytes)}（只含生产依赖）`);
 
   // 4) 便携版 Node（每次都从校验过的 zip 重新解压）
-  let nodeInfo = { version: '（未打包，目标机器需自备 Node 22+）', bytes: 0 };
+  let nodeInfo = { version: '（未打包，目标机器需自备 Node 24）', bytes: 0 };
   if (o.node) {
     console.log(`  · 准备便携版 Node ${nodeVersion}…`);
     await fsp.mkdir(nodeDir, { recursive: true });

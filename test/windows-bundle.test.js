@@ -121,7 +121,7 @@ describe('make-windows-bundle.mjs: --force 只肯删空目录或上一次的包'
 describe('make-windows-bundle.mjs: 包内说明的措辞', () => {
   test('不再声称「不访问外网」，改成联网 / 断网两种情况都讲清', async () => {
     const { bundleReadme } = await mod('scripts/make-windows-bundle.mjs');
-    const r = bundleReadme({ version: 'v22.23.3', withNode: true });
+    const r = bundleReadme({ version: 'v24.21.0', withNode: true });
     assert.ok(!/不访问外网/.test(r), 'index.html 的 Google Fonts 外链没改，不能说这个包不访问外网');
     assert.match(r, /不联网也能玩/, '断网可用要写清楚');
     assert.match(r, /Google Fonts/, '联网时会去 Google Fonts 加载字体，要如实说明');
@@ -133,7 +133,7 @@ describe('make-windows-bundle.mjs: 包内说明的措辞', () => {
   test('每条授权要点都在（素材归原权利人 / 不适用 GPL / 不单独再分发 / 可要求删除 / 无担保）', async () => {
     const { bundleReadme } = await mod('scripts/make-windows-bundle.mjs');
     for (const withNode of [true, false]) {
-      const r = bundleReadme({ version: 'v22.23.3', withNode });
+      const r = bundleReadme({ version: 'v24.21.0', withNode });
       assert.match(r, /版权归原权利人所有/, `withNode=${withNode}`);
       assert.match(r, /不适用.*GPL/, `withNode=${withNode}`);
       assert.match(r, /单独再分发/, `withNode=${withNode}`);
@@ -146,9 +146,9 @@ describe('make-windows-bundle.mjs: 包内说明的措辞', () => {
 
   test('--no-node 时不再写「不需要安装 Node」，目录结构也不列 node\\', async () => {
     const { bundleReadme } = await mod('scripts/make-windows-bundle.mjs');
-    const r = bundleReadme({ version: 'v22.23.3', withNode: false });
+    const r = bundleReadme({ version: 'v24.21.0', withNode: false });
     assert.ok(!/不需要安装 Node/.test(r), '没带便携 Node 就不能说不用装');
-    assert.match(r, /没有带便携版 Node/, '要明确告诉玩家自己去装 Node 22/24');
+    assert.match(r, /没有带便携版 Node/, '要明确告诉玩家自己去装 Node 24');
     assert.ok(!/node\\node\.exe/.test(r), '目录结构里不该出现 node.exe');
     assert.ok(!/LICENSE-node\.txt/.test(r), '也不该提 node\\LICENSE-node.txt');
   });

@@ -20,13 +20,13 @@
 node tools/setup.mjs
 ```
 
-然后在仓库里（**任意平台**，只要有 Node 22+ 且能上网下载官方 Node 归档）执行：
+然后在仓库里（**任意平台**，只要有 Node 24 且能上网下载官方 Node 归档）执行：
 
 ```bash
 node scripts/make-windows-bundle.mjs                    # 产物默认在 <仓库上一级>/Stronghold-Protocol-Windows
 node scripts/make-windows-bundle.mjs --out D:\Game\Stronghold-Protocol-Windows --force
-node scripts/make-windows-bundle.mjs --no-node          # 目标机器已装 Node 22+ 时不必带便携 Node
-node scripts/make-windows-bundle.mjs --node-version v22.23.3 --sha256 <64 位十六进制>   # 换 Node 版本
+node scripts/make-windows-bundle.mjs --no-node          # 目标机器已装 Node 24 时不必带便携 Node
+node scripts/make-windows-bundle.mjs --node-version v24.21.0 --sha256 <64 位十六进制>   # 换 Node 版本
 ```
 
 `--out` 请给一个**专用目录**（像上面那样指到某个父目录下的子目录）。加 `--force` 时只会删掉两种情况：
@@ -69,7 +69,7 @@ LICENSE / NOTICE.md / THIRD-PARTY-NOTICES.md
 
 整树复制时会跳过符号链接与**点开头的条目**：打包机器的 `.DS_Store` 既不属于项目，也不该出现在别人下载的包里。
 
-Node 版本与 sha256 **钉死在 `scripts/make-windows-bundle.mjs` 的 `NODE_PIN`** 里（不用 `latest-v22.x`）：
+Node 版本与 sha256 **钉死在 `scripts/make-windows-bundle.mjs` 的 `NODE_PIN`** 里（不用 `latest-v24.x`）：
 那样今天打包和上个月打包内容不同，出了问题也无法复现。换版本必须显式给 `--node-version`（要写成 `vX.Y.Z` 这样的
 具体版本）+ `--sha256`。
 
@@ -104,7 +104,7 @@ Linux 上是这一档）→ Windows 自带的 `Expand-Archive`。
 | 症状 | 处理 |
 |---|---|
 | 双击 `.bat` 一闪而过 | 在命令行里跑 `启动游戏.bat` 看报错，或手动运行 `node\node.exe app\scripts\launch.mjs --no-setup`（`.bat` 会在非 0 退出时暂停）。**`--no-setup` 别省**：省掉它会去联网准备素材，而且 PATH 上不一定有 `node` |
-| 提示找不到 node | 便携包应含 `node\node.exe`；没有就用 `--no-node` 的包，并自行安装 Node 22/24 LTS |
+| 提示找不到 node | 便携包应含 `node\node.exe`；没有就用 `--no-node` 的包，并自行安装 Node 24 LTS |
 | 端口被占用 | 关掉占用 3000 的程序（`node tools/doctor.mjs` 会指出是谁），或在启动命令后加 `--port 3001` |
 | 浏览器没自动打开 | 手动访问 `http://127.0.0.1:<端口>`；`--no-open` / `SP_NO_BROWSER=1` 会禁用自动打开 |
 | 朋友连不上 | 防火墙专用网络未放行、或不在同一网段；用 `node tools/doctor.mjs` 诊断（源仓库里见 [DEPLOY.md](DEPLOY.md) 的防火墙一节） |

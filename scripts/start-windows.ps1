@@ -31,7 +31,7 @@ function Test-Node {
 
 $node = Test-Node
 if (-not $node) {
-  Write-Host '未找到 Node.js（需要 22 或更高，22 / 24 LTS）。' -ForegroundColor Yellow
+  Write-Host '未找到 Node.js（只支持 Node.js 24 LTS）。' -ForegroundColor Yellow
   $winget = Get-Command winget -ErrorAction SilentlyContinue
   if ($winget) {
     Write-Host '可以用 Windows 自带的 winget 安装：  winget install OpenJS.NodeJS.LTS'
@@ -49,8 +49,8 @@ if (-not $node) {
     Pause-Exit 1
   }
 }
-if ($node.Major -lt 22) {
-  Write-Host "Node.js $($node.Version) 太旧，需要 22 或更高：winget upgrade OpenJS.NodeJS.LTS  或  https://nodejs.org/zh-cn/download" -ForegroundColor Red
+if ($node.Major -lt 24) {
+  Write-Host "Node.js $($node.Version) 太旧，只支持 Node.js 24（LTS）：winget upgrade OpenJS.NodeJS.LTS  或  https://nodejs.org/zh-cn/download" -ForegroundColor Red
   Pause-Exit 1
 }
 

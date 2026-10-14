@@ -48,7 +48,7 @@ import { fileURLToPath } from 'node:url';
 import { validateSource } from './assets/network.mjs';
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-export const MIN_NODE = 22;
+export const MIN_NODE = 24;
 export const IS_WIN = process.platform === 'win32';
 export const IS_MAC = process.platform === 'darwin';
 const NODE_URL = 'https://nodejs.org/zh-cn/download';
@@ -148,7 +148,7 @@ async function ask(question, def, timeoutMs = 60000) {
 /** Node.js version check. */
 export function checkNode() {
   const major = nodeMajor();
-  return { ok: major >= MIN_NODE, version: process.versions.node, major, recommended: major >= MIN_NODE };
+  return { ok: major >= MIN_NODE, version: process.versions.node, major, recommended: major === MIN_NODE };
 }
 
 /** Runtime dependencies installed? */
@@ -437,11 +437,11 @@ async function main() {
   // 1. Node
   const node = checkNode();
   if (!node.ok) {
-    log(`${mark.err} Node.js ${node.version} 太旧：需要 ${MIN_NODE} 或更高（22 / 24 LTS）。`);
-    log(`  下载：${NODE_URL}` + (IS_WIN ? '   或在终端运行：winget install OpenJS.NodeJS.LTS' : IS_MAC ? '   或：brew install node@22' : ''));
+    log(`${mark.err} Node.js ${node.version} 太旧：只支持 Node.js 24（LTS）。`);
+    log(`  下载：${NODE_URL}` + (IS_WIN ? '   或在终端运行：winget install OpenJS.NodeJS.LTS' : IS_MAC ? '   或：brew install node@24' : ''));
     return 1;
   }
-  add('ok', 'Node.js', `v${node.version}${node.recommended ? '' : '（可用；推荐 22 / 24 LTS）'}`);
+  add('ok', 'Node.js', `v${node.version}${node.recommended ? '' : '（可以运行，但只支持 Node.js 24 LTS）'}`);
 
   // 2. npm dependencies
   let deps = checkDeps();

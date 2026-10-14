@@ -5,7 +5,7 @@
 
 ## 1. 准备环境
 
-需要 Node.js 22 或 24（CI 在这两个版本上跑）。
+只支持 Node.js 24（LTS；CI 也只在 24 上跑）。
 
 ```bash
 git clone https://github.com/sganggs/Stronghold-Protocol.git
@@ -108,7 +108,7 @@ SIM_E2E=1 node --test 'test/sim/*.browser.test.js'               # 浏览器里�
 
 ## English summary
 
-- **Setup**: Node.js 22 or 24; `npm install`, `npm run setup` (art and audio — optional for tests), `npm run dev`.
+- **Setup**: Node.js 24 (the only supported version); `npm install`, `npm run setup` (art and audio — optional for tests), `npm run dev`.
   The code map is [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 - **Tests**: run the targeted files (`node --test <file>`, `--test-name-pattern`), then `node --test` and
   `npm run golden` before a pull request; `npm run lint`, `npm run check:imports`, `npm run typecheck`.

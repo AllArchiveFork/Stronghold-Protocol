@@ -6,7 +6,7 @@
 
 ![version](https://img.shields.io/badge/version-0.2.6-2ea44f)
 ![license](https://img.shields.io/badge/code%20license-GPL--3.0--or--later-blue)
-![node](https://img.shields.io/badge/node-22%20%7C%2024-339933)
+![node](https://img.shields.io/badge/node-24-339933)
 
 ## 声明
 
@@ -132,7 +132,7 @@ npm start          # 启动服务器：http://localhost:3000
 
 | 项目 | 要求 |
 |---|---|
-| 开服的电脑 | Windows / macOS / Linux，Node.js 22 或 24（LTS）；磁盘约 700–850 MB（素材、依赖与本地提取贴图）；单进程模式内存空闲约 100 MB，每局再加几 MB；服务器模拟战斗时，CPU 和内存随 Worker 数与同时进行的对局数增加 |
+| 开服的电脑 | Windows / macOS / Linux，Node.js 24（LTS，只支持这一版本）；磁盘约 700–850 MB（素材、依赖与本地提取贴图）；单进程模式内存空闲约 100 MB，每局再加几 MB；服务器模拟战斗时，CPU 和内存随 Worker 数与同时进行的对局数增加 |
 | 玩家 | 支持 WebGL 的现代浏览器（Chrome / Edge / Firefox / Safari 最新版），电脑、手机或平板（横屏） |
 | 网络 | 首次进入游戏时，每位玩家要从开服的电脑下载几十 MB 素材（之后走浏览器缓存）；对局中流量很小，服务器推流战斗时会多一些 |
 
@@ -263,7 +263,7 @@ node tools/perfbench.mjs --cpu 1,4,6 --profile             # 真实战斗的帧�
 - 性能测试：`/dev/battle-perf.html` 在浏览器里跑一场真实战斗（对局用的战斗运行器、模拟和渲染），实时显示帧率与逐帧耗时；在手机上打开后点击「开始测量（10 秒）」，生成的报告可以复制后附在反馈中。用到的战斗来自 `node tools/capture-specs.mjs` 从固定种子的机器人对局里截取的数据（`public/dev/perf/`）。
 - 黄金结果 `test/golden/*.json` 保持上游的官方基线：只重构、不改玩法的提交不能改变它们；不要为了让改动通过而重新生成（见 [test/golden/README.md](test/golden/README.md)）。
 - 客户端要兼容 Firefox ESR 115 和较旧的 Safari：CSS 不用 `:has()`、容器查询、`@layer` 和嵌套。
-- GitHub Actions（[.github/workflows/ci.yml](.github/workflows/ci.yml)）在 Ubuntu 与 Windows、Node 22 / 24 上运行 `npm ci`、`node --test` 和服务器冒烟测试。
+- GitHub Actions（[.github/workflows/ci.yml](.github/workflows/ci.yml)）在 Ubuntu 与 Windows、Node 24 上运行 `npm ci`、`node --test` 和服务器冒烟测试。
 - 代码怎么分层、改某个规则该从哪个文件入手，见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
 ## 项目结构
