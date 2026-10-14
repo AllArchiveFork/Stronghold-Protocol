@@ -129,3 +129,4 @@ export function MatchmakingPanel({ queue, difficulty, experimental, online, onJo
     <//>` : null}
   </section>`;
 }
+export function MatchmakingCount() { return null; } 
