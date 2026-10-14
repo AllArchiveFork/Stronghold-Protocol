@@ -36,6 +36,7 @@ import { openStats } from './stats.js';
 import { AchievementEntry, AchievementPanel } from '../ui/achievements.js';
 import { TrophyBadge } from '../ui/trophies.js';
 import { useMyCard } from '../ui/playerCard.js';
+import { cardAvatarUrl } from '../ui/seatArt.js';
 import { SettingsButton } from '../ui/settings.js';
 import { PwaInstallButton, FullscreenButton, fullscreen, reducedMotion } from '../ui/device.js';
 import { LoadoutButton } from './loadout.js';
@@ -596,9 +597,11 @@ function DesignCredit() {
 /** The top bar's name chip: the trophy badge, the name, DOCTOR #; opens 统计数据. */
 function MeChip({ me }) {
   const card = useMyCard();
+  useData('assets');
+  const face = cardAvatarUrl(card.avatar);
   const label = t('统计数据');
   return html`<button type="button" class="me-chip me-chip--btn stats-entry" onClick=${openStats} title=${label} aria-label=${label}>
-    <${AvatarFrame} size="sm" name=${me.name} seat=${0} self=${true} />
+    <${AvatarFrame} size="sm" name=${me.name} src=${face} seat=${0} self=${true} />
     <span class="me-chip__text">
       <span class="me-chip__name"><${TrophyBadge} count=${card.trophies} class="tbadge--inline" />${me.name || t('博士')}</span>
       <${MicroLabel}>${me.playerId != null ? `DOCTOR #${doctorNo(me.playerId)}` : 'DOCTOR'}<//>

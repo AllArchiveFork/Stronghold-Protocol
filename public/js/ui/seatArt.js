@@ -2,6 +2,7 @@
 // (room.card; room.state seats[].card.charId), else one of the 5★/6★ operators chosen by the player id, the same on
 // every client.
 import { chessPortraitUrl } from './assetUrls.js';
+import { data } from '../data.js';
 
 /** FNV-1a of a string (the portrait pick: the same operator for a player on every client). */
 function hash32(s) {
@@ -26,6 +27,17 @@ export function cardOperators(chessList) {
     if (!prev || (c.isGolden && !prev.isGolden)) by.set(c.charId, c);
   }
   return [...by.values()].sort((a, b) => ((b.rarity ?? 0) - (a.rarity ?? 0)) || String(a.name).localeCompare(String(b.name), 'zh'));
+}
+
+/**
+ * 头像: the official avatar of an operator (room.card avatar) — its elite (E2) avatar when the art has one, as the card
+ * operators' golden form — from the art manifest alone (the lobby never downloads the operators' data); null when unknown.
+ * @param {string} charId @param {any} [m] the art manifest
+ */
+export function cardAvatarUrl(charId, m = data.get('assets')) {
+  const chars = m && typeof m.chars === 'object' ? m.chars : null;
+  const c = typeof charId === 'string' && chars && Object.hasOwn(chars, charId) ? chars[charId] : null;
+  return (typeof c?.avatarE2 === 'string' && c.avatarE2) || (typeof c?.avatar === 'string' && c.avatar) || null;
 }
 
 /**

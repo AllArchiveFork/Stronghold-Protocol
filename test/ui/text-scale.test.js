@@ -74,6 +74,9 @@ const NOT_SCALED = [
   // 成就统计 (ui/achievements.js, the 2026-10-14 hub design): the panel's composition is pinned — at a bigger text step the
   // name plate and the mode table overlap — so its text stays on the layout root like the in-match HUD
   /(^|[\s,>+~(])\.(ach\b|ach-|ach__|hub-ach)/,
+  // the settlement flow (screens/settle.js, the 2026-10-14 UI package): one 1920×1080 stage scaled to the screen by --k,
+  // every piece at a fixed position — a bigger text step would push the text over its neighbours
+  /(^|[\s,>+~(])\.(settle|sintro|slogo|sself|smap|smode|smedal|splate|sops?|sbonds?|slv|steam|tcard|tchip|sbtn|selite|sico)(__|--|\b)/,
 ];
 
 const notScaled = (selector) => NOT_SCALED.some((re) => re.test(selector));

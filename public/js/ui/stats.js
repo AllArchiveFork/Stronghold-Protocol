@@ -313,6 +313,8 @@ export function compactRecord(rec) {
   out.players = self ? [{
     playerId: self.playerId, seat: self.seat, alive: self.alive, victory: self.victory, roundsPassed: self.roundsPassed,
     eliminatedRound: self.eliminatedRound, bandId: self.bandId, title: self.title, left: self.left, stats: self.stats,
+    // (the trophies and the experience add up across every record: 名片 / 成就统计 and the settlement's LV, screens/settle.js)
+    trophies: self.trophies, reward: self.reward,
   }] : [];
   return out;
 }

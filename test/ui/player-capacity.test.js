@@ -113,7 +113,7 @@ test('room, draft and readable in-game lists keep every seat in bounded scroller
   assert.match(team, /\.team--list \.team__players \{[^}]*grid-auto-flow: column[^}]*overflow-y: auto/);
   assert.match(source('../../public/js/ui/teamPanel.js'), /aria-controls="team-roster"/);
   assert.match(team, /\.team--list \.team__btn \{[^}]*min-width: 44px; min-height: 44px/);
-  assert.match(source('../../public/css/screens/draft.css'), /\.draft-order__players \{[^}]*overflow-y: auto/);
+  assert.match(source('../../public/css/screens/draft.css'), /\.draft-order__rows \{[^}]*overflow-y: auto/);
   assert.match(source('../../public/css/screens/game-panels.css'), /\.spov--expanded \.spov__grid \{[^}]*overflow-y: auto/);
   assert.match(source('../../public/js/ui/teamLayout.js'), /return !phone && \(Number\(count\) \|\| 0\) <= 4 \? 'classic' : 'list'/);
   assert.match(source('../../public/js/ui/teamPanel.js'), /id=\$\{bubble\.id\} at=\$\{bubble\.at\}/);

@@ -1,4 +1,4 @@
-// room.card (fork lobby, 2026-10-14): a player's display card — avatar operator, namecard background, self-reported
+// room.card (fork lobby, 2026-10-14): a player's display card — portrait and avatar operators, namecard background, self-reported
 // trophies — kept on the session, copied to the player's seat and shown to the room (room.state seats[].card); a real
 // operator only, rate-limited changes, never part of a match (local or cluster).
 import test from 'node:test';
@@ -38,13 +38,15 @@ function fixture(t, { LobbyClass = Lobby, extra = {}, getData = () => DATA } = {
   return { clock, registry, lobby, player, states, card };
 }
 
-test('room.card wire shape: optional charId / bg ids ("" clears) and an integer trophy count', () => {
+test('room.card wire shape: optional charId / avatar / bg ids ("" clears) and an integer trophy count', () => {
   const ok = (msg) => assert.equal(validateC2S({ t: 'room.card', ...msg }), null, JSON.stringify(msg));
   const bad = (msg, field) => assert.equal(validateC2S({ t: 'room.card', ...msg }), `bad field ${field}`, JSON.stringify(msg));
   ok({});
-  ok({ charId: '', bg: '', trophies: 0 });
-  ok({ charId: 'char_002_amiya', bg: 'namecard/skin:01-a_b', trophies: CARD_LIMITS.trophies });
+  ok({ charId: '', avatar: '', bg: '', trophies: 0 });
+  ok({ charId: 'char_002_amiya', avatar: 'char_017_huang', bg: 'namecard/skin:01-a_b', trophies: CARD_LIMITS.trophies });
   ok({ bg: 'BG_Default' });
+  ok({ avatar: 'char_002_amiya' });
+  for (const avatar of ['Char_002_amiya', 'amiya', `char_${'a'.repeat(44)}`, null, 7]) bad({ avatar }, 'avatar');
   bad({ charId: 'Char_002_amiya' }, 'charId');
   bad({ charId: 'amiya' }, 'charId');
   bad({ charId: `char_${'a'.repeat(44)}` }, 'charId');
@@ -84,7 +86,14 @@ test('a card follows the session into rooms, shows on human seats only and chang
   // merge: a field left out keeps its value, '' / 0 clears one, all cleared = no card
   card(a, { bg: 'bg_2' });
   assert.deepEqual(room.seatOf(a.playerId).card, { charId: AMIYA, bg: 'bg_2', trophies: 12 });
+  const shown = states(b).length;
+  card(a, { avatar: OTHER });
+  assert.deepEqual(room.seatOf(a.playerId).card, { charId: AMIYA, avatar: OTHER, bg: 'bg_2', trophies: 12 });
+  assert.deepEqual(states(b).at(-1).seats[0].card.avatar, OTHER, 'the avatar is shown to the room');
+  assert.equal(states(b).length, shown + 1, 'an avatar change alone is a change');
   card(a, { charId: '', trophies: 0 });
+  assert.deepEqual(room.seatOf(a.playerId).card, { avatar: OTHER, bg: 'bg_2' });
+  card(a, { avatar: '' });
   assert.deepEqual(room.seatOf(a.playerId).card, { bg: 'bg_2' });
   card(a, { bg: '' });
   assert.equal(a.card, null);
@@ -107,6 +116,8 @@ test('only a real operator of the game data; nothing is stored on a refusal', (t
     const res = card(a, { charId, bg: 'bg_x' });
     assert.equal(res.error, ERR.BAD_MSG, charId);
     assert.deepEqual(a.card, { charId: AMIYA }, 'the stored card is kept');
+    assert.equal(card(a, { avatar: charId, bg: 'bg_x' }).error, ERR.BAD_MSG, `avatar ${charId}`);
+    assert.deepEqual(a.card, { charId: AMIYA }, 'the stored card is kept (avatar)');
   }
   const pool = DATA.backups?.diy?.ownedPool || [];
   if (pool.length) assert.deepEqual(card(a, { charId: pool[0] }), { ok: true }, 'a 自选 operator is a real operator');
@@ -133,7 +144,7 @@ test(`at most ${CARD_CHANGES} changes per ${CARD_WINDOW_MS / 1000} s per session
 test('the card never enters a match: local seats and the cluster DTO carry none, and an edit cannot abort a pending start', async (t) => {
   const local = fixture(t);
   const a = local.player(), b = local.player();
-  local.card(a, { charId: AMIYA, trophies: 3 });
+  local.card(a, { charId: AMIYA, avatar: OTHER, trophies: 3 });
   local.lobby.create(a, { mode: 'coop', difficulty: 'NORMAL' });
   local.lobby.join(b, { code: local.lobby.roomOf(a).code });
   local.lobby.ready(b, { ready: true });
@@ -141,7 +152,7 @@ test('the card never enters a match: local seats and the cluster DTO carry none,
   const room = local.lobby.roomOf(a);
   assert.ok(room.match.opts.seats.every((s) => !Object.hasOwn(s, 'card')));
   assert.deepEqual(local.card(a, { trophies: 4 }), { ok: true }, 'a display edit is fine during a match');
-  assert.deepEqual(room.seatOf(a.playerId).card, { charId: AMIYA, trophies: 4 });
+  assert.deepEqual(room.seatOf(a.playerId).card, { charId: AMIYA, avatar: OTHER, trophies: 4 });
 
   const calls = [];
   const platform = {

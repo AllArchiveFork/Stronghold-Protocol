@@ -374,6 +374,9 @@ describe('local stats: bounded storage', () => {
     assert.equal(c.difficulty, 'HARD');
     assert.equal(c.durationMs, 952123);
     assert.equal(selfRowOf(normalizeRecord(c)).bandId, 'band_amiya');
+    // the trophies and the experience stay: 名片 / 成就统计 and the settlement's LV add them up over every record
+    assert.equal(selfRowOf(normalizeRecord(c)).trophies, 30);
+    assert.equal(selfRowOf(normalizeRecord(c)).reward, 88);
   });
 
   test(`a store of ${MAX_RECORDS} real-size co-op matches fits MAX_CHARS (${MAX_CHARS}) — the oldest few go; solo matches all stay`, () => {
@@ -388,7 +391,8 @@ describe('local stats: bounded storage', () => {
     const coop = (i) => baseResult({ seed: i, modeId: 'mode_multi_hard', players: [row(1), row(2), row(3), row(4)].map((r, k) => (k === 0 ? { ...r, playerId: 'p1' } : r)) });
     const stats = manyRecords(MAX_RECORDS, coop);
     const fit = fitToBudget(stats.records);
-    assert.ok(fit.length >= 900 && fit.length <= MAX_RECORDS, `kept ${fit.length}`);
+    // (≈ 880 since the compact row keeps its trophies and experience, 2026-10-14: 名片 / 成就统计 / the settlement's LV)
+    assert.ok(fit.length >= 850 && fit.length <= MAX_RECORDS, `kept ${fit.length}`);
     assert.equal(fit[0].t, MAX_RECORDS - 1, 'the newest first');
     assert.ok(JSON.stringify({ v: 1, records: fit }).length <= MAX_CHARS);
     withStorage((ls) => { assert.equal(saveStats(stats), true); assert.ok(ls.raw.length <= MAX_CHARS); });

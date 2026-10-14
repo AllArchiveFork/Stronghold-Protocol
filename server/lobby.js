@@ -114,8 +114,9 @@
 //     time → room.closed {kicked} to it. A spectator in a LOBBY room may take a free player seat with room.join of the same
 //     code; a player never switches to spectating in place (ALREADY). Disconnect / grace / reconnect / expiry work as for
 //     a player seat (the seat is kept and given back on resume).
-//   * Display card (fork lobby, 2026-10-14): room.card { charId?, bg?, trophies? } — an avatar operator (a real operator
-//     of the game data: cardCharIds, else BAD_MSG), a namecard background id (format only) and a self-reported trophy
+//   * Display card (fork lobby, 2026-10-14): room.card { charId?, avatar?, bg?, trophies? } — a portrait operator and an
+//     avatar operator (real operators of the game data: cardCharIds, else BAD_MSG), a namecard background id (format
+//     only) and a self-reported trophy
 //     count (cosmetic, never used by a match) — is stored on the session (it follows the player into every room; a field
 //     the message leaves out keeps its value, '' / 0 clears it) and copied to the player's seat; room.state shows it as
 //     seats[].card on human seats that have one (spectators: none). A change is broadcast to the room, at most
@@ -200,7 +201,7 @@ const noopLog = { info() {}, warn() {}, error() {}, debug() {} };
  *             skins?: Readonly<Record<string, string>>, band?: string | null, card?: Card | null, owner?: boolean }} Seat
  *   (`band`: AI seats only — the strategy room.setBotBand designated, null = the AI picks by itself; `card` / `owner`:
  *   human seats only, display only — room.card and the 服主 mark)
- * @typedef {Readonly<{ charId?: string, bg?: string, trophies?: number }>} Card
+ * @typedef {Readonly<{ charId?: string, avatar?: string, bg?: string, trophies?: number }>} Card
  * @typedef {{ charId: string, skillIndex: number, uniEquipId: string|null }} DiyLoadout
  */
 
@@ -227,7 +228,7 @@ function opsCharIds(data) {
   return ids;
 }
 
-/** The operators a display card may show (room.card charId): every chess record's charId and the 自选 owned pool. */
+/** The operators a display card may show (room.card charId / avatar): every chess record's charId and the 自选 owned pool. */
 const CARD_IDS = new WeakMap();
 function cardCharIds(data) {
   if (!data || typeof data !== 'object') return new Set();
@@ -240,7 +241,8 @@ function cardCharIds(data) {
   }
   return ids;
 }
-const sameCard = (a, b) => (a?.charId ?? '') === (b?.charId ?? '') && (a?.bg ?? '') === (b?.bg ?? '') && (a?.trophies ?? 0) === (b?.trophies ?? 0);
+const sameCard = (a, b) => (a?.charId ?? '') === (b?.charId ?? '') && (a?.avatar ?? '') === (b?.avatar ?? '') && (a?.bg ?? '') === (b?.bg ?? '')
+  && (a?.trophies ?? 0) === (b?.trophies ?? 0);
 
 /**
  * The GameData a room's next match builds (Match: mode, difficulty and the expanded-room 鸭爵 switch), per data object —
@@ -1361,13 +1363,16 @@ export class Lobby {
    * clears it; an unknown operator is BAD_MSG — and copy it to the player's seat (never a spectator's), broadcasting the
    * room state when it changed. An unchanged card costs nothing; a change beyond CARD_CHANGES per CARD_WINDOW_MS is RATE.
    */
-  setCard(session, { charId, bg, trophies }) {
-    if (charId && !cardCharIds(this.safeData()).has(charId)) return fail(ERR.BAD_MSG, 'unknown operator');
+  setCard(session, { charId, avatar, bg, trophies }) {
+    const known = cardCharIds(this.safeData());
+    if ((charId && !known.has(charId)) || (avatar && !known.has(avatar))) return fail(ERR.BAD_MSG, 'unknown operator');
     const prev = session.card || {};
     const next = {};
     const id = charId === undefined ? prev.charId : charId, back = bg === undefined ? prev.bg : bg;
+    const face = avatar === undefined ? prev.avatar : avatar;
     const count = trophies === undefined ? prev.trophies : trophies;
     if (id) next.charId = id;
+    if (face) next.avatar = face;
     if (back) next.bg = back;
     if (count > 0) next.trophies = count;
     const card = Object.keys(next).length ? Object.freeze(next) : null;

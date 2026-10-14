@@ -63,12 +63,13 @@ lifecycle and hello synchronization remain immediate. Delayed work resolves the 
 sending, and close/clear cancels it. Offline/new-socket clients show unknown until a fresh queue snapshot.
 
 **Fork lobby additions (2026-10-14, next release; server/lobby.js, server/ownerFile.js, server/onlineLimit.js):**
-- `room.card {charId?, bg?, trophies?}` — the player's display card. `charId`: `''` or an operator charId
+- `room.card {charId?, avatar?, bg?, trophies?}` — the player's display card. `charId` (the card's portrait) and
+  `avatar` (the operator whose official avatar stands for the player): `''` or an operator charId
   (`/^char_[0-9a-z_]+$/`, ≤ 48) that the server's game data knows (a chess record's `charId` or the 自选 owned pool, else
   `BAD_MSG`); `bg`: `''` or a namecard-background id (`/^[a-z0-9][a-z0-9_:\-\/]*$/i`, ≤ 48; format only, the client maps
   it to art); `trophies`: integer 0–1 000 000, self-reported and cosmetic only. A field left out keeps its stored value,
   `''` / `0` clears it. Stored on the session (it follows the player into every room and survives a resume, not a new
-  session) and copied to the player's seat; `room.state seats[].card {charId?, bg?, trophies?}` on human seats that have
+  session) and copied to the player's seat; `room.state seats[].card {charId?, avatar?, bg?, trophies?}` on human seats that have
   one (absent otherwise, never on AI seats or spectators). A change is broadcast; more than 6 changes per 10 s per session
   answer `RATE`; an unchanged card costs nothing. It never enters a match (local seats, the cluster prepare DTO) and a
   card edit does not invalidate a cluster start being prepared.

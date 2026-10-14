@@ -2189,6 +2189,8 @@ button.ally-card:disabled { filter: grayscale(.7) brightness(.7); cursor: defaul
 .ach-card::after { content: ''; position: absolute; inset: 0; background: linear-gradient(90deg, rgba(0, 0, 0, .25), transparent 60%); pointer-events: none; }
 .ach-card__ava { position: relative; z-index: 1; width: 1.6rem; height: 1.6rem; flex: none; display: grid; place-items: center; background: #1d2423; border: 2px solid #f4f7f6; }
 .ach-card__ava img { width: 100%; height: 100%; object-fit: cover; }
+button.ach-card__ava { padding: 0; font: inherit; color: inherit; cursor: pointer; }
+button.ach-card__ava:hover, button.ach-card__ava:focus-visible { border-color: var(--mint-400); }
 .ach-card__glyph { font-size: .7rem; font-weight: 900; color: #4af2c4; }
 .ach-card__lv { position: absolute; left: -.16rem; top: -.14rem; width: .5rem; height: .5rem; display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: .9;
   border-radius: 50%; background: #111; border: 3px solid #ffd21e; color: #fff; }
@@ -2570,6 +2572,14 @@ button.ally-card:disabled { filter: grayscale(.7) brightness(.7); cursor: defaul
   color: #eef0ef; background: rgba(0, 0, 0, .45); border: 1px solid rgba(255, 255, 255, .25); border-radius: 3px; cursor: pointer; opacity: .7; }
 .rseat__bg:hover, .rseat__bg:focus-visible { opacity: 1; border-color: #5df0c6; }
 .rseat__bg .icon { width: 70%; height: 70%; }
+/* 头像: one's own plate avatar opens the picker */
+.rseat__ava { grid-row: 1 / 3; position: relative; z-index: 1; display: block; padding: 0; font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+.rseat__ava:hover .avatar, .rseat__ava:focus-visible .avatar { filter: brightness(1.15); }
+.rseat__ava .avatar__badge--self { display: none; }
+.rseat__ava-pen { position: absolute; right: -3px; bottom: -3px; display: grid; place-items: center; width: max(.18rem, 11px); height: max(.18rem, 11px);
+  color: #08221b; background: #4fe8c0; border-radius: 2px; opacity: .85; }
+.rseat__ava:hover .rseat__ava-pen, .rseat__ava:focus-visible .rseat__ava-pen { opacity: 1; }
+.rseat__ava-pen .icon { width: 75%; height: 75%; }
 .nc-pick__card { display: flex; flex-direction: column; text-align: left; }
 .nc-pick__art { position: relative; display: flex; align-items: center; gap: .08rem; width: 100%; aspect-ratio: 600 / 186; padding: 0 12px; border-radius: 2px; overflow: hidden;
   color: #eef3f1; font-size: 13px; font-weight: 700; background: #101514; }
@@ -2592,6 +2602,7 @@ button.ally-card:disabled { filter: grayscale(.7) brightness(.7); cursor: defaul
   color: #e6ecea; background: rgba(8, 12, 11, .55); border: 1px solid rgba(255, 255, 255, .3); border-radius: .03rem; cursor: pointer; }
 .ach-card__nc:hover { border-color: var(--mint-400); }
 .ach-card__nc .icon { width: 1em; height: 1em; }
+.ach-card__edits { display: flex; flex-wrap: wrap; gap: .06rem; }
 .ach-marks--list { display: grid; grid-template-columns: repeat(auto-fill, minmax(4.6rem, 1fr)); gap: .16rem .3rem; padding-left: .8rem; }
 .ach-mark--row { flex-direction: row; align-items: center; gap: .2rem; }
 .ach-mark--row .ach-mark__frame { width: 1rem; height: 1rem; flex: none; color: rgba(74, 242, 196, .5); }
