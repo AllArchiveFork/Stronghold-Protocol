@@ -1,8 +1,6 @@
 // Same-capacity human matchmaking with optional admission caps and opt-in async preparation.
 // Parties are indivisible session identities, never sockets. Every human explicitly accepts
 // before the lobby atomically commits its room-owned rules; the legacy allocate path stays synchronous.
-// `paused()` (the lobby's maintenance switch, server/onlineLimit.js): join and accept answer MAINTENANCE and no offer is
-// formed; the lobby clears the queue when the switch goes on (clear('maintenance')).
 import { randomBytes } from 'node:crypto';
 import { ERR, MAX_SEATS, DIFFICULTIES, MATCHMAKING_VERSION } from '../shared/constants.js';
 import { EXPERIMENTAL_DEFAULTS, experimentalOptions, experimentalKey, sameExperimental } from '../shared/experimental.js';
@@ -27,10 +25,8 @@ function observeThenable(value) {
 
 export class Matchmaking {
   constructor({ now = Date.now, send, available, members, allocate, asyncAllocate = null, allocationMs = 6000,
-    options = {}, timers = { setTimeout, clearTimeout }, metrics = NO_PHASES, paused = () => false }) {
+    options = {}, timers = { setTimeout, clearTimeout }, metrics = NO_PHASES }) {
     if (asyncAllocate !== null && typeof asyncAllocate !== 'function') throw new TypeError('invalid matchmaking asyncAllocate');
-    if (typeof paused !== 'function') throw new TypeError('invalid matchmaking paused');
-    this.paused = paused;
     if (!Number.isSafeInteger(allocationMs) || allocationMs < 1 || allocationMs > 8000) throw new TypeError('invalid matchmaking allocationMs');
     this.asyncAllocate = asyncAllocate;
     this.allocationMs = allocationMs;
@@ -151,7 +147,6 @@ export class Matchmaking {
   join(session, { difficulty, party = false }) {
     this.refresh(session);
     if (this.closed) return fail(ERR.WRONG_PHASE, 'matchmaking is closed');
-    if (this.paused()) return fail(ERR.MAINTENANCE);
     if (!DIFFICULTIES.includes(difficulty) || typeof party !== 'boolean') return fail(ERR.BAD_MSG, 'invalid matchmaking request');
     if (session.matchmakingVersion !== MATCHMAKING_VERSION) return fail(ERR.BAD_MSG, 'matchmaking version required; refresh the page');
     const previous = this.entries.get(session.playerId);
@@ -222,7 +217,6 @@ export class Matchmaking {
       this.send(session, this.state(session));
       return OK;
     }
-    if (this.paused()) return fail(ERR.MAINTENANCE);
     const offer = this.offers.get(offerId);
     if (!e || e.ticketId !== ticketId || e.offerId !== offerId || !offer || !offer.entries.includes(e)) return fail(ERR.BAD_TARGET, 'stale matchmaking offer');
     if (!this.available(session, e) || session.matchmakingVersion !== e.version) {
@@ -422,7 +416,7 @@ export class Matchmaking {
   }
 
   pump() {
-    if (this.closed || this.paused()) return;
+    if (this.closed) return;
     const t0 = this.metrics.start();
     try { this.pumpPools(); } finally { this.metrics.end('queue.pump', t0, this.entries.size); }
   }

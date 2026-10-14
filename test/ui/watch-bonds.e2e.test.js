@@ -154,7 +154,9 @@ async function coopMatch(P, base, { bots = 1, prefix }) {
   const guest = new Client(P, base, 'guest', { prefix: `${prefix}-phone`, w: 756, h: 366, settings: AT_100 });
   await host.open();
   await host.enter('凯尔希');
-  await host.createCoop('标准模拟');
+  await host.click('.mode-card', '同盟模拟');
+  await host.click('.diff-card', '标准模拟');
+  await host.click('.create-box button', '创建同盟');
   const room = (await host.waitFor((s) => !!s.room?.code, 'room created')).room;
   for (let i = 0; i < bots; i++) {
     await host.click('button', '添加 AI 队友');
@@ -171,11 +173,11 @@ async function coopMatch(P, base, { bots = 1, prefix }) {
     return !!s.room?.seats?.find((x) => x && x.playerId === s.me.playerId)?.ready;
   });
   for (let i = 0; i < 6 && !(await guestReady()); i++) {
-    await guest.roomReady({ optional: true, timeout: 3000 });
+    await guest.click('.room-bar__right button', '准备就绪', { optional: true, timeout: 3000 });
     await sleep(600);
   }
   assert.ok(await guestReady(), 'guest ready');
-  await host.roomStart({ timeout: 20000 });
+  await host.click('.room-bar__right button', '开始模拟', { timeout: 20000 });
   for (const c of [host, guest]) await c.waitFor((s) => s.phase === 'INFO_CHECK', 'briefing', 30000);
   for (const c of [host, guest]) await c.click('.brief__foot .btn--primary', '准备就绪');
   for (const c of [host, guest]) await c.waitFor((s) => s.phase !== 'INFO_CHECK', 'band draft', 40000);
@@ -282,7 +284,9 @@ describe('DESIGN §20.15 — the bond strip shows the watched teammate\'s bonds 
     try {
       await host.open();
       await host.enter('凯尔希');
-      await host.createCoop('标准模拟');
+      await host.click('.mode-card', '同盟模拟');
+      await host.click('.diff-card', '标准模拟');
+      await host.click('.create-box button', '创建同盟');
       const room = (await host.waitFor((s) => !!s.room?.code, 'room created')).room;
       await guest.open(`?room=${room.code}`);
       await guest.enter('阿米娅');
@@ -292,11 +296,11 @@ describe('DESIGN §20.15 — the bond strip shows the watched teammate\'s bonds 
         return !!s.room?.seats?.find((x) => x && x.playerId === s.me.playerId)?.ready;
       });
       for (let i = 0; i < 6 && !(await guestReady()); i++) {
-        await guest.roomReady({ optional: true, timeout: 3000 });
+        await guest.click('.room-bar__right button', '准备就绪', { optional: true, timeout: 3000 });
         await sleep(600);
       }
       assert.ok(await guestReady(), 'guest ready');
-      await host.roomStart({ timeout: 20000 });
+      await host.click('.room-bar__right button', '开始模拟', { timeout: 20000 });
       for (const c of [host, guest]) await c.waitFor((s) => s.phase === 'INFO_CHECK', 'briefing', 30000);
       for (const c of [host, guest]) await c.click('.brief__foot .btn--primary', '准备就绪');
       for (const c of [host, guest]) await c.waitFor((s) => s.phase !== 'INFO_CHECK', 'band draft', 40000);

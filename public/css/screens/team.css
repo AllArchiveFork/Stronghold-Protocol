@@ -48,15 +48,6 @@
 .team__line .misstag__n { font-size: .16rem; }
 .team__line .misstag__icon { font-size: .13rem; }
 .team__status { width: .26rem; height: .26rem; display: grid; place-items: center; border: 1px solid currentColor; background: rgba(0, 0, 0, .5); }
-/* the shared 机变 draft's pick order on the portrait (ui/choiceOverlay.js spMarks): ✓ picked, ••• deciding */
-.team__spmark { position: absolute; right: -.07rem; bottom: -.05rem; z-index: 2; display: grid; place-items: center; width: .24rem; height: .24rem; border-radius: 50%;
-  background: var(--mint-500); color: #05261e; box-shadow: 0 0 0 2px rgba(6, 9, 8, .9), 0 0 .08rem rgba(23, 249, 183, .5); }
-.team__spmark .icon { width: .17rem; height: .17rem; }
-.team__spmark.is-turn { display: flex; gap: 2px; width: auto; padding: 0 .05rem; border-radius: .12rem; background: rgba(8, 11, 10, .92); box-shadow: 0 0 0 1px rgba(255, 255, 255, .35); }
-.team__spmark.is-turn i { width: 3px; height: 3px; border-radius: 50%; background: #f2f5f4; animation: spmark-dot 1s ease-in-out infinite; }
-.team__spmark.is-turn i:nth-child(2) { animation-delay: .16s; }
-.team__spmark.is-turn i:nth-child(3) { animation-delay: .32s; }
-@keyframes spmark-dot { 0%, 100% { opacity: .35; } 40% { opacity: 1; } }
 .team__status .icon { width: .18rem; height: .18rem; }
 .team__status .lsprite { width: .2rem; height: .2rem; object-fit: contain; }
 .team__status.has-sprite { border-color: transparent; background: none; animation: none; }

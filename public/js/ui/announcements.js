@@ -21,17 +21,6 @@ export function parseAnnouncements(value) {
   return entries;
 }
 
-/**
- * The hub's maintenance / notice banner: the newest entry's optional `banner` line (editorial, ≤160 characters; older
- * clients ignore the field and it is not part of the revision, so adding or removing it re-opens no board).
- * @returns {string|null}
- */
-export function announcementBanner(value) {
-  const first = Array.isArray(value) ? value[0] : null;
-  const text = typeof first?.banner === 'string' ? first.banner.trim() : '';
-  return text && text.length <= 160 ? text : null;
-}
-
 let dismissedInPage = null;
 
 /** Content identity, independent of the browser build and editorial object key order. */

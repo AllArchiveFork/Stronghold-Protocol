@@ -8,7 +8,6 @@ import { parseRichText, rtClassName } from './richText.js';
 import { t as tr } from '../../../shared/i18n.js';
 import { appearanceRecord } from './skinAssets.js';
 import { MaterialImage } from './materialImage.js';
-import { useCardAvatar } from './playerCard.js';
 import {
   uiUrl, chessAvatarUrl, chessPortraitUrl, itemIconUrl, tokenAvatarUrl, enemyIconUrl, bondIconUrl, bandIconUrl,
 } from './assetUrls.js';
@@ -259,30 +258,22 @@ export function RichTip({ text, children, placement = 'top' }) {
   return html`<${Tooltip} text=${text ? html`<${RichText} text=${text} />` : null} placement=${placement}>${children}<//>`;
 }
 
-/** A human player's picked 头像 (room.card avatar, ui/playerCard.js) — or `then` when none — over the fallback. */
-function PickedFace({ playerId, then, fallback }) {
-  const face = useCardAvatar(playerId);
-  return html`<${Img} src=${face || then} fallbackSrc=${face ? then : null} fallback=${fallback} />`;
-}
-
 /**
- * Seat-coloured player avatar: band icon when a band is picked, else the player's picked 头像, else glyph/robot;
- * `prefer="avatar"` puts the picked 头像 first (a player's own cards: the draft rows, 协议启动, the settlement).
- * @param {{ player: any, size?: 'sm'|'md', self?: boolean, prefer?: 'band'|'avatar', class?: string }} props
+ * Seat-coloured player avatar: band icon when a band is picked, else glyph/robot.
+ * @param {{ player: any, size?: 'sm'|'md', self?: boolean, class?: string }} props
  */
-export function PlayerAvatar({ player, size = 'md', self = false, prefer = 'band', class: cls }) {
+export function PlayerAvatar({ player, size = 'md', self = false, class: cls }) {
   const src = player?.bandId ? bandIconUrl(data.get('assets'), player.bandId) : null;
   const glyph = [...(player?.name || '').trim()][0] || '?';
   const pending = player?.pendingDeath === true;
   const dead = !pending && (player?.alive === false || player?.status === 'dead');
   const left = player?.status === 'left';
   const hue = [162, 196, 38, 280][((player?.seat | 0) % 4 + 4) % 4];
-  const fallback = player?.isBot ? html`<${Icon} name="robot" class="pavatar__bot" />` : html`<span class="pavatar__glyph">${glyph}</span>`;
-  const face = player?.isBot || player?.playerId == null || (src && prefer !== 'avatar') ? html`<${Img} src=${src} fallback=${fallback} />`
-    : html`<${PickedFace} playerId=${player.playerId} then=${src} fallback=${fallback} />`;
   return html`<span class=${cx('pavatar', `pavatar--${size}`, self && 'is-self', dead && 'is-dead', left && 'is-left', player?.isBot && 'is-bot',
       player?.connected === false && !player?.isBot && 'is-offline', cls)} style=${`--seat-hue:${hue}`}>
-    <span class="pavatar__img">${face}</span>
+    <span class="pavatar__img">
+      <${Img} src=${src} fallback=${player?.isBot ? html`<${Icon} name="robot" class="pavatar__bot" />` : html`<span class="pavatar__glyph">${glyph}</span>`} />
+    </span>
     ${pending ? html`<span class="pavatar__rescue" aria-label=${tr('等待救援')}><${Icon} name="hourglass" /></span>` : null}
     ${dead ? html`<span class="pavatar__x" aria-label=${tr('已淘汰')}><${Icon} name="close" /></span>` : null}
     ${left ? html`<span class="pavatar__door" aria-label=${tr('已离开')}><${Icon} name="exit" /></span>` : null}

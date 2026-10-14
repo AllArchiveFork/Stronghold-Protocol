@@ -97,8 +97,6 @@ export function dismissToast(id) {
 export function describeError(err) {
   if (!err) return t('发生未知错误');
   if (typeof err === 'string') return t(Object.hasOwn(ERR_TEXT, err) ? ERR_TEXT[err] : err);
-  // a nickname reserved for the server's owner: the NetError's own text (net.js NAME_RESERVED_TEXT)
-  if (err.code === 'NAME_REJECTED' && err.detail === 'reserved' && typeof err.message === 'string' && err.message) return t(err.message);
   if (err.code && Object.hasOwn(ERR_TEXT, err.code)) return t(ERR_TEXT[err.code]);
   if (typeof err.message === 'string' && err.message) return t(err.message);
   if (typeof err.msg === 'string' && err.msg) return t(err.msg);

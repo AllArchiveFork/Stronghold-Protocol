@@ -10,12 +10,6 @@ export function experimentalOptions(input) {
     ...(capacity === MAX_SEATS ? {} : { playerCapacity: capacity }) };
 }
 
-/** Whether any option differs from a standard room's (the room's 实验性选项 button is then marked). */
-export function experimentalChanged(input) {
-  const options = experimentalOptions(input);
-  return options.revivalEnabled || options.disableSharedPool || !!options.disableDuckLord || !!options.playerCapacity;
-}
-
 export function experimentalSummary(input) {
   const options = experimentalOptions(input);
   const summary = t('复活 {0} · 共享卡池 {1}', { 0: options.revivalEnabled ? t('开启') : tc('toggle', '关闭'), 1: options.disableSharedPool ? tc('toggle', '关闭') : t('开启') });

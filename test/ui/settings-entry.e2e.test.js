@@ -56,7 +56,7 @@ describe('the settings entry of the lobby and the room', { skip: !ENABLED && 'se
     const announcement = await page.$('.announcement-board .modal__actions button');
     if (announcement) { await announcement.click(); await page.waitForSelector('.announcement-board', { hidden: true }); }
     assert.equal(await page.$('.lobby-language'), null, 'language has no duplicate lobby entry');
-    assert.ok(await settingsBeforeGuide(page, '.lobby-screen .topbar__tools', 'lobby-guide'), '设置 sits right before 玩法说明 in the lobby\'s top bar');
+    assert.ok(await settingsBeforeGuide(page, '.lobby-screen .topbar__right', 'lobby-guide'), '设置 sits right before 玩法说明 in the lobby\'s top bar');
     assert.equal(await modalText(page), null, 'closed until asked');
     await page.click('.lobby-screen [data-testid="settings-btn"]');
     await page.waitForSelector('.modal', { timeout: 5000 });
@@ -73,14 +73,11 @@ describe('the settings entry of the lobby and the room', { skip: !ENABLED && 'se
     assert.equal(await modalText(page), null, 'Esc closes it');
     assert.ok(await page.$('.lobby-screen'), 'the lobby is still there');
 
-    // the room: 同盟模拟 → 创建同盟 → the same button, closed with 完成
-    await page.evaluate(() => [...document.querySelectorAll('.hub-entry')].find((b) => /同盟模拟/.test(b.textContent))?.click());
-    await page.waitForSelector('.ally-card--create', { visible: true, timeout: 10000 });
-    await sleep(500);
-    await page.click('.ally-card--create');
+    // the room: 创建同盟 → the same button, closed with 完成
+    await page.evaluate(() => [...document.querySelectorAll('button')].find((b) => /创建同盟/.test(b.textContent))?.click());
     await page.waitForSelector('.room-screen', { timeout: 15000 });
     await sleep(500);
-    assert.ok(await settingsBeforeGuide(page, '.room-screen .rs-tools', 'room-guide'), '设置 sits right before 玩法说明 in the room\'s top bar');
+    assert.ok(await settingsBeforeGuide(page, '.room-screen .topbar__left', 'room-guide'), '设置 sits right before 玩法说明 in the room\'s top bar');
     await page.click('.room-screen [data-testid="settings-btn"]');
     await page.waitForSelector('.modal', { timeout: 5000 });
     assert.match(await modalText(page), /背景音乐/);

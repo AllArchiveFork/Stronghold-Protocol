@@ -52,8 +52,6 @@ def local_ingress_service(instance, profile, game_nodes):
 # replacement keeps working) and the file inside it may be absent (= no cap).
 ONLINE_LIMIT_MOUNT = '/run/limits'
 ONLINE_LIMIT_FILE = ONLINE_LIMIT_MOUNT + '/online-limit.json'
-# The owner (服主) file of the same directory (server/ownerFile.js; {"names": [...], "keySha256": "<64 hex>"}); absent = off.
-OWNER_FILE = ONLINE_LIMIT_MOUNT + '/owner.json'
 
 
 def compose(core_bundle, out, *, profile='beta', ingress_instances=1, ingress_link=False, online_limit_dir=None):
@@ -116,7 +114,7 @@ def compose(core_bundle, out, *, profile='beta', ingress_instances=1, ingress_li
         value['restart'] = 'unless-stopped'
         if name == 'coordinator' and online_limit_dir is not None:
             value['volumes'] = [*value['volumes'], str(online_limit_dir) + ':' + ONLINE_LIMIT_MOUNT + ':ro']
-            value['environment'] = {**value['environment'], 'SP_ONLINE_LIMIT_FILE': ONLINE_LIMIT_FILE, 'SP_OWNER_FILE': OWNER_FILE}
+            value['environment'] = {**value['environment'], 'SP_ONLINE_LIMIT_FILE': ONLINE_LIMIT_FILE}
         services[name] = value
     original_config = str(core_bundle / 'runtime' / 'coordinator') + ':/run/config:ro'
     require(not ingress_link or services['coordinator']['volumes'][0] == original_config, 'unexpected coordinator config mount')

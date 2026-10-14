@@ -19,8 +19,8 @@ test('the cap file: a limit 0..1e6 (0 or no key = none); anything else is invali
 });
 
 test('the file may also set the lobby room / AI caps; an unknown key or a bad value invalidates the whole file', () => {
-  assert.deepEqual(parseLimits({ limit: 3000, maxRoomsPerAddr: 24, maxBotsPerAddr: 60 }), { limit: 3000, caps: { maxRoomsPerAddr: 24, maxBotsPerAddr: 60 }, maintenance: false });
-  assert.deepEqual(parseLimits({ maxRooms: 0, maxMatchesPerAddr: 24, maxBots: 6000 }), { limit: 0, caps: { maxRooms: 0, maxMatchesPerAddr: 24, maxBots: 6000 }, maintenance: false });
+  assert.deepEqual(parseLimits({ limit: 3000, maxRoomsPerAddr: 24, maxBotsPerAddr: 60 }), { limit: 3000, caps: { maxRoomsPerAddr: 24, maxBotsPerAddr: 60 } });
+  assert.deepEqual(parseLimits({ maxRooms: 0, maxMatchesPerAddr: 24, maxBots: 6000 }), { limit: 0, caps: { maxRooms: 0, maxMatchesPerAddr: 24, maxBots: 6000 } });
   for (const bad of [{ limit: 10, maxRoomPerAddr: 3 }, { maxBots: -1 }, { maxBotsPerAddr: '60' }, { maxRooms: 1.5 }]) {
     assert.equal(parseLimits(bad), null, JSON.stringify(bad));
     assert.equal(parseOnlineLimit(bad), null, JSON.stringify(bad));

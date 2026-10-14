@@ -22,7 +22,7 @@ export const WS_MAX_PAYLOAD = 64 * 1024;
  * @param {{ data: object, log: object }} deps the game data the lobby's matches use, the logger
  * @returns {{ registry: SessionRegistry, lobby: Lobby, network: Network }}
  */
-export function createSessionStack(opts, { data, log, combatPool = null, trialPool = null, getLoadState, getLoadDetails, onlineLimit = null, ownerFile = null }) {
+export function createSessionStack(opts, { data, log, combatPool = null, trialPool = null, getLoadState, getLoadDetails, onlineLimit = null }) {
   if (opts.lobbyFactory != null && typeof opts.lobbyFactory !== 'function') throw new TypeError('invalid lobby factory');
   if (opts.getClusterLoad != null && typeof opts.getClusterLoad !== 'function') throw new TypeError('invalid cluster load provider');
   const netOptions = netOptionsFrom(opts);
@@ -34,8 +34,7 @@ export function createSessionStack(opts, { data, log, combatPool = null, trialPo
   // The limits file (server/onlineLimit.js) also carries the lobby's hot-reloadable room / AI caps (Lobby.cap).
   const lobby = createLobby({ registry, log, MatchClass: opts.MatchClass, getData: () => data, seedFn: opts.seedFn, combatPool, trialPool, options: lobbyOptions,
     limits: onlineLimit, ...metrics });
-  // The owner file (server/ownerFile.js): the 服主 key every hello may carry and the owner's reserved names.
-  const network = new Network({ registry, handler: lobby, log, options: netOptions, getLoadState, getLoadDetails, getClusterLoad: opts.getClusterLoad, onlineLimit, ownerFile, ...metrics });
+  const network = new Network({ registry, handler: lobby, log, options: netOptions, getLoadState, getLoadDetails, getClusterLoad: opts.getClusterLoad, onlineLimit, ...metrics });
   return { registry, lobby, network };
 }
 

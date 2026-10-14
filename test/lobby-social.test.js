@@ -1371,7 +1371,7 @@ test('the limits file overrides each room / AI cap it sets while the lobby runs;
   assert.equal(h.lobby.create(h.player('戊', 'B'), { mode: 'solo', difficulty: 'NORMAL' }).error, ERR.LIMIT, 'global cap');
   assert.deepEqual(h.lobby.create(a, { mode: 'coop', difficulty: 'HARD' }), { ok: true }, 'replacing your only room is no new room');
   assert.deepEqual(h.lobby.limitStats(), {
-    maxRooms: 2, maxRoomsPerAddr: 0, maxMatchesPerAddr: 0, maxBots: 0, maxBotsPerAddr: 0, maintenance: 0,
+    maxRooms: 2, maxRoomsPerAddr: 0, maxMatchesPerAddr: 0, maxBots: 0, maxBotsPerAddr: 0,
     perAddrPeak: { rooms: 2, matches: 1, bots: 0 },
     refused: { maxRooms: 1, maxRoomsPerAddr: 2, maxMatchesPerAddr: 1, maxBots: 0, maxBotsPerAddr: 1 },
   });

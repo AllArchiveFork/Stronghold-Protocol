@@ -85,30 +85,26 @@ test('shipped announcement data validates; optional board is mounted from the lo
   assert.match(board, /ariaLabel=\$\{t\('大厅公告板'\)\} trapFocus=\$\{true\}/);
 });
 
-test('today is one notice: the new interface with its design credit, what it adds where, the access rule live since 10-13 and the maintenance; the introduction is retained with the credit and a first-visit guide', () => {
+test('today is one short notice: 0.2.6, the access changes live since 10-13, reconnects, the interface fix and the maintenance; the introduction is retained', () => {
   const entries = parseAnnouncements(JSON.parse(source('../../data/announcements.json')));
   assert.equal(entries.length, 2);
-  assert.equal(entries[0].title, '新版界面上线：大厅、房间与干员调配全新改版');
+  assert.equal(entries[0].title, '10 月 14 日更新：同步原作 0.2.6，掉线重连与界面修复');
+  assert.equal(entries[0].date, '2026-10-14');
   assert.equal(entries[1].title, '欢迎游玩卫戍协议！卫来！');
   assert.equal(entries[1].date, '2026-10-06');
   const today = entries[0].paragraphs.join('\n');
-  for (const phrase of ['Bilibili@雨千代chiyo', '请刷新页面重新进入', '成就统计', '名片干员', '名片底图', '大厅音乐', '只保存在本机', '卡片视图',
-    '「异形屏适配」', '「实验性选项」', '多人匹配', '只向中国大陆网络开放']) assert.ok(today.includes(phrase), phrase);
+  for (const phrase of ['请刷新页面重新进入', '原作 0.2.6', '10 月 13 日起已生效', '只向中国大陆网络开放', '「暂不可用」', '安全验证',
+    '掉线不再算作挂机', '10 分钟内', '恢复本机座位', '提示重新登录', '界面变得极小', '「弹药数量」']) assert.ok(today.includes(phrase), phrase);
   assert.doesNotMatch(today, /保证不卡顿|带宽无限|固定比例下降|会话重置.*已修复|正在进行服务器扩容|不[^。；]{0,100}，也不/);
   assert.match(entries[1].paragraphs.join('\n'), /纯公益.*非官方/);
   assert.match(entries[1].paragraphs.join('\n'), /github\.com\/sganggs\/Stronghold-Protocol/);
-  assert.match(entries[1].paragraphs.join('\n'), /界面致谢：.*Bilibili@雨千代chiyo/);
-  assert.match(entries[1].paragraphs.join('\n'), /第一次来的博士：.*「玩法说明」/);
-  // the owner asked for a fuller notice on 2026-10-14 (was < 800): the board scrolls, but the two together stay readable
-  assert.ok(entries.flatMap(entry => entry.paragraphs).join('\n').length < 1600, 'the notices stay readable');
+  assert.ok(entries.flatMap(entry => entry.paragraphs).join('\n').length < 800, 'the notice stays short');
 });
 
 test('announcements omit contacts and infrastructure; the lobby owns the copyable group number', () => {
   const entries = parseAnnouncements(JSON.parse(source('../../data/announcements.json')));
   const text = entries.flatMap(entry => entry.paragraphs).join('\n');
-  // the one contact a notice carries is the interface author's (the owner's request of 2026-10-14); the group number stays the lobby's
-  assert.deepEqual([...text.matchAll(/QQ\s*(\d+)/g)].map(m => m[1]), ['374360968']);
-  assert.doesNotMatch(text.replace('QQ 374360968', ''), /QQ|群号|243859707|815818430|2225664821|coordinator|ingress|Worker|WireGuard|ModelScope|OpenI|\b\d{1,3}(?:\.\d{1,3}){3}\b/);
+  assert.doesNotMatch(text, /QQ|群号|243859707|815818430|2225664821|coordinator|ingress|Worker|WireGuard|ModelScope|OpenI|\b\d{1,3}(?:\.\d{1,3}){3}\b/);
   assert.match(source('../../public/js/ui/lobbyFeedback.js'), /FEEDBACK_GROUP = '243859707'/);
 });
 

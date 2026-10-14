@@ -231,9 +231,11 @@ describe('client leftovers — real server', { skip: !ENABLED && 'set SP_E2E=1 (
     try {
       await c.open();
       await c.enter('替换');
-      await c.createSolo('标准模拟');
+      await c.click('.mode-card', '独立模拟');
+      await c.click('.diff-card', '标准模拟');
+      await c.click('.create-box button', '开始独立模拟');
       await c.waitFor((s) => !!s.room, 'solo room');
-      if (!(await c.st()).phase) await c.roomStart({ timeout: 20000 });
+      if (!(await c.st()).phase) await c.click('.room-bar__right button', '开始模拟', { timeout: 20000 });
       await c.waitFor((s) => s.phase === 'INFO_CHECK', 'briefing', 30000);
       await c.click('.brief__foot .btn--primary', '准备就绪');
       await c.waitFor((s) => s.phase === 'BAND_DRAFT', 'band draft', 30000);
@@ -356,9 +358,11 @@ describe('client leftovers — real server', { skip: !ENABLED && 'set SP_E2E=1 (
     try {
       await c.open();
       await c.enter('重启');
-      await c.createSolo('标准模拟');
+      await c.click('.mode-card', '独立模拟');
+      await c.click('.diff-card', '标准模拟');
+      await c.click('.create-box button', '开始独立模拟');
       await c.waitFor((s) => !!s.room, 'solo room');
-      if (!(await c.st()).phase) await c.roomStart({ timeout: 20000 });
+      if (!(await c.st()).phase) await c.click('.room-bar__right button', '开始模拟', { timeout: 20000 });
       await c.waitFor((s) => s.phase === 'INFO_CHECK', 'briefing', 30000);
       const before = await c.st();
       await sleep(600);
@@ -383,9 +387,11 @@ describe('client leftovers — real server', { skip: !ENABLED && 'set SP_E2E=1 (
       assert.equal(restoring, false);
       await c.shot('restart');
       // the lobby works on the new server: a new solo run starts
-      await c.createSolo('标准模拟');
+      await c.click('.mode-card', '独立模拟');
+      await c.click('.diff-card', '标准模拟');
+      await c.click('.create-box button', '开始独立模拟');
       await c.waitFor((x) => !!x.room, 'a new solo room on the restarted server');
-      if (!(await c.st()).phase) await c.roomStart({ timeout: 20000 });
+      if (!(await c.st()).phase) await c.click('.room-bar__right button', '开始模拟', { timeout: 20000 });
       await c.waitFor((x) => x.phase === 'INFO_CHECK', 'briefing on the restarted server', 30000);
       // a graceful stop (Ctrl+C / SIGTERM): room.closed 'shutdown' says so first, the same clean way back — and only once
       const resetToast = () => c.page.evaluate(() => [...document.querySelectorAll('.toast')].some((t) => t.textContent.includes('服务器会话已重置')));

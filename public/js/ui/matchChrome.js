@@ -120,30 +120,24 @@ export function AwayOverlay({ onBack = () => {} }) {
 }
 
 /**
- * Pre-game step header (2026-10-13, the event's pre-game, video 6:29–7:51): exit over the ping | the difficulty, with
- * `extra` beside it in one capsule (the draft's 本局信息) | "1/2 确认本局信息" ……… `status` (the draft's turn: 请选择策略 /
- * X 正在选择策略… / 策略选择完成) | 玩法说明 and the countdown.
- * @param {{ step: number, of: number, title: string, micro: string, pub: any, total?: number|null, onExit: Function,
- *   extra?: any, status?: any }} props
+ * Pre-game step header.
+ * @param {{ step: number, of: number, title: string, micro: string, pub: any, total?: number|null, onExit: Function }} props
  */
-export function StepHeader({ step, of, title, micro, pub, total, onExit, extra = null, status = null }) {
+export function StepHeader({ step, of, title, micro, pub, total, onExit }) {
   const conn = useStore((s) => s.connection, shallowEqual);
   return html`<header class="stephead">
     <div class="stephead__left">
-      <div class="stephead__exit">
-        <${Button} variant="danger" size="lg" square=${true} icon="exit" onClick=${onExit} aria-label=${t('离开')} title=${t('离开')} />
+      <${Button} variant="danger" size="lg" square=${true} icon="exit" onClick=${onExit} aria-label=${t('离开')} title=${t('离开')} />
+      <div class="stephead__meta">
         <${PingPill} ms=${conn.ping} online=${conn.status === 'online'} />
-      </div>
-      <div class=${`stephead__mode${extra ? ' has-extra' : ''}`}>
         ${pub?.difficulty ? html`<${DifficultyTag} difficulty=${pub.difficulty} />` : null}
-        ${extra}
       </div>
-      <i class="stephead__sep" aria-hidden="true"></i>
-      <h1 class="stephead__title"><b class="num">${step}</b><span class="num stephead__of">/${of}</span><span class="stephead__name">${title}</span></h1>
-      <${MicroLabel} tone="mint" class="stephead__micro">${micro}</${MicroLabel}>
+    </div>
+    <div class="stephead__center">
+      <${MicroLabel} tone="mint">${micro}</${MicroLabel}>
+      <h1 class="stephead__title"><b class="num">${step}</b><span class="num stephead__of">/${of}</span>${title}</h1>
     </div>
     <div class="stephead__right">
-      ${status ? html`<div class="stephead__status">${status}</div><i class="stephead__sep" aria-hidden="true"></i>` : null}
       <${GuideButton} class="stephead__guide" variant="secondary" />
       <${Countdown} deadline=${pub?.deadline} total=${total ?? undefined} size="md" />
     </div>

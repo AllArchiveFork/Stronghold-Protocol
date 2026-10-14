@@ -138,7 +138,7 @@ const EMBLEM = [
   'XXXXXXXXXXXXX',
 ];
 
-export function Emblem() {
+function Emblem() {
   const dots = useMemo(() => {
     const out = [];
     EMBLEM.forEach((row, r) => {

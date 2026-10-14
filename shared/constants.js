@@ -155,7 +155,6 @@ export const ERR = Object.freeze({
   QUEUED: 'QUEUED',               // leave matchmaking before creating/joining a private room
   SPECTATOR: 'SPECTATOR',         // a spectator seat only watches (MAX_SPECTATORS)
   START_RETRY: 'START_RETRY',     // cluster start: a player's game channel was not ready in time (server/cluster/lobby.js)
-  MAINTENANCE: 'MAINTENANCE',     // the limits file's maintenance switch is on (server/onlineLimit.js): no new room / start / matchmaking
   INTERNAL: 'INTERNAL',
 });
 
@@ -171,7 +170,6 @@ export const ERR_TEXT = {
   NAME_REJECTED: N_('代号含有不适宜内容或格式无效，请换一个昵称。'),
   QUEUED: N_('正在匹配中，请先取消匹配'),
   LIMIT: N_('房间、对局或 AI 队友数量已达上限，请先退出其他房间或稍后再试'),
-  MAINTENANCE: N_('服务器即将维护，暂停开启新的模拟'),
 };
 
 // ---- Emotes (交流, research 09 §4) -----------------------------------------------------------------------------

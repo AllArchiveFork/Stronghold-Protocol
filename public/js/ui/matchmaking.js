@@ -1,9 +1,8 @@
 // Public queue remains separate from solo and invite rooms; all assignments come from the server.
 import { useEffect, useRef, useState } from '../../vendor/hooks.module.js';
-import { DIFFICULTIES, DIFFICULTY_NAMES, DIFFICULTY_COLORS } from '../../../shared/constants.js';
+import { DIFFICULTY_NAMES } from '../../../shared/constants.js';
 import { isPlayerCapacity, roomCapacity } from '../../../shared/playerCapacity.js';
-import { html, Button, Icon, MicroLabel, Modal, DifficultyIcon, useTicker } from './components.js';
-import { SearchPanel, FoundPanel } from './matchFlow.js';
+import { html, Button, Icon, MicroLabel, Modal, useTicker } from './components.js';
 import { useStore, serverNow } from '../store.js';
 import { net } from '../net.js';
 import { queueCancellation } from '../queueCancellation.js';
@@ -33,7 +32,6 @@ const REASONS = {
   allocation_failed: N_('本次分配未完成，继续等待；原好友队伍保留'),
   allocation_timeout: N_('游戏节点准备超时，继续等待；原好友队伍保留'),
   unconfirmed: N_('你或同队成员未完成确认，已退出本次匹配；请重新开始匹配'),
-  maintenance: N_('服务器即将维护，匹配已暂停'),
 };
 
 export function OnlinePlayers() {
@@ -130,39 +128,4 @@ export function MatchmakingPanel({ queue, difficulty, experimental, online, onJo
       <p class="modal__text">${t('等待人数包含同难度、同人数模式的待匹配博士；小队保持完整，人数充足不代表已组成对局。')}</p>
     <//>` : null}
   </section>`;
-}
-
-/**
- * The queue in the hub's frame (2026-10-14: the lobby / room design by 雨千代chiyo, ui/matchFlow.js): 搜寻中 while queued
- * — the time waited, the server's waiting count, 停止搜寻 (the same cancellation as 取消匹配); the confirm step
- * (MatchmakingPanel: 确认入场 / 退出本次匹配) while an offer stands; 搜寻成功 while the game node is prepared. Every
- * state still comes from queue.state; null while not queued.
- */
-export function QueueFlow({ queue, difficulty, experimental, online, party = false, class: cls = '' }) {
-  useTicker(1000);
-  const cancellation = useStore((s) => s.ui.queueCancel);
-  if (!queueActive(queue)) return null;
-  const capacity = queueCapacity(queue, experimental);
-  if (queue.state === 'offered' && queue.allocationPending === true) {
-    return html`<${FoundPanel} class=${cls} seats=${capacity} text=${t('全员已确认，正在连接游戏节点')} />`;
-  }
-  if (queue.state === 'offered') {
-    return html`<div class=${`mf-offer ${cls}`}><${MatchmakingPanel} queue=${queue} difficulty=${difficulty} experimental=${experimental} online=${online} /></div>`;
-  }
-  const cancelling = cancellation?.ticketId === queue.ticketId && ['sending', 'recovering', 'confirming'].includes(cancellation?.status);
-  const cancelFailed = cancellation?.ticketId === queue.ticketId && cancellation?.status === 'failed';
-  const population = queuePopulation(queue, online, cancelling || cancelFailed);
-  const d = DIFFICULTIES.includes(queue.difficulty) ? queue.difficulty : difficulty;
-  const note = cancelling ? t('正在确认取消，等待服务器同步…')
-    : !online ? t('连接中断，重连后同步匹配状态')
-    : cancelFailed ? t('取消尚未确认，请重连后重试；当前为服务器最后确认的状态。')
-    : queue.reason && REASONS[queue.reason] ? t(REASONS[queue.reason])
-    : population == null ? t('{n} 名真人 · 不自动补 AI', { n: capacity })
-    : queue.partySize > 1 ? t('本难度等待 {count} 人（含本队 {n} 人）', { count: population, n: queue.partySize })
-    : t('本难度等待 {count} 人（含你）', { count: population });
-  return html`<${SearchPanel} class=${cls} elapsed=${queueTime(queue, serverNow())} stopping=${cancelling || !online}
-    onStop=${() => queueCancellation.cancel(queue.ticketId)} note=${note}
-    tags=${[{ key: 'mode', label: party ? t('组队匹配') : t('多人匹配'), icon: html`<${Icon} name="search" />` },
-      { key: 'diff', label: t(DIFFICULTY_NAMES[d]), color: DIFFICULTY_COLORS[d], icon: html`<${DifficultyIcon} difficulty=${d} />` },
-      { key: 'cap', label: t('{n} 人模式', { n: capacity }), icon: html`<${Icon} name="users" />` }]} />`;
 }
