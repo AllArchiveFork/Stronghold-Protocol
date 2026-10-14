@@ -63,9 +63,13 @@
 //   battleRunner.state()  → { battleId, fieldId, kind, authoritative, watch, done, own, members, loading, paused, leaks,
 //                              uniteLeft, bondLayers } | null
 //   battleRunner.stats()  → { ticks, stepMs, avgTickMs, maxFrameMs, catchups, errors, battles }
-//   battleRunner.unitStats(unitId, fieldId?) → the frozen first-tick unitStatsEntry of the battle on screen | null.
-//                           Panel values/range are sampled once from cached unit stats; later buffs and spawns never
-//                           regenerate them. HP/SP bars still follow the compact snapshots, not this panel cache.
+//   battleRunner.unitStats(unitId, fieldId?) → the live stats of a unit of the battle on screen (shared/protocol.js
+//                           unitStatsEntry: current HP, effective max HP / ATK / DEF / RES / interval / block / move
+//                           speed next to its base; an ally also its live attack range `range`) | null — the detail card
+//                           re-reads it 4× a second (the owner, 2026-10-14: combat runs in the browser now, so the card
+//                           follows this sim live; the 2026-10-10 opening-only cache stays for server-run fields).
+//                           Read-only: it takes the stats the sim computed last (`unit._s`) and the range grid it keeps,
+//                           never `unit.s`, whose lazy recompute would move the battle's floats.
 //   battleRunner.unitIdOf(uid, ownerId, fieldId?) → the id of an own board piece's unit in that battle | null
 //   battleRunner.ownerOps(ownerId, fieldId?) → [{ kind: 'op', ownerId, defId, items?, standInFor?, diy? }] that player's
 //                           operators in the battle on screen with their equipment (a teammate's bond popup: the members in
@@ -77,7 +81,7 @@
 
 import { net as appNet } from '../net.js';
 import { store as appStore } from '../store.js';
-import { fxForm } from '../../../shared/protocol.js';
+import { unitStatsEntry, fxForm } from '../../../shared/protocol.js';
 import { spectateEffects, uniteRelayKey } from './observe.js';
 import { MAX_PLAYER_CAPACITY } from '../../../shared/playerCapacity.js';
 import { recordError, setBattleSource } from '../diag.js';
@@ -1114,14 +1118,18 @@ export function createBattleRunner(deps) {
       return { ...stats, avgTickMs: stats.ticks ? stats.stepMs / stats.ticks : 0, entries: entries.size, loadingSim: !!simP };
     },
     /**
-     * Frozen first-tick stats of the battle on screen; later spawns have no entry and use record values.
-     * Never reads live Unit stats or regenerates panel DTOs while the battle is running.
+     * Live stats of unit `unitId` of the battle on screen (null: no such battle / unit, or `fieldId` names another
+     * field). Reads the sim's last computed stats (`unit._s`, falling back to the base) — never `unit.s`, whose lazy
+     * recompute would run earlier than the sim itself would run it.
      * @param {number} unitId @param {string|null} [fieldId]
      */
     unitStats(unitId, fieldId = null) {
       const e = cur;
       if (!e || !Number.isInteger(unitId) || (fieldId != null && e.fieldId !== fieldId)) return null;
-      return e.battle._startUnitStats?.find(u => u.id === unitId) ?? null;
+      let u = null;
+      try { u = typeof e.battle.unitById === 'function' ? e.battle.unitById(unitId) : null; } catch { u = null; }
+      if (!u) return null;
+      try { return unitStatsEntry(u, u._s || null); } catch { return null; }
     },
     /**
      * The unit id of the board piece `uid` owned by `ownerId` in the battle on screen (an own operator's card opened in

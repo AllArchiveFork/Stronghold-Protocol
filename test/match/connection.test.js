@@ -1,8 +1,8 @@
-// Platform interface: start/handle/onDisconnect/onReconnect/onLeave/dispose, autoplay, bot takeover, views.
+// Platform interface: start/handle/onDisconnect/onReconnect/onLeave/dispose, autoplay, bot takeover (掉线由 AI 接管), views.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { PHASE, ERR } from '../../shared/constants.js';
-import { Match } from '../../server/match/Match.js';
+import { Match, OFFLINE_TAKEOVER_ROUNDS } from '../../server/match/Match.js';
 import { StubMatch } from '../../server/match/StubMatch.js';
 import { DATA, makeMatch, checkInvariants, give, giveItem, chessOfTier } from './harness.js';
 import { bossPoolHp } from '../../server/match/finalAssault.js';
@@ -164,6 +164,64 @@ test('g.autoplay lets the bot play a human seat (buys, places, readies); turning
   h.sched.advance(60000);
   assert.equal(m.phase, PHASE.PREP, 'solo prep waits for the human again');
   checkInvariants(m);
+  m.dispose();
+});
+
+test('掉线由 AI 接管: offline at 2 prep ends in a row → AI 托管 from the next phase; reconnecting hands the seat back', () => {
+  const h = makeMatch({ mode: 'coop', humans: 2, seed: 65, fake: true, script: () => ({ duration: 4 }) }).start();
+  const m = h.m, b = h.ps('p_1');
+  assert.equal(OFFLINE_TAKEOVER_ROUNDS, 2);
+  m.onDisconnect('p_1');
+  const takeovers = () => h.bc.filter((x) => x.t === 'm.ticker' && x.msgid === '{name}博士掉线超过 {rounds} 回合，由 AI 托管其席位，重新连接后可收回');
+  // every phase runs to its deadline (p_0 online, p_1 offline)
+  h.runToPhase(PHASE.COMBAT, 1);
+  assert.equal(b.offlineRounds, 1);
+  assert.equal(b.autoplay, false, 'one round offline: still the disconnect policy');
+  h.runToPhase(PHASE.COMBAT, 2);
+  assert.equal(b.offlineRounds, 2);
+  assert.ok(b.autoplay && b.offlineAutoplay, 'the AI took the seat over');
+  assert.equal(m.publicView().players.find((p) => p.playerId === 'p_1').autoplay, true);
+  assert.equal(takeovers().length, 1);
+  assert.deepEqual(takeovers()[0].params, { name: 'P1', rounds: 2 });
+  assert.equal(h.ps('p_0').autoplay, false, 'the online teammate is untouched');
+  // the next prep is the bot's: it readies the seat before the deadline
+  h.runToPhase(PHASE.PREP, 3);
+  h.run(() => b.ready || m.phase !== PHASE.PREP);
+  assert.equal(m.phase, PHASE.PREP);
+  assert.ok(b.ready && h.sched.now() < m.deadline, 'readied by the AI, not by the deadline');
+  assert.equal(takeovers().length, 1, 'told once');
+  // back online: the seat is the player's again
+  const mark = h.sent.length;
+  m.onReconnect('p_1');
+  assert.ok(!b.autoplay && !b.offlineAutoplay && b.offlineRounds === 0);
+  assert.equal(m.publicView().players.find((p) => p.playerId === 'p_1').autoplay, false);
+  const toasts = h.sent.slice(mark).filter(([id, x]) => id === 'p_1' && x.t === 'm.toast').map(([, x]) => x.msgid);
+  assert.deepEqual(toasts, ['你已重新连接，AI 托管已解除']);
+  assert.ok(h.bc.some((x) => x.t === 'm.ticker' && x.msgid === '{name}博士已重新连接，收回了 AI 托管的席位'));
+  // a resync on a live socket changes nothing
+  m.onReconnect('p_1');
+  assert.equal(h.sent.slice(mark).filter(([id, x]) => id === 'p_1' && x.t === 'm.toast').length, 1);
+  // an AI 托管 the player turned on itself survives a drop and a return
+  assert.deepEqual(m.handle('p_1', { t: 'g.autoplay', on: true }), { ok: true });
+  m.onDisconnect('p_1');
+  h.runToPhase(PHASE.COMBAT, 5);
+  assert.ok(b.offlineRounds >= 2 && b.autoplay && !b.offlineAutoplay);
+  m.onReconnect('p_1');
+  assert.equal(b.autoplay, true, 'its own choice stays on');
+  checkInvariants(m);
+  m.dispose();
+});
+
+test('掉线由 AI 接管: an untimed match (a single human) waits for its player instead', () => {
+  const h = makeMatch({ mode: 'coop', humans: 1, bots: 1, seed: 66, fake: true }).start();
+  const m = h.m;
+  h.toPrep(1);
+  assert.ok(m.soloUntimed);
+  m.onDisconnect('p_0');
+  h.sched.advance(30 * 60_000);
+  assert.equal(m.phase, PHASE.PREP);
+  assert.equal(m.round, 1);
+  assert.equal(h.ps('p_0').autoplay, false);
   m.dispose();
 });
 

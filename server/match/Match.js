@@ -74,8 +74,8 @@
 //                           checked operator loadout (and its 潜能 / 练度 `ops`, 0.2.2) from room.loadout. Accepted only
 //                           during INFO_CHECK (the briefing's 干员调配 entry); afterwards the match's loadout is locked
 //                           (WRONG_PHASE).
-// onLeave(playerId)         The human quit permanently (g.leave, room.leave, or the 10-minute reconnect
-//                           window expired). They will never return under this playerId in this match;
+// onLeave(playerId)         The human quit permanently (g.leave, room.leave, or the reconnect window
+//                           expired). They will never return under this playerId in this match;
 //                           treat as quit (AI takes over / eliminated per DESIGN). No onDisconnect follows.
 // dispose()                 Stop every timer/interval and release resources. Idempotent. After dispose the
 //                           platform ignores send/broadcast/onEnd from this instance.
@@ -157,6 +157,11 @@
 //   * disconnected human: the seat keeps playing its last lineup; draft turns and prep auto-resolve at their
 //     deadlines (band → 华法琳, 机变 → a random remaining card, prep → auto-ready with temp auto-resolved). Nothing is
 //     bought for them unless they toggled "AI 托管" (g.autoplay { on: true }), which lets the bot play the seat.
+//     掉线由 AI 接管 (the owner's rule of 2026-10-14): a seat still offline as its OFFLINE_TAKEOVER_ROUNDS-th prep in a
+//     row ends gets AI 托管 from the next phase on (m.public autoplay, a ticker to everyone); the seat stays the
+//     player's, and reconnecting turns that AI 托管 off again (a ticker, and a toast to the player) — one the player
+//     turned on itself stays (MatchPlatform._checkOffline, onReconnect). Untimed matches (soloUntimed) just wait. The
+//     lobby keeps such a session resumable while another player of the match is online (server/lobby.js).
 //   * departed human (onLeave): 中途退出 counts as elimination (research 00-INDEX §3, 01 §9, 06 §7 / §10.3) — every
 //     copy the seat holds returns to the shared pool at once, the seat leaves the round loop, the Final Assault
 //     pairing and the boss pool; its own running normal battle is force-ended. The seat shows status 'left'. When no
@@ -174,7 +179,7 @@
 // with the descriptors of class methods (non-enumerable; `this` is the match, subclasses and `super` calls work as
 // before):
 //   platform.js      the interface above: start, handle, setLoadout, disconnect / reconnect / resync, leave, the AFK
-//                    rule's removal, dispose
+//                    rule's removal, the offline takeover, dispose
 //   infra.js         error isolation, timers and the phase deadline, player lists, bonds in the pool, deploy field,
 //                    meta dispatch
 //   messaging.js     send / broadcast / toasts / tickers, dirty marks, flush (m.private per player, m.public throttled)
@@ -234,7 +239,7 @@ import { MatchBoss } from './match/bossRounds.js';
 import { MatchSettle } from './match/settle.js';
 import { AFK_REMOVE_ROUNDS } from './match/common.js';
 
-export { FLOW_TICKER_PRIORITY, DELAYS, BAND_TURN_SECONDS, REVIVAL_UNAVAILABLE_REASONS, AFK_REMOVE_ROUNDS } from './match/common.js';
+export { FLOW_TICKER_PRIORITY, DELAYS, BAND_TURN_SECONDS, REVIVAL_UNAVAILABLE_REASONS, AFK_REMOVE_ROUNDS, OFFLINE_TAKEOVER_ROUNDS } from './match/common.js';
 
 const BOT_REHEARSAL_DEFAULT = 3;
 /** Wall-clock ms of bot layout rehearsal per scheduler callback (real time; virtual time runs it in one go). */

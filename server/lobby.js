@@ -38,6 +38,11 @@
 //     simply waits (net.js session.resumeWindowMs, set at every disconnect). Only after that does expiry turn into
 //     match.onLeave ('abandoned'). The extension outlives the match, so a run that ended meanwhile (e.g. a server-run
 //     Final Assault) still shows its result on the player's return.
+//     Co-op (掉线由 AI 接管, the owner's rule of 2026-10-14): a player who drops out of a running match stays resumable
+//     the same way while another player of the match is online — the match hands the seat to the AI after
+//     OFFLINE_TAKEOVER_ROUNDS and back on the player's return; once no player of the match is online, every dropped
+//     one gets the plain window again from that moment, so a match nobody is left in still ends 'abandoned'
+//     (refreshMatchWindows).
 //     A repeated hello on a live connection is a full resync: room.state goes to the requester only
 //     (broadcast only when the seat visibly changed, e.g. a rename in LOBBY); the heavy part (match.onReconnect,
 //     or the result replay below) runs at most once per `resyncMinGapMs` per session — extra requests inside
@@ -601,6 +606,8 @@ export class Lobby {
     if (!room.hostId) { this.migrateHost(room); changed = true; }
     if (changed) this.broadcastState(room);
     else this.sendState(room, session);
+    // a player back in a running co-op match holds its dropped teammates' seats again
+    if (changed && room.match && room.seatOf(session.playerId)) this.refreshMatchWindows(room);
     this.resync(session, !resumed);
   }
 
@@ -652,13 +659,42 @@ export class Lobby {
     const room = this.roomOf(session);
     // a solo run may be resumed within singleReconnectTime (24 h); everything else keeps the registry's window
     session.resumeWindowMs = room && room.match && room.mode === 'solo' ? this.soloResumeWindowMs() : null;
+    session.matchHeld = false;
     if (!room) return;
     const player = room.seatOf(session.playerId);
     const seat = player || room.spectatorOf(session.playerId);
     seat.connected = false;
     // a spectator's seat is kept like a player's (nothing to tell the match: it plays no field)
-    if (room.match) { if (player) this.callMatch(room, 'onDisconnect', session.playerId); } else this.startGrace(room, seat);
+    if (room.match) {
+      if (player) { this.callMatch(room, 'onDisconnect', session.playerId); this.refreshMatchWindows(room); }
+    } else this.startGrace(room, seat);
     this.broadcastState(room);
+  }
+
+  /**
+   * 掉线由 AI 接管 (the owner's rule of 2026-10-14; the header's Reconnect item): while a player of a running match that
+   * is not solo is online, every dropped player of it stays resumable for the solo window (a ceiling no match reaches)
+   * — the match plays its seat by AI and hands it back on its return. Once none is online, each of them gets the plain
+   * reconnect window again, counted from now (once: a later call does not push it further). Called when a player of a
+   * running match drops, comes back or departs.
+   * @param {Room} room
+   */
+  refreshMatchWindows(room) {
+    if (!room?.match || room.disposed || room.mode === 'solo') return;
+    const humans = room.activeHumans();
+    const online = humans.some((s) => s.connected);
+    const now = this.now();
+    for (const s of humans) {
+      const session = s.connected ? null : this.registry.byId(s.playerId);
+      if (!session || session.connected || session.roomCode !== room.code || session.disconnectedAt == null) continue;
+      if (online) {
+        session.resumeWindowMs = this.soloResumeWindowMs();
+        session.matchHeld = true;
+      } else if (session.matchHeld) {
+        session.resumeWindowMs = now - session.disconnectedAt + this.registry.reconnectWindowMs;
+        session.matchHeld = false;
+      }
+    }
   }
 
   /** The session's reconnect window elapsed (already removed from the registry). */
@@ -1722,6 +1758,8 @@ export class Lobby {
       room.seats[seat.seat] = null;
     }
     if (room.disposed) return; // onLeave may have ended the match and emptied the room
+    // the last player online leaving lets its dropped teammates' windows run again
+    if (room.match) this.refreshMatchWindows(room);
     if (room.hostId === playerId) this.migrateHost(room);
     if (room.activeHumans().length === 0) this.disposeRoom(room, 'empty');
     else this.broadcastState(room);

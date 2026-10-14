@@ -33,6 +33,7 @@ import { GameData } from '../server/match/gamedata.js';
 import { helperOrder } from '../server/match/unite.js';
 import { NET_DEFAULTS } from '../server/net.js';
 import { SOLO_RECONNECT_FALLBACK_SEC } from '../server/lobby.js';
+import { OFFLINE_TAKEOVER_ROUNDS } from '../server/match/Match.js';
 import { moduleTypeIconUrl } from '../public/js/ui/assetUrls.js';
 import { validateC2S } from '../shared/protocol.js';
 import { ERR, PHASE } from '../shared/constants.js';
@@ -152,6 +153,11 @@ test('reconnect windows: co-op 10 min, solo singleReconnectTime 24 h (code, data
     assert.match(text, /10 分钟/, `${name}: co-op window`);
   }
   assert.ok(!/断线 10 分钟内可重连，掉线期间 AI 托管/.test(README), 'README: a dropped seat is not AI-played unless 暂离');
+  // 掉线由 AI 接管 (owner, 2026-10-14): 2 rounds offline → AI 托管, released on reconnect
+  assert.equal(OFFLINE_TAKEOVER_ROUNDS, 2);
+  for (const [name, text] of [['README', README], ['DEPLOY', DEPLOY], ['PLAYING', PLAYING]]) assert.match(text, /2 (个)?回合[^。|]*AI 托管/, `${name}: offline takeover`);
+  assert.match(META, /OFFLINE_TAKEOVER_ROUNDS/);
+  assert.match(DESIGN, /refreshMatchWindows/);
 });
 
 test('equipment: g.equip replaceUid and locked equipped items are in the contract docs', () => {

@@ -1435,7 +1435,7 @@ describe('lobby timers and match interface', () => {
     await host.waitFor('m.public');
   });
 
-  test('reconnect window expiry during a match → onLeave; old token no longer resumes; empty room disposed', async () => {
+  test('reconnect window during a match: held while a teammate is online; once nobody is, expiry → onLeave; old token no longer resumes; empty room disposed', async () => {
     const host = await pool.player('Host');
     const st = await createRoom(host);
     const guest = await pool.player('Guest');
@@ -1447,16 +1447,17 @@ describe('lobby timers and match interface', () => {
     await guest.terminate();
     await host.waitFor('room.state', (s) => seatOf(s, guest.id)?.connected === false);
     await delay(WINDOW + 700);
-    assert.deepEqual(m.calls.filter((c) => c[0] === 'onLeave'), [['onLeave', guest.id]]);
+    assert.deepEqual(m.calls.filter((c) => c[0] === 'onLeave'), [], 'held while the host is online (掉线由 AI 接管)');
+
+    // the host drops too and never returns → both windows run out → onLeave for both, room disposed
+    await host.terminate();
+    await delay(WINDOW + 700);
+    assert.deepEqual(m.calls.filter((c) => c[0] === 'onLeave').map((c) => c[1]).sort(), [guest.id, host.id].sort());
+    assert.ok(m.calls.some((c) => c[0] === 'dispose'));
     const back = await pool.connect();
     const w = await back.hello('Guest', guest.token);
     assert.equal(w.resumed, false);
     assert.notEqual(w.playerId, guest.id);
-
-    // host drops too and never returns → room disposed after the window
-    await host.terminate();
-    await delay(WINDOW + 700);
-    assert.ok(m.calls.some((c) => c[0] === 'dispose'));
     await expectError(back, { t: 'room.join', code: st.code }, ERR.ROOM_NOT_FOUND);
   });
 
@@ -1544,7 +1545,7 @@ describe('solo resume window', () => {
     assert.notEqual(w3.playerId, a.id);
   });
 
-  test('co-op sessions keep the plain reconnect window; a solo player back in the lobby too', async () => {
+  test('co-op sessions without a teammate online keep the plain reconnect window; a solo player back in the lobby too', async () => {
     const a = await connect();
     const w = await a.hello('Coop');
     a.id = w.playerId;
@@ -1568,6 +1569,47 @@ describe('solo resume window', () => {
     await delay(WINDOW + 600);
     const s2 = await connect();
     assert.equal((await s2.hello('Idle', ws.token)).resumed, false);
+  });
+
+  test('掉线由 AI 接管: a dropped co-op player is held while a teammate is online; with nobody online the window runs again', async () => {
+    const a = await connect();
+    const wa = await a.hello('HoldA');
+    a.id = wa.playerId;
+    const st = await createRoom(a, 'coop', 'NORMAL');
+    const b = await connect();
+    const wb = await b.hello('HoldB');
+    b.id = wb.playerId;
+    await joinRoom(b, st.code);
+    await expectOk(b, { t: 'room.ready', ready: true });
+    await expectOk(a, { t: 'room.start' });
+    await a.waitFor('m.public', (p) => p.phase === PHASE.INFO_CHECK);
+    const match = srv.lobby.getRoom(st.code).match;
+    await b.terminate();
+    await a.waitFor('room.state', (s) => seatOf(s, b.id)?.connected === false);
+    await delay(WINDOW + 600); // several sweeps past the plain window
+    assert.equal(match.players.get(b.id).left, false, 'held: the teammate is online');
+    assert.equal(srv.registry.byId(b.id)?.matchHeld, true);
+
+    // back in its seat, and dropped again while the teammate stays
+    const b2 = await connect();
+    const w2 = await b2.hello('HoldB', wb.token);
+    assert.equal(w2.resumed, true);
+    assert.equal(w2.playerId, b.id);
+    await a.waitFor('room.state', (s) => seatOf(s, b.id)?.connected === true);
+    await b2.terminate();
+    await a.waitFor('room.state', (s) => seatOf(s, b.id)?.connected === false);
+    await delay(WINDOW + 600);
+    assert.equal(match.players.get(b.id).left, false, 'held again');
+
+    // the last player online drops: both windows run from now, nobody returns → abandoned
+    await a.terminate();
+    await delay(150);
+    assert.equal(match.ended, false, 'the held player got a fresh window, not an instant expiry');
+    await delay(WINDOW + 600);
+    assert.equal(match.ended, true, 'expiry → onLeave for both → abandoned');
+    assert.equal(srv.lobby.getRoom(st.code), null);
+    const c = await connect();
+    assert.equal((await c.hello('HoldB', wb.token)).resumed, false);
   });
 });
 

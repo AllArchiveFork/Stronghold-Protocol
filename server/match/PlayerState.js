@@ -162,6 +162,9 @@ export class PlayerState {
     /** 挂机移出 (Match afkRemoveRounds): a substantive intent was accepted since the last prep end; the idle rounds in a row */
     this.afkActed = false;
     this.afkRounds = 0;
+    /** 掉线由 AI 接管 (OFFLINE_TAKEOVER_ROUNDS): prep ends in a row the seat was offline; the AI 托管 the match turned on for it */
+    this.offlineRounds = 0;
+    this.offlineAutoplay = false;
     this.alive = true;
     this.lp = 0;
     this.bandId = null;

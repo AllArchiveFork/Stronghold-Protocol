@@ -202,8 +202,12 @@ A `choice:<effectId>` registry handler overrides the default application (§2.4)
   and do not change the bearer token or expiration rules below.
 * Disconnected human: the seat keeps playing its last lineup; drafts auto-resolve at their deadlines, prep auto-readies at
   the deadline (an open 教鞭 choice is picked at random first, §2.5; then the temp pieces due at that prep are sold/destroyed). Nothing is bought for them. A battle the human was authority of goes to the server
-  (normal / 联防: re-simulated from t = 0) or, on a boss field, to the partner's replica (DESIGN §14). The session stays
-  resumable for 10 min (net.js `reconnectWindowMs`); a **solo** run's for the official `constants.singleReconnectTime`
+  (normal / 联防: re-simulated from t = 0) or, on a boss field, to the partner's replica (DESIGN §14). 掉线由 AI 接管
+  (owner, 2026-10-14): a seat still offline as its 2nd prep in a row ends (`OFFLINE_TAKEOVER_ROUNDS`, `_checkOffline`)
+  gets AI 托管 from the next phase on (ticker to everyone); `onReconnect` turns that AI 托管 off again (a ticker, a toast
+  to the player) — one the player chose itself stays; untimed matches just wait. The session stays resumable for the
+  rest of the match while another player of it is online (lobby.js `refreshMatchWindows`), else for 10 min (net.js
+  `reconnectWindowMs`, counted from when the last player went offline); a **solo** run's for the official `constants.singleReconnectTime`
   (86 400 s = 24 h, lobby.js `soloResumeWindowMs`) — nothing in a solo run is timed, so it simply waits. `onReconnect`
   resends `m.public`, `m.private` and the `b.start` of the field the player is on / watching.
 * `g.autoplay { on }` ("AI 托管"): the bot plays the seat (drafts, buying, placement, an open 教鞭 choice, ready) until turned off.

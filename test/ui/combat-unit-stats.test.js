@@ -27,14 +27,16 @@ test('server battle cards show effective values, green bonuses and their own bas
   assert.equal(live.dir, 'RIGHT');
 });
 
-test('HP follows compact snapshots rather than the frozen opening panel', () => {
+test('HP: a server field\'s opening panel follows compact snapshots; the local sim\'s live entry is current itself', () => {
   const opening = { ...entry(2), hp: 1200, src: 'battle' };
   assert.deepEqual(hpOf(opening, { hp: 500, max: 1300 }), { hp: 500, max: 1300 });
   assert.deepEqual(hpOf(opening, { hp: 0, max: 1300 }), { hp: 0, max: 1300 });
   assert.deepEqual(hpOf(opening, null), { hp: 1200, max: 1200 });
+  const live = { ...entry(2), hp: 640, src: 'live' };
+  assert.deepEqual(hpOf(live, { hp: 700, max: 1200 }), { hp: 640, max: 1200 });
   const src = readFileSync(new URL('../../public/js/ui/detailPanel.js', import.meta.url), 'utf8');
-  assert.match(src, />\$\{t\('开战时'\)\}<\/span>/);
-  assert.doesNotMatch(src, /battle \? t\('实时'\)/);
+  assert.match(src, />\$\{t\('开战时'\)\}<\/span>/, 'server fields and the prep preview: 开战时');
+  assert.match(src, /live\.src === 'live'[\s\S]{0,200}>\$\{t\('实时'\)\}<\/span>/, 'the local sim: 实时');
 });
 
 test('an own prep card left open resolves by piece uid AND owner, not the first matching teammate uid', () => {
@@ -140,4 +142,5 @@ test('game wiring reads opening metadata, never updates panels from periodic/ear
   assert.match(src, /notePieceUnits\(pieceUnitsRef\.current, \{ events: msg\.ev \}\)/);
   assert.match(src, /battleRunner\.unitIdOf\(pieceUid, myId, fid\)/);
   assert.match(src, /battleRunner\.unitStats\(uid, fid\)/);
+  assert.match(src, /return e \? \{ \.\.\.e, src: 'live' \} : null;/, 'a field this browser simulates is read live');
 });

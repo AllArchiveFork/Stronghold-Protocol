@@ -1,13 +1,14 @@
 // server/match/match/platform.js — Match methods: the platform interface of the server/match/Match.js header
 // (server/lobby.js ⇄ Match) — start, handle (validation, error isolation, flush; the intents themselves: intents.js
 // _handle), setLoadout (INFO_CHECK only), onDisconnect / onReconnect and the full resync of one human, onLeave and 中途退出
-// = elimination (_quit), the AFK rule (挂机移出: _checkIdle at each prep end, _removeIdle), dispose.
+// = elimination (_quit), the AFK rule (挂机移出: _checkIdle at each prep end, _removeIdle), the AI taking over a seat
+// offline too long (掉线由 AI 接管: _checkOffline at each prep end, released by onReconnect), dispose.
 // Installed on Match.prototype by server/match/Match.js (a method container: never instantiated; `this` is the match).
 
 import { C2S } from '../../../shared/protocol.js';
 import { PHASE, ERR } from '../../../shared/constants.js';
 import { syntheticResult } from '../fields.js';
-import { FLOW_TICKER_PRIORITY, OK, fail, AFK_ACTIONS } from './common.js';
+import { FLOW_TICKER_PRIORITY, OK, fail, AFK_ACTIONS, OFFLINE_TAKEOVER_ROUNDS } from './common.js';
 import { msg } from '../../../shared/i18n.js';
 
 const GAME_TYPES = new Set(Object.keys(C2S).filter((t) => Object.hasOwn(C2S, t) && (t.startsWith('g.') || t.startsWith('b.'))));
@@ -112,7 +113,17 @@ export class MatchPlatform {
     this.guard(() => {
       const was = ps.connected;
       ps.connected = true;
+      ps.offlineRounds = 0;
+      // 掉线由 AI 接管: back in the match, the player plays the seat again (an AI 托管 of its own choice stays on)
+      const released = ps.offlineAutoplay && ps.autoplay && !this.ended;
+      ps.offlineAutoplay = false;
+      if (released) {
+        this.setAutoplay(ps, false);
+        this.log.info?.(`[match ${this.roomCode}] seat ${ps.seat} back online: AI takeover released (R${this.round})`);
+        this.tickerText(msg('{name}博士已重新连接，收回了 AI 托管的席位', { name: ps.name }), FLOW_TICKER_PRIORITY);
+      }
       this._resync(ps);
+      if (released) this.toast(ps, 'info', msg('你已重新连接，AI 托管已解除'));
       if (!was) this.markPublic();
     });
   }
@@ -154,6 +165,7 @@ export class MatchPlatform {
       this.cancelSetupVote();
       ps.connected = false;
       ps.autoplay = false;
+      ps.offlineAutoplay = false;
       this.watchers.delete(playerId);
       this.localViews.delete(playerId);
       if (this.ended) return;
@@ -225,8 +237,8 @@ export class MatchPlatform {
    * (MatchPrep.endPrep). Every alive human of a match that started with ≥ 2 humans (never solo or soloUntimed) is
    * counted: an accepted AFK_ACTIONS intent since the previous check — or the AI playing the seat now (AI 托管), or the
    * seat being offline — resets its idle rounds, else they grow by one. Offline is not idle (the owner's decision of
-   * 2026-10-13): a dropped seat keeps its place and its last lineup through the reconnect window, the disconnect policy
-   * of Match.js, whose expiry departs it — the rule had removed it after two preps, so a player back within the window
+   * 2026-10-13): a dropped seat keeps its place and its last lineup, the disconnect policy of Match.js (the AI takes it
+   * over after OFFLINE_TAKEOVER_ROUNDS, _checkOffline) — the rule had removed it after two preps, so a player back
    * found the seat gone and could only watch. A seat reaching afkRemoveRounds is removed (_removeIdle); may end the
    * match. One round short of it, the seat is warned: a toast now and m.private afkWarn through its next prep.
    */
@@ -245,6 +257,27 @@ export class MatchPlatform {
         this.toast(ps, 'warn', msg('你本回合没有任何操作，下回合备战仍无操作将被移出对局'));
         this.markPrivate(ps);
       }
+    }
+  }
+
+  /**
+   * 掉线由 AI 接管 (OFFLINE_TAKEOVER_ROUNDS, the owner's rule of 2026-10-14; the header's disconnect policy): called as a
+   * PREP ends, after the AFK rule. An alive human seat offline at this prep end has one more offline round (0 when
+   * online); at OFFLINE_TAKEOVER_ROUNDS the AI plays it (AI 托管, as g.autoplay) from the next phase on and everyone in
+   * the match is told. The seat stays the player's: reconnecting hands it back (onReconnect). A seat already under its
+   * own AI 托管 is left alone; an untimed match (soloUntimed) waits for its player instead.
+   */
+  _checkOffline() {
+    if (this.soloUntimed) return;
+    for (const ps of this.order) {
+      if (ps.isBot || ps.left || !ps.alive) continue;
+      ps.offlineRounds = ps.connected ? 0 : ps.offlineRounds + 1;
+      if (ps.connected || ps.autoplay || ps.offlineRounds < OFFLINE_TAKEOVER_ROUNDS) continue;
+      ps.autoplay = true;
+      ps.offlineAutoplay = true;
+      this.log.info?.(`[match ${this.roomCode}] seat ${ps.seat} offline for ${ps.offlineRounds} rounds: AI takes over (R${this.round})`);
+      this.tickerText(msg('{name}博士掉线超过 {rounds} 回合，由 AI 托管其席位，重新连接后可收回', { name: ps.name, rounds: OFFLINE_TAKEOVER_ROUNDS }), FLOW_TICKER_PRIORITY);
+      this.markPublic();
     }
   }
 

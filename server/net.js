@@ -166,9 +166,12 @@ export class Session {
     this.playerCapacityVersion = null;
     /**
      * @type {number | null} lobby-owned extension of the reconnect window for this session (ms; null = the registry's
-     * window). A solo run keeps its session resumable for the official `singleReconnectTime` (24 h) — see lobby.js.
+     * window). A solo run keeps its session resumable for the official `singleReconnectTime` (24 h) — see lobby.js; so
+     * does a dropped co-op player while another player of its match is online (Lobby.refreshMatchWindows).
      */
     this.resumeWindowMs = null;
+    /** lobby-owned: `resumeWindowMs` holds the session for its running co-op match (Lobby.refreshMatchWindows) */
+    this.matchHeld = false;
   }
 }
 

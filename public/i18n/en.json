@@ -2195,5 +2195,8 @@
   "领袖克星": "Leader Slayer",
   "默认大厅音乐": "Default lobby music",
   "该代号为服主保留，请换一个昵称。": "This callsign is reserved for the server owner — please pick another nickname.",
-  "服务器即将维护，匹配已暂停": "Server maintenance is coming up — matchmaking is paused"
+  "服务器即将维护，匹配已暂停": "Server maintenance is coming up — matchmaking is paused",
+  "{name}博士掉线超过 {rounds} 回合，由 AI 托管其席位，重新连接后可收回": "Dr. {name} has been offline for over {rounds} rounds — the AI now plays their seat until they reconnect",
+  "{name}博士已重新连接，收回了 AI 托管的席位": "Dr. {name} reconnected and took their seat back from the AI",
+  "你已重新连接，AI 托管已解除": "You reconnected — AI autopilot is off"
 }

@@ -45,8 +45,8 @@
 // leaker's enemies still standing — runner state().uniteLeft / m.public players[].uniteLeft, the ×N tag — user
 // playtest #6 item 7); while the temp overflow row (临时整备区) holds pieces it is framed and labelled on the board
 // (ui/underframe.js TempRowNotice) and 准备就绪 / Space say why they are refused (item 3).
-// User playtest #4: the detail card shows live stats (item 7) — in battle the local sim's unit or the shown server
-// opening field's unitStats, in prep an own board unit's start-of-battle stats (g.unitStats → m.unitStats); 机变 cards take two taps
+// User playtest #4: the detail card shows live stats (item 7) — in battle the local sim's unit, live, or the shown server
+// field's opening unitStats, in prep an own board unit's start-of-battle stats (g.unitStats → m.unitStats); 机变 cards take two taps
 // (item 2, ui/choiceOverlay.js).
 // Merges (user playtest #6 follow-up, PRTS 卫戍协议/帮助 "若消耗已部署至作战区的干员，则发送至作战区对应位置"): a shop /
 // reward card armed for a purchase that completes a merge lights, in gold, the board tile its elite will take (the
@@ -1265,8 +1265,9 @@ function MatchScreen() {
   }, [hud, detail]);
 
   // ---- live stats of the detail card (user playtest #4 item 7) ------------------------------------------------------
-  // battle: the frozen first-tick stats from the local sim or the shown server field's m.field cache; later spawns
-  // fall back to record values. The getter only reads the cache. Prep: an own board unit's stats at the next battle start,
+  // battle: a field this browser simulates — client-side combat or a local display replica — reads the sim live (the
+  // owner, 2026-10-14; src 'live'); a streamed server field keeps its m.field opening cache (src 'battle'; later spawns
+  // fall back to record values). Both are getters the panel re-reads 4× a second. Prep: an own board unit's stats at the next battle start,
   // asked from the server (g.unitStats → m.unitStats; only the newest request's answer counts) whenever m.private or the
   // phase changes while such a card is open — the last answer stays on show until the next one lands
   const [unitStats, setUnitStats] = useState(null);      // m.unitStats: { seq, round, units: Map<uid, entry> }
@@ -1303,7 +1304,7 @@ function MatchScreen() {
     return () => {
       const uid = id ?? battleRunner.unitIdOf(pieceUid, myId, fid);
       const e = uid != null ? battleRunner.unitStats(uid, fid) : null;
-      return e ? { ...e, src: 'battle' } : null;
+      return e ? { ...e, src: 'live' } : null;
     };
   })();
 

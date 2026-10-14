@@ -36,6 +36,12 @@ export const BAND_TURN_SECONDS = 50;
  */
 export const AFK_REMOVE_ROUNDS = 2;
 /**
+ * 掉线由 AI 接管 (the owner's rule of 2026-10-14): the prep ends in a row a human seat spends offline before the AI plays
+ * it (AI 托管) — from the next phase on; the player takes the seat back by reconnecting (MatchPlatform._checkOffline,
+ * onReconnect).
+ */
+export const OFFLINE_TAKEOVER_ROUNDS = 2;
+/**
  * The intents that count as playing for that rule — accepted ones only. g.ready, g.infoReady, g.emote, g.watch,
  * g.unitStats, g.pause, g.art, g.bandFocus, g.autoplay, g.rerollVote, the battle reports and anything else do not.
  */
