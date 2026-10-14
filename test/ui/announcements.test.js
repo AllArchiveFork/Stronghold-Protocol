@@ -108,8 +108,8 @@ test('announcements omit contacts and infrastructure; the lobby owns the copyabl
   const text = entries.flatMap(entry => entry.paragraphs).join('\n');
   // the one contact a notice carries is the interface author's (the owner's request of 2026-10-14); the group number stays the lobby's
   assert.deepEqual([...text.matchAll(/QQ\s*(\d+)/g)].map(m => m[1]), ['374360968']);
-  assert.doesNotMatch(text.replace('QQ 374360968', ''), /QQ|群号|815818430|2225664821|coordinator|ingress|Worker|WireGuard|ModelScope|OpenI|\b\d{1,3}(?:\.\d{1,3}){3}\b/);
-  assert.match(source('../../public/js/ui/lobbyFeedback.js'), /FEEDBACK_GROUP = '815818430'/);
+  assert.doesNotMatch(text.replace('QQ 374360968', ''), /QQ|群号|243859707|815818430|2225664821|coordinator|ingress|Worker|WireGuard|ModelScope|OpenI|\b\d{1,3}(?:\.\d{1,3}){3}\b/);
+  assert.match(source('../../public/js/ui/lobbyFeedback.js'), /FEEDBACK_GROUP = '243859707'/);
 });
 
 test('topmost modal traps and restores focus and compact matching explains room-owned experimental rules', () => {

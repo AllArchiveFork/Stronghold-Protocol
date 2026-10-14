@@ -3,7 +3,7 @@ import { copyText } from './clipboard.js';
 import { toast } from './toasts.js';
 import { t } from '../../../shared/i18n.js';
 
-export const FEEDBACK_GROUP = '815818430';
+export const FEEDBACK_GROUP = '243859707';
 
 export async function copyFeedbackGroup(copy = copyText, notify = toast) {
   let copied = false;

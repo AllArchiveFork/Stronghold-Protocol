@@ -15,7 +15,7 @@ Copyright (C) 2026 Stronghold-Protocol contributors
 
 **英文翻译致谢**：界面英文文本 `public/i18n/en.json` 与游戏文本的补充译文 `tools/i18n/fallback-pr70.json` 以 GitHub PR #70（分支 `en-translation`）中 **@YuriRestia** 的翻译为基础，经项目所有者决定（2026-10-05）署名沿用，随本项目一同以 GPL-3.0-or-later 发布；PR #70 中取自 ak-spa-database.pages.dev（未声明许可）的文本未被采用。英文游戏文本 `data/i18n/en.json` 本身是官方英文服数据（见第 2 节）。
 
-**界面致谢**：大厅、房间、干员调配、S.W.E.E.P.报告等界面（`public/js/screens/lobby.js`、`room.js`、`loadout.js`、`sweep.js`，`public/js/ui/` 下的 hubBackdrop、lobbyMusic、matchFlow、protocolScene、screenFit、seatArt、transitions、trophies 与对应样式）来自 **Bilibili@雨千代chiyo** 制作的界面包，经项目所有者决定（2026-10-14）并入本项目，署名保留；前端界面问题可加 QQ 374360968 向作者反馈。
+**界面致谢**：大厅、房间、干员调配、S.W.E.E.P.报告等界面（`public/js/screens/lobby.js`、`room.js`、`loadout.js`、`sweep.js`，`public/js/ui/` 下的 hubBackdrop、lobbyMusic、matchFlow、protocolScene、screenFit、seatArt、transitions、trophies 与对应样式）来自 **Bilibili@雨千代chiyo** 制作的界面包，经作者同意（2026-10-14）并入本项目，署名保留，随本项目一同以 GPL-3.0-or-later 发布；前端界面问题可加 QQ 374360968 向作者反馈。
 
 **附加许可（GPL-3.0 第 7 条）** — Additional permission under GNU GPL version 3 section 7:
 

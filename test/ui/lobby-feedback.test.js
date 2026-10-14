@@ -7,15 +7,15 @@ const source = path => readFileSync(new URL(path, import.meta.url), 'utf8');
 
 test('lobby feedback copies only the existing public group number', async () => {
   const copied = [], messages = [];
-  assert.equal(FEEDBACK_GROUP, '815818430');
+  assert.equal(FEEDBACK_GROUP, '243859707');
   assert.equal(await copyFeedbackGroup(async text => { copied.push(text); return true; }, (...args) => messages.push(args)), true);
-  assert.deepEqual(copied, ['815818430']);
-  assert.deepEqual(messages, [['已复制反馈群号 815818430', 'success']]);
+  assert.deepEqual(copied, ['243859707']);
+  assert.deepEqual(messages, [['已复制反馈群号 243859707', 'success']]);
 });
 
 for (const mode of ['unavailable', 'denied']) test(`lobby feedback ${mode} does not claim successful copying`, async () => {
   const messages = [];
-  const copy = async text => { assert.equal(text, '815818430'); if (mode === 'denied') throw new Error('denied'); return false; };
+  const copy = async text => { assert.equal(text, '243859707'); if (mode === 'denied') throw new Error('denied'); return false; };
   assert.equal(await copyFeedbackGroup(copy, (...args) => messages.push(args)), false);
   assert.deepEqual(messages, [['复制失败，请手动复制', 'warn']]);
 });
