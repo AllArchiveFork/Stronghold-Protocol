@@ -23,7 +23,8 @@
 // battle/runner.js, which publishes the battle's field meta into store.match.field and feeds the view the same b.snap /
 // b.ev frames the server used to stream. Observing follows research 09 §3.1 (battle/observe.js): no looking elsewhere
 // while the own normal battle runs; afterwards a teammate row → 前往查看 → a local replica, 返回战场 goes back; in
-// 联防 / 最终攻势 the ‹ › pill switches the camera between the field's halves and 全景.
+// 联防 / 最终攻势 the ‹ › pill switches the camera between the field's halves and 全景, and so does a tap on the avatar of
+// a player on a half (again: 全景; battle/observe.js avatarLayer).
 // Enemy preview pen (research 09 §2 / §6.2 item 3): in 休整期 the right HUD 🔍▶▶ pans the camera to the pen
 // (view.setCamera('pen')); the left button turns into 🔍◀◀ and returns to the camera in use before (the grey right
 // button, Esc or any camera change of the game flow return too). The shop bar folds away while the pen is shown and
@@ -116,7 +117,7 @@ import { ResultScreen } from './result.js';
 import { net } from '../net.js';
 import { store, useStore, shallowEqual, serverNow, isSpectating } from '../store.js';
 import { battleRunner } from '../battle/runner.js';
-import { isClientCombat, observeTarget, teammateProgress, cameraLayers, layerCamera, sidesOf, resumedWatch, followedScout, uniteRelayKey, currentRelayField } from '../battle/observe.js';
+import { isClientCombat, observeTarget, teammateProgress, cameraLayers, layerCamera, avatarLayer, sidesOf, resumedWatch, followedScout, uniteRelayKey, currentRelayField } from '../battle/observe.js';
 import { screenStrip, playerBonds, playerLayer, detailBondOwner, toggleBond, popupView } from '../ui/watchBonds.js';
 import { data, getMode } from '../data.js';
 import { audio, resultSpeaker, resultVoiceSlot } from '../audio.js';
@@ -1388,6 +1389,14 @@ function MatchScreen() {
   const watchedFid = watchingOther ? watching : (cc && combat && !alive && battleState && battleState.watch && battleState.kind === 'normal' ? battleState.fieldId : null);
   // the ‹ › pill: on the 联防 / 最终攻势 field on screen — also one watched with 前往查看 (a leaker, an eliminated spectator)
   const layers = cc && combat && field && field.local && (!watchingOther || field.fieldId === watching) ? cameraLayers(field, pub, myId) : [];
+  // …and the avatar of a player on one of its halves: the tap goes to that half (again: 全景) — the team panel's
+  // `observe.half`. A player fighting on the field switches the camera itself; an observer (a 联防 leaker, an eliminated
+  // player, a spectator seat) picks that player as 前往查看 does — g.watch records whom it follows, the pill 返回战场
+  const avatarHalf = (p) => (layers.length && p ? avatarLayer(field, pub, myId, p.playerId, layer) : null);
+  const avatarPick = (k, p) => {
+    if (k === 'ALL' || sidesOf(field)[myId]) setLayer(k);
+    else watchPlayer(p);
+  };
   const progress = cc && phase === PHASE.COMBAT ? teammateProgress(pub, myId) : null;
   // the bond strip follows the player on screen (DESIGN §20.15, ui/watchBonds.js): a teammate's board / battle (前往查看,
   // an eliminated player's auto-observed field) → their bonds; a 联防 / 最终攻势 field → the player on the ‹ › half (全景:
@@ -1539,7 +1548,8 @@ function MatchScreen() {
 
       <${TeamPanel} pub=${pub} myId=${myId} watching=${watchingNow} roster=${roster} emoteTtl=${bubbleMs} onWatch=${watchPlayer} cap=${gd.config?.lpCapPerRound ?? 10} uniteLocal=${uniteLocal}
         self=${Number.isFinite(priv?.lp) ? { lp: priv.lp, pending: liveLpNow.pending, unite: liveLpNow.unite, left: liveLpNow.left } : null}
-        observe=${cc ? { canObserve: (p) => observeTarget(p, pub, myId, { observing: watchingOther, ownDone: localDone }), observing: watchingOther, onBack: backHome } : null} />
+        observe=${cc ? { canObserve: (p) => observeTarget(p, pub, myId, { observing: watchingOther, ownDone: localDone }), observing: watchingOther, onBack: backHome,
+          half: avatarHalf, onHalf: avatarPick } : null} />
 
       <div class="gm__effects"><${EffectsList} effects=${watchingOther && field ? (field.effects ?? null) : priv?.effects} /></div>
 

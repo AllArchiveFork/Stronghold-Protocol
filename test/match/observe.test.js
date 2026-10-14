@@ -4,7 +4,7 @@
 // a reloaded screen that watched a teammate's battle takes the watch back (resumedWatch).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { observeTarget, teammateProgress, cameraLayers, layerCamera, isClientCombat, resumedWatch } from '../../public/js/battle/observe.js';
+import { observeTarget, teammateProgress, cameraLayers, layerCamera, avatarLayer, isClientCombat, resumedWatch } from '../../public/js/battle/observe.js';
 
 const P = (id, seat, extra = {}) => ({ playerId: id, seat, name: id.toUpperCase(), alive: true, ...extra });
 const pubOf = (phase, fields, players) => ({ phase, combatMode: 'client', fields, players });
@@ -48,6 +48,23 @@ test('cameraLayers: ‹ LEFT / 全景 / RIGHT › with "你自己" / name / "无
   assert.deepEqual(cameraLayers({ kind: 'boss', players: ['a'], sides: { a: 'L' } }, pub, 'a'), [], 'a solo boss field has no halves');
   assert.deepEqual(layerCamera(unite, 'R', 'R'), { rect: unite.rect, side: 'R', half: true });
   assert.deepEqual(layerCamera(unite, 'ALL', 'R'), { rect: unite.rect, side: 'R' });
+});
+
+test('avatarLayer: the avatar of a player on a half frames that half, the one on screen goes back to 全景 (owner, 2026-10-14)', () => {
+  const pub = { players: [P('a', 0), P('b', 1), P('c', 2)] };
+  const fa = { fieldId: 'b1', kind: 'boss', rect: { r0: 0, r1: 5, c0: 0, c1: 20 }, players: ['a', 'b'], sides: { a: 'L', b: 'R' } };
+  assert.equal(avatarLayer(fa, pub, 'a', 'b', 'ALL'), 'R', "the partner's half");
+  assert.equal(avatarLayer(fa, pub, 'a', 'b', 'L'), 'R', 'from the other half too');
+  assert.equal(avatarLayer(fa, pub, 'a', 'b', 'R'), 'ALL', 'their half already on screen: 全景');
+  assert.equal(avatarLayer(fa, pub, 'a', 'a', 'R'), 'L', 'the own avatar: the own half');
+  assert.equal(avatarLayer(fa, pub, 'a', 'c', 'ALL'), null, 'a player of another field: the usual row flow');
+  assert.equal(avatarLayer({ ...fa, players: ['a'], sides: { a: 'L' } }, pub, 'a', 'a', 'ALL'), null, 'a solo boss field has no halves');
+  assert.equal(avatarLayer({ fieldId: 'n:a', kind: 'normal', players: ['a'] }, pub, 'a', 'a', 'ALL'), null, 'normal battles: none');
+  const unite = { fieldId: 'u', kind: 'unite', players: ['b', 'c'], sides: { b: 'L', c: 'R' } };
+  assert.equal(avatarLayer(unite, pub, 'a', 'c', 'ALL'), 'R', "联防 watched by its leaker: a helper's half");
+  assert.equal(avatarLayer(unite, pub, 'a', 'a', 'ALL'), null, 'the leaker is on no half');
+  assert.equal(avatarLayer(fa, pub, 'a', '', 'ALL'), null);
+  assert.equal(avatarLayer(null, pub, 'a', 'a', 'ALL'), null);
 });
 
 test('resumedWatch: a reload while watching a teammate\'s battle adopts the resent field once per battle (review, DESIGN §20.15)', () => {

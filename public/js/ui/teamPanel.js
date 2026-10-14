@@ -6,6 +6,10 @@
 // "前往查看" button under the row (when that teammate can be observed now; otherwise the reason is toasted through
 // onWatch); while observing, the own row shows a "返回战场" button. Without `observe` (server-run combat) a click
 // watches that player's field at once, and a click while that field is already on screen does not ask again.
+// 联防 / 最终攻势 (`observe.half`, battle/observe.js avatarLayer; the owner's request, 2026-10-14): the avatar of a player
+// on a half of the field on screen — the own one included — goes to that half at once, without 前往查看 (an observer's
+// tap picks that player the way 前往查看 does: screens/game.js); the avatar of the player whose half is on screen goes
+// back to 全景.
 // In PHASE.PREP a double-click on a teammate's avatar opens their field (GitHub #131, the 「前往查看」 shortcut).
 // It does not open a field the teammate does not have, and it does not open one the click already opened.
 // Boss-prep phases (最终攻势 / 隐秘核心) are not PHASE.PREP, so they still use 「前往查看」.
@@ -177,6 +181,8 @@ function useAvatarClicks({ pub, watching, onWatch, observe }) {
       }
       return;
     }
+    const half = observe.half?.(p) || null;
+    if (half) { setOpenPid(null); observe.onHalf(half, p); return; }
     if (self) { if (observe.observing) observe.onBack(); setOpenPid(null); return; }
     const view = observe.canObserve(p) || {};
     if (!view.fieldId) {
@@ -213,16 +219,19 @@ function TeamRow({ p, pub, myId, watching, onWatch, observe, clicks, selfLive, c
   const self = p.playerId === myId;
   const status = p.pendingDeath ? 'rescue' : p.alive === false ? 'dead' : p.status;
   const meta = p.pendingDeath ? { ...STATUS_META.deciding, text: t('等待救援') } : STATUS_META[status] || STATUS_META.acting;
+  // a player on a half of the 联防 / 最终攻势 field on screen: the tap switches the camera ('ALL': their half is shown)
+  const half = observe?.half?.(p) || null;
   const watched = teammateFieldShown(watching, p);
   const offline = p.connected === false && !p.isBot;
   const open = !!observe && clicks.openPid === p.playerId && !self;
   const back = !!observe && self && observe.observing;
-  const title = observe ? (self ? (observe.observing ? t('返回战场') : t('你自己')) : t('查看 {name} 的战场', { name: p.name })) : (self ? t('查看自己的阵地') : t('查看 {name} 的阵地', { name: p.name }));
+  const title = half ? (half === 'ALL' ? t('返回全景') : self ? t('查看自己的半场') : t('查看 {name} 的半场', { name: p.name }))
+    : observe ? (self ? (observe.observing ? t('返回战场') : t('你自己')) : t('查看 {name} 的战场', { name: p.name })) : (self ? t('查看自己的阵地') : t('查看 {name} 的阵地', { name: p.name }));
   const lp = rowLp(p, pub, self ? selfLive : null, { uniteLocal, cap });
   const inTeam = team.has(p.playerId);
   const { click, dblClick } = clicks;
   return html`<div data-seat=${p.seat} class=${cx('team__row', self && 'is-self', inTeam && 'is-team', watched && 'is-watched', p.alive === false && !p.pendingDeath && 'is-dead', p.pendingDeath && 'is-pending', open && 'is-open', offline && 'is-offline')}>
-    <button type="button" class="team__btn" onClick=${() => click(p, self)} onDblClick=${(e) => dblClick(e, p, self)} title=${inTeam && !self ? `${title} · ${t('与你在同一战场')}` : title} aria-label=${title} aria-expanded=${observe && !self ? String(open) : undefined}>
+    <button type="button" class="team__btn" onClick=${() => click(p, self)} onDblClick=${(e) => dblClick(e, p, self)} title=${inTeam && !self ? `${title} · ${t('与你在同一战场')}` : title} aria-label=${title} aria-expanded=${observe && !self && !half ? String(open) : undefined}>
       <${PlayerAvatar} player=${p} self=${self} />
       ${inTeam ? html`<span class=${cx('team__frame', !frameArt && 'team__frame--plain')} style=${frameArt ? `--frame:url("${frameArt}")` : undefined} aria-hidden="true"></span>` : null}
       <span class="team__seat num">P${(p.seat ?? 0) + 1}</span>
@@ -262,7 +271,9 @@ function PoolHead({ pool }) {
  * @param {{ pub:any, myId:string, watching:string|null, onWatch:(p:any)=>void, roster: ReturnType<typeof useRoster>,
  *   emoteTtl?: number, teamLp?: number|null, self?: { lp?: number|null, pending: number, unite: boolean, left?: number|null } | null,
  *   cap?: number, uniteLocal?: Record<string, number> | null,
- *   observe?: null | { canObserve: (p:any) => { fieldId?: string, reason?: string|null, back?: boolean }, observing: boolean, onBack: () => void } }} props
+ *   observe?: null | { canObserve: (p:any) => { fieldId?: string, reason?: string|null, back?: boolean }, observing: boolean, onBack: () => void,
+ *     half?: (p:any) => 'L'|'ALL'|'R'|null, onHalf?: (layer: string, p: any) => void } }} props
+ *   half: the ‹ › layer a tap on that player's avatar switches to (battle/observe.js avatarLayer), null = the usual flow
  *   uniteLocal: the local 联防 replica's per-leaker counts while it is on screen (battle runner state().uniteLeft), else null
  */
 export function TeamPanel({ pub, myId, watching, onWatch, roster, emoteTtl = 3000, observe = null, self: selfLive = null, cap = 10, uniteLocal = null }) {
