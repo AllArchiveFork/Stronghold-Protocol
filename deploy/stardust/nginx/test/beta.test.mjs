@@ -102,7 +102,7 @@ test('REAL Beta isolated stock Nginx TLS, gate, localcode fallback and WS bounda
       '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--pids-limit', '128',
       '--tmpfs', '/tmp:rw,noexec,nosuid,size=16m', '-v', repo + ':/candidate:ro', '-v', `${dir}:${dir}:rw`,
       '-e', 'FIXTURE_DIR=' + dir, '--entrypoint', '/usr/local/bin/node', imageID,
-      '/candidate/deploy/stardust/nginx/test/beta-runtime.fixture.mjs'], { encoding: 'utf8', timeout: 15000 }).trim();
+      '/candidate/deploy/stardust/nginx/fixtures/beta-runtime.fixture.mjs'], { encoding: 'utf8', timeout: 15000 }).trim();
     const ready = await waitFor(async () => {
       const state = JSON.parse(execFileSync(DOCKER, ['inspect', cid], { encoding: 'utf8', timeout: 5000 }))[0].State;
       if (!state.Running) throw new Error('Node24 fixture failed: ' + execFileSync(DOCKER, ['logs', cid], { encoding: 'utf8' }));

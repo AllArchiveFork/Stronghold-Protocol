@@ -194,7 +194,10 @@ test('single-credit progress is low frequency/aggregated and an async consumer c
     assert.equal(dto.summary, true);
     ticks = dto.ticks; slices = dto.sliceCount;
   }
-  assert.ok(incoming[0].dto.ticks > MAX_TRIAL_TICKS);
+  // aggregated, not one report per slice: a report is due every 50 ms however many slices that took, so the first one
+  // may cover a single cold slice on a slow runner (GitHub CI); the later ones cover several
+  assert.ok(incoming.some(({ dto }, i) => dto.sliceCount - (i ? incoming[i - 1].dto.sliceCount : 0) > 1),
+    'a report aggregates several slices');
   release(); await job.close(); await drained(pool);
 });
 

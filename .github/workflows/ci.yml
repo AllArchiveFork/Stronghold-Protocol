@@ -32,6 +32,10 @@ jobs:
       NO_COLOR: '1'
     steps:
       - uses: actions/checkout@v7
+        with:
+          # the release tests read pinned historical blobs (tools/merge-generated-release.mjs RELEASE_SNAPSHOTS, the
+          # localcode export baseline): a shallow clone lacks them
+          fetch-depth: 0
 
       - uses: actions/setup-node@v7
         with:

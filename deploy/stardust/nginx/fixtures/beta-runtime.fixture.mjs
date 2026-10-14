@@ -1,4 +1,5 @@
-// Test-only bounded HTTP + WS fixture, NOT a game release/export or production runtime.
+// Test-only bounded HTTP + WS fixture, NOT a game release/export or production runtime. Run only inside the Node 24
+// container of ../test/beta.test.mjs; it lives outside test/ so a plain `node --test` does not load it as a suite.
 import http from 'node:http';
 import fs from 'node:fs/promises';
 import path from 'node:path';
