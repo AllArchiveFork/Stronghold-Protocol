@@ -62,6 +62,32 @@ count can exceed the target size. Count-only complete snapshots are coalesced/ch
 lifecycle and hello synchronization remain immediate. Delayed work resolves the current ticket/state before
 sending, and close/clear cancels it. Offline/new-socket clients show unknown until a fresh queue snapshot.
 
+**Fork lobby additions (2026-10-14, next release; server/lobby.js, server/ownerFile.js, server/onlineLimit.js):**
+- `room.card {charId?, bg?, trophies?}` — the player's display card. `charId`: `''` or an operator charId
+  (`/^char_[0-9a-z_]+$/`, ≤ 48) that the server's game data knows (a chess record's `charId` or the 自选 owned pool, else
+  `BAD_MSG`); `bg`: `''` or a namecard-background id (`/^[a-z0-9][a-z0-9_:\-\/]*$/i`, ≤ 48; format only, the client maps
+  it to art); `trophies`: integer 0–1 000 000, self-reported and cosmetic only. A field left out keeps its stored value,
+  `''` / `0` clears it. Stored on the session (it follows the player into every room and survives a resume, not a new
+  session) and copied to the player's seat; `room.state seats[].card {charId?, bg?, trophies?}` on human seats that have
+  one (absent otherwise, never on AI seats or spectators). A change is broadcast; more than 6 changes per 10 s per session
+  answer `RATE`; an unchanged card costs nothing. It never enters a match (local seats, the cluster prepare DTO) and a
+  card edit does not invalidate a cluster start being prepared.
+- Owner mark (服主): `hello.owner` (optional string ≤ 128, the owner key). `SP_OWNER_FILE` names a JSON file
+  `{ "names": ["…"], "keySha256": "<64 hex>" }`; a hello whose key hashes to `keySha256` (timing-safe) gets
+  `welcome.owner: true` and is shown as `owner: true` on its `room.state` seat / `spectators[]` entry. Decided again on
+  every hello (a resume or repeated hello without the key is no owner). A hello from anybody else whose name equals a
+  reserved name after NFKC, whitespace / invisible removal and case folding is refused with
+  `error NAME_REJECTED, detail: 'reserved'` before its token is looked up. No env, no file or an invalid file = off. The
+  file is re-read on change (polled like the limits file, first read before listening); the key and its hash are never
+  logged.
+- Maintenance: the limits file (`SP_ONLINE_LIMIT_FILE`) accepts `"maintenance": 0 | 1`. While 1, `room.create`,
+  `room.start` and `queue.join` / `queue.accept` answer `error MAINTENANCE` (服务器即将维护，暂停开启新的模拟), the
+  matchmaker forms no offer, and switching it on returns every queued / offered ticket to `queue.state {state: 'idle',
+  reason: 'maintenance'}` (party rooms stay). Rooms, `room.join`, `room.spectate` and running matches go on; nobody is
+  removed. `presence.state` carries `maintenance: true` while on (omitted when off); a flip publishes it to every online
+  session at once, those in a running match included. `/healthz limits.maintenance` is 0 / 1. A server older than this
+  release rejects the whole limits file for the unknown key, so add the key only after the release is live.
+
 ### 8.2 Match
 C→S (all carry `rid`): `g.infoReady {setupRevision?}` · `g.band {bandId}` · `g.bandSkip` · `g.bandFocus {bandId?}` (the strategy highlighted in the draft screen — what a timed-out turn takes; absent / null clears it; `WRONG_PHASE` outside BAND_DRAFT, `ALREADY` after the pick, `BAD_TARGET` for a band not allowed; §18.2) · `g.bondPlan {bondId?}` (remake feature, display only: the core bond the player means to build — any `isCore` bond of bonds.json, the mode's switched-off ones included, else `BAD_TARGET`; absent / null clears it; from INFO_CHECK until round 1's COMBAT — the strategy draft, BATTLE_CHECK and round 1's ROUND_START / SP_DRAFT / PREP — else `WRONG_PHASE`; `m.public players[].bondPlan`) · `g.buy {slot}` · `g.refresh` · `g.freeze` · `g.levelUp` · `g.sell {uid}` · `g.move {uid, to:{area:'board', row, col}|{area:'hand', idx}, dir?}` · `g.equip {itemUid, targetUid, replaceUid?}` (`replaceUid`: which equipped item a third one replaces, §6.2) · `g.art {itemUid, row, col, dir?}` (`dir` ∈ UP|RIGHT|DOWN|LEFT from the deploy wheel, §3; absent ⇒ `to.dir`, then RIGHT; `g.move` onto the piece's own tile re-orients it; board pieces in `m.private` / `m.field {prep:true}` carry `dir`) · `g.destroy {uid}` (hand / temp items only; equipped items are locked, §6.2) · `g.reward {idx}` · `g.choice {idx, choiceId?}` (with an ID: the recipient's PREP personal choice; without one: the public SP_DRAFT; stale or wrong IDs never fall through to the public draft) · `g.ready {ready}` · `g.emote {id}` · `g.watch {fieldId, playerId?}` (`playerId`: the player tapped — a shared 联防 / boss pair field shows two; what an eliminated viewer follows, §25) · `g.autoplay {on}` · `g.pause {on}` (solo battles only, §14 Solo pause) · `g.unitStats {seq?}` (ROUND_START / SP_DRAFT / PREP, else `WRONG_PHASE`; eliminated: `ELIMINATED`) → push `m.unitStats` (§18.5) · `g.leave`
 S→C:

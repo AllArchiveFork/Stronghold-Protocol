@@ -391,6 +391,18 @@ export function unitStatsEntry(u, s = null) {
 export const DIRS = Object.freeze(['UP', 'RIGHT', 'DOWN', 'LEFT']);
 const isDir = (v) => DIRS.includes(v);
 
+// ---- display card (fork lobby, 2026-10-14): room.card { charId?, bg?, trophies? } ------------------------------------
+
+/**
+ * `room.card`: the player's display card, shown to the room on its seat (room.state seats[].card) — `charId`: the avatar
+ * operator ('' clears; the server also requires a real operator of its game data), `bg`: a namecard background id
+ * ('' clears; format only, the client maps ids to art), `trophies`: a self-reported cumulative trophy count (0 clears;
+ * cosmetic only, never used by a match). A field the message leaves out keeps its stored value.
+ */
+export const CARD_LIMITS = Object.freeze({ idLength: 48, trophies: 1_000_000 });
+const isCardCharId = (v) => v === '' || (isStr(v, CARD_LIMITS.idLength) && /^char_[0-9a-z_]+$/.test(v));
+const isCardBg = (v) => v === '' || (isStr(v, CARD_LIMITS.idLength) && /^[a-z0-9][a-z0-9_:\-\/]*$/i.test(v));
+
 const target = (v) => {
   if (!v || typeof v !== 'object') return false;
   if (v.area === 'board') return isInt(v.row, 0, GEO.ROWS - 1) && isInt(v.col, 0, GEO.COLS - 1);
@@ -401,9 +413,11 @@ const target = (v) => {
 /** @type {Record<string, { [field: string]: ((v:any)=>boolean) | string[], $optional?: string[] }>} */
 export const C2S = {
   // session & lobby
+  // owner: the 服主 key (server/ownerFile.js) — verified on every hello, answered by welcome.owner: true; never echoed or logged
   hello: { name: (v) => isStr(v, NAME_MAX_LEN) && v.trim().length > 0, token: (v) => v == null || isStr(v, 64), version: (v) => v == null || isInt(v, 0, 1e6),
     matchmakingVersion: isId, playerCapacityVersion: isId, noReplace: isBool, claimAt: (v) => isNum(v, 0, Number.MAX_SAFE_INTEGER),
-    $optional: ['token', 'version', 'matchmakingVersion', 'playerCapacityVersion', 'noReplace', 'claimAt'] },
+    owner: (v) => isStr(v, 128),
+    $optional: ['token', 'version', 'matchmakingVersion', 'playerCapacityVersion', 'noReplace', 'claimAt', 'owner'] },
   // full: this ping wants the whole cluster load summary in its pong (server/net.js CLUSTER_LOAD_EVERY_MS)
   ping: { c: (v) => typeof v === 'number' && Number.isFinite(v), full: isBool, $optional: ['full'] },
   'room.create': { mode: (v) => v === 'solo' || v === 'coop', difficulty: (v) => DIFFICULTIES.includes(v), experimental: isExperimental, $optional: ['experimental'] },
@@ -442,6 +456,8 @@ export const C2S = {
   'room.diy': { picks: isDiyPicks },
   // Independent display-only choices: actual charId → admitted manifest key; accepted in INFO_CHECK only.
   'room.skins': { choices: isSkinChoices },
+  // the display card (CARD_LIMITS above; server/lobby.js setCard): stored per session, copied to the player's seat
+  'room.card': { charId: isCardCharId, bg: isCardBg, trophies: (v) => isInt(v, 0, CARD_LIMITS.trophies), $optional: ['charId', 'bg', 'trophies'] },
   // spectator seats (remake feature, community report #26; MAX_SPECTATORS): take one of a co-op room's spectator seats —
   // in its lobby or while its match runs — never a player seat; the host frees one by playerId (the spectator gets
   // room.closed { reason: 'kicked' }). room.leave / g.leave leave a spectator seat like a player seat.
@@ -524,6 +540,8 @@ export const S2C = [
   // identities, including the requester/party, in the ticket's frozen version:difficulty:required pool.
   // Excludes offered/allocation/matched identities; not compatible-party progress, online count or an ETA.
   // Lifecycle/hello snapshots are immediate; count-only changes coalesce at ~1s. Absent count means unknown.
+  // presence.state { online, seq, serverNow, maintenance? } — `maintenance: true` while the limits file's switch is on
+  // (server/onlineLimit.js): room.create / room.start / queue.join answer MAINTENANCE; omitted when off.
   'presence.state', 'queue.state',
   // Expanded relay only: m.public.uniteRound (1|2), uniteRounds (2); unite.rounds / uniteResult.rounds
   // retain completed { round, fieldId, battleId, helpers, through } rows. Current field helpers <=2,

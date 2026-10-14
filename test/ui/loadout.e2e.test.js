@@ -53,9 +53,16 @@ describe('干员调配 overlay (real server, headless Chrome)', { skip: !ENABLED
     await page.evaluateOnNewDocument(() => {
       localStorage.setItem('sp.name', '调配测试');
       sessionStorage.setItem('sp.entered', '1');
+      // the list view these tests drive (the card view of 2026-10-14 is the overlay's own default)
+      if (localStorage.getItem('sp.pref.loadout.view') == null) localStorage.setItem('sp.pref.loadout.view', '"list"');
     });
     await page.goto(`${base}/`, { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => globalThis.__SP__?.store.get().connection.status === 'online' && !!document.querySelector('.lobby-screen'), { timeout: 30000 });
+    // the lobby opens its 公告板 by itself while a notice is unread: closed, so the clicks below reach the lobby
+    if (await page.waitForSelector('.announcement-board', { visible: true, timeout: 2500 }).catch(() => null)) {
+      await page.click('.announcement-board .modal__actions button');
+      await page.waitForSelector('.announcement-board', { hidden: true, timeout: 10000 });
+    }
     return { ctx, page, problems };
   }
   const st = (page) => page.evaluate(() => {

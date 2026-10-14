@@ -73,7 +73,7 @@ test('site names cover the exact thirty-two slots in order without changing wire
   for (const label of [null, undefined, 1, 'game-001', 'game-00', 'game-257', 'game-01\n', 'private-node', '罗德岛']) assert.equal(gameDisplayName(label), null);
   const notices = JSON.parse(source('../../data/announcements.json'));
   assert.equal(notices.length, 2);
-  assert.equal(notices[0].title, '10 月 14 日更新：同步原作 0.2.6，掉线重连与界面修复');
+  assert.equal(notices[0].title, '新版界面上线：大厅、房间与干员调配全新改版');
   assert.doesNotMatch(notices.flatMap(notice => notice.paragraphs).join('\n'), /节点更名|服务器更名|罗德岛|企鹅物流/);
 });
 
@@ -137,13 +137,12 @@ test('experimental options are room-only and lobby creation uses server defaults
 
 test('room options stay with difficulty controls rather than crowding ready actions', () => {
   const room = source('../../public/js/screens/room.js');
-  const settings = room.slice(room.indexOf('<div class="room-bar__left">'), room.indexOf('<div class="room-bar__center">'));
-  const actions = room.slice(room.indexOf('<div class="room-bar__right">'));
-  assert.match(settings, /class="room-experimental"/);
-  assert.match(settings, /size="sm"/);
+  // 实验性选项 lives under ⚙ of the difficulty pill (RoomOptions), never among 组队匹配 / 开始模拟 / 准备就绪
+  const options = room.slice(room.indexOf('function RoomOptions('), room.indexOf('/** Room screen component. */'));
+  assert.match(options, /\{t\('实验性选项'\)\}/);
+  const pill = room.slice(room.indexOf('<div class="rs-pill">'), room.indexOf('<div class="rs-foot__right">'));
+  assert.match(pill, /onExperimental=\$\{\(\) => \{ setOpts\(false\); setExperimentalOpen\(true\); \}\}/);
+  const actions = room.slice(room.indexOf('<div class="rs-foot__right">'), room.indexOf('</footer>'));
   assert.doesNotMatch(actions, /setExperimentalOpen|实验性选项/);
   assert.match(actions, /myReady \? t\('已就绪'\) : t\('准备就绪'\)/);
-  const css = source('../../public/css/screens/room.css');
-  assert.match(css, /grid-template-areas: "settings actions" "status status"/);
-  assert.match(css, /grid-template-areas: "settings" "status" "actions"/);
 });

@@ -133,9 +133,11 @@ export async function startRealServer(opts = {}) {
  * hidden — no animation frames, so the Pixi view and visibility checks stall).
  */
 export class Client {
-  /** `settings`: sp.pref.settings seeded before every page load (e.g. { uiScale: '100' }). */
-  constructor(puppeteer, base, label, { w = 1920, h = 1080, prefix = 'coop', settings = null } = {}) {
-    Object.assign(this, { puppeteer, base, label, w, h, prefix, settings, problems: [], log: [], shots: [] });
+  /** `settings`: sp.pref.settings seeded before every page load (e.g. { uiScale: '100' }). `prefs`: other sp.pref.* keys;
+   *  by default 干员调配 opens in its list view (the rows and tabs these tests drive; the card view of 2026-10-14 is the
+   *  page's own default). */
+  constructor(puppeteer, base, label, { w = 1920, h = 1080, prefix = 'coop', settings = null, prefs = { 'loadout.view': 'list' } } = {}) {
+    Object.assign(this, { puppeteer, base, label, w, h, prefix, settings, prefs, problems: [], log: [], shots: [] });
   }
 
   async open(query = '') {
@@ -158,6 +160,11 @@ export class Client {
     page.on('dialog', (d) => d.dismiss().catch(() => {}));
     if (this.settings) {
       await page.evaluateOnNewDocument((s) => { try { localStorage.setItem('sp.pref.settings', JSON.stringify(s)); } catch { /* ignore */ } }, this.settings);
+    }
+    if (this.prefs) {
+      await page.evaluateOnNewDocument((p) => {
+        try { for (const [k, v] of Object.entries(p)) if (localStorage.getItem(`sp.pref.${k}`) == null) localStorage.setItem(`sp.pref.${k}`, JSON.stringify(v)); } catch { /* ignore */ }
+      }, this.prefs);
     }
     await page.goto(`${this.base}/${query}`, { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => !!globalThis.__SP__ && !!document.querySelector('.screen'), { timeout: 30000 });
@@ -215,6 +222,8 @@ export class Client {
     const t0 = Date.now();
     while (Date.now() - t0 < timeout) {
       const pt = await this.point(sel, text, nth, any);
+      // the lobby opens its 公告板 by itself while a notice is unread; a test aiming elsewhere closes it first
+      if (!pt && !sel.includes('announcement') && await this.visible('.announcement-board')) { await this.dismissBoard(500); continue; }
       if (pt) {
         await this.page.mouse.click(pt.x, pt.y, { button });
         // 准备 with funds left asks first (剩余资金). Accept it so a test that means "start the fight" is not stuck in PREP.
@@ -283,7 +292,53 @@ export class Client {
     await this.page.keyboard.type(name);
     await this.click('.title-login button', '开始');
     await this.page.waitForSelector('.lobby-screen', { timeout: 20000 });
+    await this.dismissBoard();
   }
+
+  // ---- hub and room (the lobby / room design adopted 2026-10-14) ----------------------------------------------------
+
+  /** Closes the lobby's 公告板 when it opened by itself (unread announcements); no board is a no-op. */
+  async dismissBoard(timeout = 2500) {
+    const board = await this.page.waitForSelector('.announcement-board', { visible: true, timeout }).catch(() => null);
+    if (!board) return false;
+    await this.click('.announcement-board .modal__actions button');
+    await this.page.waitForSelector('.announcement-board', { hidden: true, timeout: 10000 });
+    return true;
+  }
+
+  /** Hub 独立模拟 → 选择模拟协议: the card named `difficulty` (e.g. '标准模拟', '险境') and 开始模拟 (room.create). */
+  async createSolo(difficulty = '标准模拟') {
+    await this.click('.hub-entry', '独立模拟');
+    await this.page.waitForSelector('.proto .proto-list', { visible: true, timeout: 15000 });
+    await this.click('.proto .pcard__name', difficulty);
+    await this.click('.proto .proto-start', '开始模拟');
+  }
+
+  /** Hub 同盟模拟 → 选择同盟方式 → 创建同盟, then the room's difficulty when given. Resolves with the alliance key. */
+  async createCoop(difficulty = null) {
+    await this.click('.hub-entry', '同盟模拟');
+    await this.page.waitForSelector('.ally', { visible: true, timeout: 15000 });
+    await this.click('.ally-card--create');
+    const { room } = await this.waitFor((s) => !!s.room?.code, 'room created', 20000);
+    await this.page.waitForSelector('.rs', { visible: true, timeout: 15000 });
+    if (difficulty) await this.setRoomDifficulty(difficulty);
+    return room.code;
+  }
+
+  /** Host: the room's difficulty pill → 选择模拟协议 → the card named `difficulty` → 确认. */
+  async setRoomDifficulty(difficulty) {
+    await this.click('.rs-pill__diff');
+    await this.page.waitForSelector('.rs-proto', { visible: true, timeout: 10000 });
+    await this.click('.rs-proto .pcard__name', difficulty);
+    await this.click('.rs-proto .proto-start', '确认');
+    await this.page.waitForSelector('.rs-proto', { hidden: true, timeout: 10000 });
+  }
+
+  /** Room: 开始模拟 (the host). */
+  roomStart(opts) { return this.click('.rs-go', '开始模拟', opts); }
+
+  /** Room: 准备就绪 (a teammate). */
+  roomReady(opts) { return this.click('.rs-go', '准备就绪', opts); }
 
   // ---- field view (render engine debug hooks) -------------------------------------------------------------------
 

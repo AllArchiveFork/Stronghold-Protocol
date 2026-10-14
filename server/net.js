@@ -30,7 +30,8 @@
 //   1001 server shutdown
 //
 // The handler object (implemented by server/lobby.js) receives:
-//   onHello(session, { resumed, repeat })  after `welcome` was sent
+//   onHello(session, { resumed, repeat })  after `welcome` was sent (`session.owner`: this hello carried the 服主 key,
+//                                          server/ownerFile.js — decided again on every hello)
 //   welcomeInfo() → object (optional)      extra fields of every `welcome` (never one of its own keys): the lobby's
 //                                          `diyKitted` (0.2.0 自选编队 — which operators a DIY slot may field)
 //   onMessage(session, msg) → { ok: true } | { error: ERR code, detail?: string } | undefined
@@ -49,6 +50,7 @@ import { isCompressibleType } from './wsCompression.js';
 import { moderateName } from '../shared/names.js';
 import { NO_PHASES } from './phaseMetrics.js';
 import { serverFullDetail } from './onlineLimit.js';
+import { NAME_RESERVED } from './ownerFile.js';
 export { sanitizeName } from '../shared/names.js';
 
 /** Tunables (all overridable through the Network / SessionRegistry constructors). */
@@ -150,6 +152,10 @@ export class Session {
     this.diy = null;
     /** @type {Readonly<Record<string, string>>} display-only skin choices (lobby-owned) */
     this.skins = Object.freeze({});
+    /** @type {Readonly<{ charId?: string, bg?: string, trophies?: number }> | null} display card (lobby-owned, room.card) */
+    this.card = null;
+    /** @type {boolean} the latest hello carried the owner's key (服主, server/ownerFile.js); decided again on every hello */
+    this.owner = false;
     /** @type {string} client address of the latest connection (logging) */
     this.addr = '?';
     /** @type {string | null} per-network limit key of the latest connection (null = not limited), see clientAddress */
@@ -617,7 +623,7 @@ export class Network {
    * }} opts
    */
   constructor({ registry, handler, log = noopLog, now = Date.now, getLoadState = null, getLoadDetails = null, getClusterLoad = null, options = {},
-    metrics = NO_PHASES, onlineLimit = null }) {
+    metrics = NO_PHASES, onlineLimit = null, ownerFile = null }) {
     this.registry = registry;
     this.handler = handler;
     this.log = log;
@@ -637,6 +643,8 @@ export class Network {
     this.metrics = metrics;
     /** @type {{ limit: () => number } | null} the online cap (server/onlineLimit.js) for NEW sessions */
     this.onlineLimit = onlineLimit;
+    /** @type {{ verify: (key: unknown) => boolean, reserved: (name: unknown) => boolean } | null} the owner file (server/ownerFile.js) */
+    this.ownerFile = ownerFile;
     /** first hellos of a socket since start, by outcome (/healthz reconnect.hello; helloStats) */
     this.helloCounts = { resumed: 0, fresh: 0, unknownToken: 0, inUse: 0 };
     const slices = Math.max(1, Math.min(HEARTBEAT_SLICES_MAX, Math.round(this.opts.heartbeatMs / HEARTBEAT_SLICE_MS)));
@@ -814,6 +822,10 @@ export class Network {
     const checked = moderateName(msg.name);
     if (!checked.ok) { this.reply(conn, errorMsg(ERR.NAME_REJECTED, rid, checked.reason)); return; }
     const name = checked.name;
+    // 服主 (server/ownerFile.js): the key decides on every hello, nothing is kept without it; the owner's reserved names
+    // are refused to anybody else like a rejected name (before the token lookup: the identity stays intact)
+    const owner = this.isOwnerKey(msg.owner);
+    if (!owner && this.nameReserved(name)) { this.reply(conn, errorMsg(ERR.NAME_REJECTED, rid, NAME_RESERVED)); return; }
     if (msg.playerCapacityVersion != null && msg.playerCapacityVersion !== PLAYER_CAPACITY_VERSION) {
       this.reply(conn, errorMsg(ERR.BAD_MSG, rid, 'player capacity version mismatch'));
       return;
@@ -861,6 +873,7 @@ export class Network {
       session.disconnectedAt = null;
     }
     session.name = name;
+    session.owner = owner;
     session.lastSeen = now;
     session.addr = conn.ip;
     session.limitKey = conn.key;
@@ -871,6 +884,7 @@ export class Network {
     try { extra = this.handler.welcomeInfo?.() ?? null; } catch (e) { this.log.error('[net] welcomeInfo crashed', e); }
     // Keep the type first for bounded ingress inspection; optional metadata cannot replace identity fields.
     const welcome = { t: 'welcome', playerId: session.playerId, token: session.token, name: session.name, serverNow: now, version: PROTOCOL_VERSION, resumed };
+    if (session.owner) welcome.owner = true; // the settings screen's confirmation that the key worked
     if (extra && typeof extra === 'object') for (const [key, value] of Object.entries(extra)) {
       if (!Object.hasOwn(welcome, key) && key !== '__proto__') welcome[key] = value;
     }
@@ -912,6 +926,17 @@ export class Network {
     const t0 = this.metrics.start();
     try { this.handler.onDisconnect?.(s); } catch (e) { this.log.error('[net] onDisconnect crashed', e); }
     this.metrics.end('ws.close', t0);
+  }
+
+  /** Is this hello key the owner's (server/ownerFile.js)? Never throws; no owner file = nobody. */
+  isOwnerKey(key) {
+    if (key === undefined || key === '') return false;
+    try { return this.ownerFile?.verify(key) === true; } catch { return false; }
+  }
+
+  /** A name only the owner may use (server/ownerFile.js)? Never throws. */
+  nameReserved(name) {
+    try { return this.ownerFile?.reserved(name) === true; } catch { return false; }
   }
 
   /** The SERVER_FULL detail when the online cap is set and reached (the lobby's onlineCount), else null. */

@@ -22,7 +22,7 @@ for (const mode of ['unavailable', 'denied']) test(`lobby feedback ${mode} does 
 
 test('feedback remains visible outside optional announcements, with a number-only accessible button', () => {
   const lobby = source('../../public/js/screens/lobby.js'), feedback = source('../../public/js/ui/lobbyFeedback.js');
-  assert.match(lobby, /<aside class="lobby-contact"><\$\{LobbyFeedback\} \/><\/aside>/);
+  assert.match(lobby, /<div class="hub-contact"><\$\{LobbyFeedback\} \/>/);
   assert.match(feedback, /aria-label=\$\{t\('反馈 QQ 群：\{group\}，点击复制群号'/);
   assert.match(feedback, />\$\{FEEDBACK_GROUP\}<\/\/>/);
   assert.doesNotMatch(feedback, /href=|window\.open|2225664821|net\.request|localStorage/);

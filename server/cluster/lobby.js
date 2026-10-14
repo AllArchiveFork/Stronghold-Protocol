@@ -45,10 +45,13 @@ function optsDTO(opts) {
   if (opts.snapshotHz !== undefined) dto.snapshotHz = opts.snapshotHz;
   return dto;
 }
+// The display-only member fields (room.card's `card`, the 服主 `owner` mark) never reach the match (matchDTO): a change
+// while a start is being prepared does not invalidate it.
+const stampMember = member => { if (!member) return member; const { card, owner, ...rest } = member; return rest; };
 function roomStamp(room) {
   return structuredClone({ hostId: room.hostId, mode: room.mode, difficulty: room.difficulty, matchCount: room.matchCount,
     source: room.source, experimental: room.experimental, aiPicksLast: room.aiPicksLast, ownerKey: room.ownerKey, ownerKeys: room.ownerKeys ? [...room.ownerKeys].sort() : null,
-    seats: room.seats, spectators: room.spectators, disposed: room.disposed });
+    seats: room.seats.map(stampMember), spectators: room.spectators.map(stampMember), disposed: room.disposed });
 }
 
 class PreparedRemoteMatch {

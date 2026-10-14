@@ -478,17 +478,15 @@ describe('real server + real browsers', { skip: !ENABLED && 'set SP_REAL_E2E=1 (
       // ---- lobby & room --------------------------------------------------------------------------------------------
       await host.open();
       await host.enter('凯尔希');
-      await host.click('.mode-card', '同盟模拟');
-      await host.click('.diff-card', '险境模拟');
-      await host.click('.create-box button', '创建同盟');
+      await host.createCoop('险境模拟');
       const room = (await host.waitFor((s) => !!s.room?.code, 'room created')).room;
       await host.click('button', '添加 AI 队友');
       await guest.open(`?room=${room.code}`);
       await guest.enter('阿米娅');
       await guest.waitFor((s) => s.room?.code === room.code, 'guest joined via invite link');
-      await guest.click('.room-bar__right button', '准备就绪');
+      await guest.roomReady();
       await host.shot('room');
-      await host.click('.room-bar__right button', '开始模拟', { timeout: 20000 });
+      await host.roomStart({ timeout: 20000 });
 
       // ---- briefing ---------------------------------------------------------------------------------------------------
       for (const c of both) await c.waitFor((s) => s.phase === 'INFO_CHECK', 'briefing', 30000);
@@ -670,11 +668,9 @@ describe('real server + real browsers', { skip: !ENABLED && 'set SP_REAL_E2E=1 (
     try {
       await solo.open();
       await solo.enter('杜宾');
-      await solo.click('.mode-card', '独立模拟');
-      await solo.click('.diff-card', '标准模拟');
-      await solo.click('.create-box button', '开始独立模拟');
+      await solo.createSolo('标准模拟');
       await solo.waitFor((s) => !!s.room, 'solo room');
-      if (!(await solo.st()).phase) await solo.click('.room-bar__right button', '开始模拟', { timeout: 20000 });
+      if (!(await solo.st()).phase) await solo.roomStart({ timeout: 20000 });
       await solo.waitFor((s) => s.phase === 'INFO_CHECK', 'briefing', 30000);
       await solo.click('.brief__foot .btn--primary', '准备就绪');
       await solo.waitFor((s) => s.phase === 'BAND_DRAFT', 'band draft', 30000);

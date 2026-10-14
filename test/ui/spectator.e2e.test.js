@@ -40,25 +40,24 @@ describe('spectator seats (community report #26, real server)', { skip: !ENABLED
     try {
       await host.open();
       await host.enter('凯尔希');
-      await host.click('.mode-card', '同盟模拟');
-      await host.click('.diff-card', '标准模拟');
-      await host.click('.create-box button', '创建同盟');
+      await host.createCoop('标准模拟');
       const room = (await host.waitFor((s) => !!s.room?.code, 'room created')).room;
-      await host.click('.seat--empty button', '添加 AI 队友');
+      await host.click('.rseat__addbot', '添加 AI 队友');
 
-      // the lobby's 观战 entry
+      // the lobby's 观战 entry (密钥加入)
       await spec.open();
       await spec.hookRequests();
       await spec.enter('阿米娅');
-      await spec.click('.join-row input');
+      await spec.click('.hub-tile', '密钥加入');
+      await spec.click('.hub-dialog .join-row input');
       await spec.page.keyboard.type(room.code);
-      await spec.click('.join-row button', '观战');
+      await spec.click('.hub-dialog .join-spectate', '观战');
       await spec.page.waitForSelector('.room-screen .specbar__who.is-me', { timeout: 10000 });
       const roomView = await spec.page.evaluate(() => ({
-        bar: document.querySelector('.room-bar__right .btn--xl')?.textContent || '',
-        barDisabled: !!document.querySelector('.room-bar__right .btn--xl')?.disabled,
-        status: document.querySelector('.room-bar__status')?.textContent || '',
-        seats: [...document.querySelectorAll('.seat__name')].map((e) => e.textContent),
+        bar: document.querySelector('.rs-go')?.textContent || '',
+        barDisabled: !!document.querySelector('.rs-go')?.disabled,
+        status: document.querySelector('.rs-hint')?.textContent || '',
+        seats: [...document.querySelectorAll('.rseat__name')].map((e) => e.textContent),
       }));
       assert.match(roomView.bar, /观战中/);
       assert.equal(roomView.barDisabled, true);
@@ -77,7 +76,7 @@ describe('spectator seats (community report #26, real server)', { skip: !ENABLED
       await host.page.waitForFunction(() => document.querySelectorAll('.specbar__who').length === 1, { timeout: 8000 });
 
       // the match: a spectator is no player to wait for
-      await host.click('.room-bar__right button', '开始模拟', { timeout: 20000 });
+      await host.roomStart({ timeout: 20000 });
       for (const c of [host, spec]) await c.waitFor((s) => s.phase === 'INFO_CHECK', 'briefing', 30000);
       assert.match(await spec.page.evaluate(() => document.querySelector('.brief__foot .btn--primary')?.textContent || ''), /观战中/);
       await host.click('.brief__foot .btn--primary', '准备就绪');
