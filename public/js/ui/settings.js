@@ -33,6 +33,8 @@ import { voiceLanguageStore, setVoiceLanguage } from './voiceLanguage.js';
 import { t, tc, N_ } from '../../../shared/i18n.js';
 import { errorCount, currentBattle, diagnosticsText } from '../diag.js';
 import { copyText } from './clipboard.js';
+// 异形屏适配 (ui/screenFit.js): imported here, ahead of main.js's first render, so the stored offsets are on at boot
+import { ScreenFitSection } from './screenFit.js';
 
 const cx = (...p) => p.flat().filter(Boolean).join(' ');
 
@@ -300,6 +302,7 @@ export function SettingsModal({ open, onClose }) {
         </div>
       </div>
       <p class="set-hint set-textsize-note">${t('调整界面文字大小，棋盘保持原比例。')}</p>
+      <${ScreenFitSection} />
       <div class="set-row">
         <span class="set-row__label">${t('界面大小')}<${MicroLabel}>UI SCALE<//></span>
         <div class="set-seg set-uiscale" role="radiogroup" aria-label=${t('界面大小')} data-testid="ui-scale">
