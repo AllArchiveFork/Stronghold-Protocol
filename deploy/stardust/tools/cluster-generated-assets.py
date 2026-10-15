@@ -86,3 +86,45 @@ def generated_renderer_data(root):
         raise Refused('renderer index references missing resource') from None
     return {'path': INDEX, 'bytes': raw, 'sha256': hashlib.sha256(raw).hexdigest(),
             'resourceReferences': len(references), 'kind': 'generated-renderer-data'}
+
+
+FX_INDEX = 'data/local-fx.json'
+FX_PREFIX = '/assets/local/fx/'
+
+
+def generated_fx_data(root):
+    """The official battle effects' file list (data/local-fx.json, 0.3.0 tools/local-extract/fx.py), or None when absent.
+
+    Ignored by Git like the renderer index; the coordinator serves it as /data/local-fx.json (server/http/static.js) and
+    the page shows 设置「官方特效」 and loads effects only when it names prefabs. The effect files themselves are art of the
+    material sources (/assets/local/fx/…), not of the image, so only the list's schema and paths are checked here.
+    """
+    path = Path(root) / FX_INDEX
+    if not os.path.lexists(path):
+        return None
+    try:
+        raw = read_regular(root, FX_INDEX)
+        value = json.loads(raw)
+    except (OSError, ValueError):
+        raise Refused('generated effects list unreadable') from None
+    if not isinstance(value, dict) or type(value.get('version')) is not int or value['version'] != 1 \
+            or value.get('format') != 'fx-manifest' or type(value.get('count')) is not int or value['count'] <= 0 \
+            or not isinstance(value.get('groups'), dict):
+        raise Refused('generated effects list schema refused')
+    prefabs = value['groups'].get('fx/prefabs')
+    if not isinstance(prefabs, dict) or not prefabs:
+        raise Refused('effects list names no prefabs')
+    entries = 0
+    for records in value['groups'].values():
+        if not isinstance(records, dict):
+            raise Refused('effects group schema refused')
+        for record in records.values():
+            entries += 1
+            if not isinstance(record, dict) or not isinstance(record.get('path'), str):
+                raise Refused('effects entry schema refused')
+            item = record['path']
+            if not item.startswith(FX_PREFIX) or any(not SEGMENT.fullmatch(part) or part in ('.', '..') for part in item[1:].split('/')):
+                raise Refused('effects entry path refused')
+    if entries != value['count']:
+        raise Refused('effects entry count mismatch')
+    return {'path': FX_INDEX, 'bytes': raw, 'sha256': hashlib.sha256(raw).hexdigest(), 'entries': entries, 'kind': 'generated-fx-data'}

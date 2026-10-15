@@ -87,6 +87,12 @@ include不能和旧同URL exactalias/prefix一起重复加载。安装前独立�
 
 部署时（需单独授权）：先核对现用vhost没有同URL的`/shared/`、`/sim/`、`/data/`精确或前缀location（否则重复/冲突），确认目标profile与`--topology`，用`--runtime-static`生成并`--verify`，安装到同一`localcode`树，`openresty -t`后正常reload。核验：任一`/data/*.json`与`/shared/*.js`响应带`X-Ark-Code-Source: edge`、`Content-Encoding: gzip`（客户端请求时）、`Cache-Control: private, no-store`、无ACAO；`/data/local-assets.json`仍为`cluster`；coordinator `/healthz`的`phases.static.data/static.shared`计数应降到接近0。coordinator原路径保留为fallback，回滚只需换回不带`--runtime-static`的include。
 
+## 可选：前端打包产物（`--resource-manifest`，2026-10-16）
+
+`SP_CLIENT=build` 时首页引用 `/build/assets/<name>-<hash8>.js|css`（Vite，`npm run build`）。它们是生成物、不在 source manifest 里：给出同一次导出的 `resource-manifest.json` 及其 SHA-256（`--resource-manifest`、`--resource-manifest-sha256`，prepare 与 `--verify` 都要给），工具只选 `public/build/assets/` 下名字带内容哈希的 `.js`/`.css`，核对导出目录里该目录恰好是这些文件、字节一致，生成同样过门禁的精确 alias（`Cache-Control: private, max-age=31536000, immutable`，gzip），另加 `^~ /build/` 回落到同一 coordinator。`/build/index.html` 与 `/` 不做 alias（协调器返回，重新验证）。metadata 只在启用时记录 `clientBuildResourceManifestSha256`，`--verify` 必须给出同一份 resource manifest。
+
+`data/local-fx.json`（0.3.0 官方特效清单，像 `local-assets.json` 一样是 ignored 的生成文件）存在时由 `cluster-source-export.py` 校验 schema/路径（`/assets/local/fx/…`，特效文件本身由素材源提供，不进镜像）后作为 `generated-fx-data` 资源导出；`--runtime-static` 不为它生成 alias，`/data/local-fx.json` 由协调器提供。
+
 ## 验证入口与边界
 
 准备器回归应覆盖schema、canonical输入、链接、目录、输出库存及stock安全头表达式。隔离Nginx HTTP检查应覆盖body/SHA/MIME、单值安全头、private-no-store/no-CORS、HEAD/授权304、匿名条件请求仍401、POST405、异源403、未知/缺文件fallback及匿名缺文件不触发取代码。

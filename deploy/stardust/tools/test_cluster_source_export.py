@@ -64,6 +64,34 @@ class ClusterSourceExportTests(unittest.TestCase):
         self.assertEqual(row['sha256'], identity['generatedRendererIndex']['sha256'])
         self.assertEqual((self.output / 'app/data/local-assets.json').read_bytes(), (self.root / 'data/local-assets.json').read_bytes())
 
+    def test_ignored_effects_list_is_exported_as_resource_only_when_present(self):
+        plain = exporter.export(self.root, self.output, self.revision)
+        self.assertNotIn('generatedFxIndex', plain)
+        self.assertFalse((self.output / 'app/data/local-fx.json').exists())
+        fx = {'version': 1, 'format': 'fx-manifest', 'source': 'local-client', 'count': 2, 'groups': {
+            'fx': {'index': {'path': '/assets/local/fx/index.json', 'kind': 'FxIndex'}},
+            'fx/prefabs': {'hit': {'path': '/assets/local/fx/prefabs/hit.json', 'kind': 'FxPrefab'}}}}
+        self.put('data/local-fx.json', json.dumps(fx))  # its effect files are material-source art, not in the checkout
+        identity = exporter.export(self.root, Path(self.temp.name) / 'export-fx', self.revision)
+        self.assertEqual(identity['generatedFxIndex']['entries'], 2)
+        self.assertEqual(identity['publicResourceFiles'], plain['publicResourceFiles'])
+        self.assertEqual(identity['resourceFiles'], plain['resourceFiles'] + 1)
+        out = Path(self.temp.name) / 'export-fx'
+        self.assertEqual((out / 'app/data/local-fx.json').read_text(), json.dumps(fx))
+        rows = {row['path']: row for row in json.loads((out / 'resource-manifest.json').read_text())['files']}
+        self.assertEqual(rows['data/local-fx.json']['kind'], 'generated-fx-data')
+        source = json.loads((out / 'source-manifest.json').read_text())
+        self.assertNotIn('data/local-fx.json', [row['path'] for row in source['files']])
+        for bad in ({**fx, 'count': 3}, {**fx, 'format': 'other'}, {**fx, 'groups': {'fx': fx['groups']['fx']}, 'count': 1},
+                    {**fx, 'groups': {**fx['groups'], 'fx/prefabs': {'x': {'path': '/assets/local/char/x.png'}}}},
+                    {**fx, 'groups': {**fx['groups'], 'fx/prefabs': {'x': {'path': '/assets/local/fx/../x.json'}}}}):
+            with self.subTest(bad=bad):
+                self.put('data/local-fx.json', json.dumps(bad))
+                target = Path(tempfile.mkdtemp(dir=self.temp.name)) / 'export'
+                with self.assertRaises(exporter.assets.Refused):
+                    exporter.export(self.root, target, self.revision)
+                self.assertFalse(target.exists())
+
     def test_committed_language_packs_are_code_not_public_art(self):
         self.put('public/i18n/en.json', '{"_meta":{"lang":"en"},"开始":"Start"}\n')
         self.put('public/i18n/zh-TW.json', '{"_meta":{"lang":"zh-TW"},"开始":"開始"}\n')

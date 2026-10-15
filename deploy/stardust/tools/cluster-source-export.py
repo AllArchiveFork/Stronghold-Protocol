@@ -68,7 +68,8 @@ def export(root, output, revision):
     if assets.read_regular(root, 'deploy/stardust/cluster/Dockerfile.cluster') != dockerfile:
         raise Refused('Dockerfile differs from committed export')
     generated = assets.generated_renderer_data(root)
-    if generated['path'] in names:
+    fx = assets.generated_fx_data(root)  # optional: the official effects' list (0.3.0), absent = none
+    if generated['path'] in names or (fx and fx['path'] in names):
         raise Refused('generated game-art index must remain outside committed code')
     output.mkdir(mode=0o755)
     app = output / 'app'
@@ -99,6 +100,8 @@ def export(root, output, revision):
                 relative = path.relative_to(root).as_posix()
                 resources.append(copy(relative, assets.read_regular(root, relative, limit=64 * 1024 * 1024)))
     resources.append({**copy(generated['path'], generated['bytes']), 'kind': generated['kind']})
+    if fx:
+        resources.append({**copy(fx['path'], fx['bytes']), 'kind': fx['kind']})
     dependencies = root / 'node_modules'
     if not dependencies.is_dir() or dependencies.is_symlink():
         raise Refused('locked prepared dependencies required')
@@ -119,9 +122,11 @@ def export(root, output, revision):
     version = json.loads(dict((name, raw) for name, raw, _ in entries)['package.json'])['version']
     identity = {'sourceKind': 'commit', 'build': revision, 'sourceManifestSha256': source_digest,
         'resourceManifestSha256': resource_digest, 'sourceFiles': len(source), 'resourceFiles': len(resources),
-        'publicResourceFiles': len(resources) - 1, 'generatedRendererIndex': {
+        'publicResourceFiles': len(resources) - 1 - bool(fx), 'generatedRendererIndex': {
             'path': generated['path'], 'bytes': len(generated['bytes']), 'sha256': generated['sha256'],
             'resourceReferences': generated['resourceReferences']}, 'version': version}
+    if fx:  # recorded only when present: an export without effects keeps its identity bytes
+        identity['generatedFxIndex'] = {'path': fx['path'], 'bytes': len(fx['bytes']), 'sha256': fx['sha256'], 'entries': fx['entries']}
     (output / 'identity.json').write_bytes(canonical(identity))
     (output / 'Dockerfile').write_bytes(dockerfile)
     return identity
