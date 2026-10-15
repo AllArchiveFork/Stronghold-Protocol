@@ -19,6 +19,9 @@
 // again: a phase clock restarts from the remaining time the checkpoint recorded, a prep gets at least
 // MIN_RECOVER_PREP_SEC and its humans are not Ready (they come back to their board first), a draft starts its current
 // turn (a concurrent draft: its one countdown) over, a setup vote is dropped. A solo pause does not survive.
+// A checkpoint written as the prep ended (its envelope's reason CHECKPOINT_PREP_END) means the match was past that
+// prep — fighting, settling — when it stopped: restoreMatch({ replay: true }) marks the round (replayRound), and
+// m.public carries it through that prep so the players learn the round's battle is fought again (ui/matchNotice.js).
 //
 // EVERY FIELD IS CLASSIFIED. MATCH_FIELDS / PLAYER_FIELDS below name what is saved, derived (rebuilt from the seats,
 // the seed, the options and the data) or transient (timers, caches, views, battle objects). test/match/snapshot.test.js
@@ -36,6 +39,9 @@ export const SNAPSHOT_VERSION = 1;
 
 /** Phases whose state is fully serializable (see the header). */
 export const SNAPSHOT_PHASES = Object.freeze([PHASE.INFO_CHECK, PHASE.BAND_DRAFT, PHASE.SP_DRAFT, PHASE.ROUND_START, PHASE.PREP]);
+
+/** The checkpoint reason of the prep's end (Match._checkpoint in match/prep.js): a restore from it replays the round. */
+export const CHECKPOINT_PREP_END = 'prep-end';
 
 /** A restored round's battles get ids far above the interrupted ones (a stale report can never match a new battle). */
 export const RESTORE_SEQ_GAP = 1000;
@@ -85,7 +91,7 @@ export const MATCH_FIELDS = Object.freeze({
     '_pubDirty', '_pubTimer', '_lastPubAt', '_lastPubJson', '_privDirty', '_prepEndQueued', 'fields', 'runner', 'watchers',
     'localViews', 'unitePlan', '_normalAliveCount', '_uniteRelay', 'uniteResultView', '_uniteLeftKey', '_uniteBounds',
     'teamLp', 'bossPool', '_turnToken', '_botPath', '_botTraits', '_workerBotPrepOwner', '_botEmotesMerges', 'overtimeApplied',
-    'bossOvertimeStartReal', '_finalEnding', '_bossStartAt', 'lastResultMsg', '_uniteBudget', 'onCheckpoint',
+    'bossOvertimeStartReal', '_finalEnding', '_bossStartAt', 'lastResultMsg', '_uniteBudget', 'onCheckpoint', 'replayRound',
   ]),
 });
 
@@ -329,10 +335,11 @@ export function checkSnapshot(m, doc) {
  * round-start hooks and prep-start effects already ran before the checkpoint was taken.
  * @param {import('./Match.js').Match} m fresh instance
  * @param {object} doc snapshotMatch
- * @param {{ createRngFromState: (state: number) => any, log?: object }} deps
+ * @param {{ createRngFromState: (state: number) => any, log?: object, replay?: boolean }} deps `replay`: the checkpoint
+ *   was written as its prep ended (CHECKPOINT_PREP_END) — the round's battle is fought again (replayRound)
  * @returns {boolean} false when the document does not fit this match (checkSnapshot)
  */
-export function restoreMatch(m, doc, { createRngFromState, log = null } = {}) {
+export function restoreMatch(m, doc, { createRngFromState, log = null, replay = false } = {}) {
   const why = checkSnapshot(m, doc);
   if (why) { log?.warn?.(`[snapshot] ${m?.roomCode}: checkpoint refused (${why})`); return false; }
   if (typeof createRngFromState !== 'function') throw new TypeError('restoreMatch: createRngFromState required');
@@ -425,6 +432,7 @@ export function restoreMatch(m, doc, { createRngFromState, log = null } = {}) {
     ps.recompute();
   }
   enterPhase(m, doc);
+  m.replayRound = replay === true && m.phase === PHASE.PREP ? m.round : 0;
   return true;
 }
 

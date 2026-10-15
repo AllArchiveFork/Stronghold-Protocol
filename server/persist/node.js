@@ -117,7 +117,8 @@ export class NodeCheckpoints {
     }
     this.counts.restores++;
     if (assignmentId !== checkpointId) this.supersedes.set(assignmentId, { id: checkpointId, at: Date.now() });
-    return { spec: cp.spec, left: cp.left.filter((id) => typeof id === 'string'), match: cp.match };
+    return { spec: cp.spec, left: cp.left.filter((id) => typeof id === 'string'), match: cp.match,
+      reason: typeof cp.reason === 'string' ? cp.reason : null };
   }
 
   /** The last round before the node stops: every committed actor's checkpoint, nothing deleted. */

@@ -24,6 +24,7 @@ test('the whole stack restarts (a release): the match comes back on a node from 
   assert.equal(back.playerId, c.playerId);
   await until(() => back.frames.some((f) => f.t === 'm.public' && f.phase === 'PREP'), 10_000, 'resync');
   assert.equal(back.last('m.public').round, 2);
+  assert.equal(back.last('m.public').replayRound, undefined, 'stopped during the prep: nothing is fought again');
   const ctx = actorOf(second, code);
   assert.notEqual(ctx.spec.assignmentId, oldId, 'rebuilt as a new assignment');
   assert.equal(ctx.match.players.get(c.playerId).funds, funds);
@@ -40,6 +41,28 @@ test('the whole stack restarts (a release): the match comes back on a node from 
   await until(() => owner.written.get(ctx.spec.assignmentId)?.ok, 10_000, 'own checkpoint confirmed');
   await owner.tick('tick');
   assert.equal(store.data.has(`sp:cp:${oldId}`), false);
+  back.socket.close();
+});
+
+test('a stack stopped during a battle rebuilds the match in that round\'s prep, which says the battle is fought again', { timeout: 120_000 }, async (t) => {
+  const store = new MemoryValkey(), storeFor = () => memoryStore(store), configs = nodeConfigs();
+  const first = await stack(storeFor, { configs });
+  const { c, code, ctx: before } = await playToPrep(first, 2);
+  await c.request('g.ready', { ready: true });
+  await until(() => before.match.phase !== 'PREP', 15_000, 'past the prep');
+  assert.equal(before.match.round, 2);
+  await stop(first);
+  await c.closed;
+  const second = await stack(storeFor, { configs });
+  t.after(() => stop(second));
+  await until(() => second.coordinator.lobby.restoreStats.rebuilt === 1, 15_000, 'rebuilt');
+  const back = await client(second.ingress.url, 'Doctor', c.token);
+  await until(() => back.frames.some((f) => f.t === 'm.public' && f.phase === 'PREP'), 10_000, 'resync');
+  assert.equal(back.last('m.public').round, 2);
+  assert.equal(back.last('m.public').replayRound, 2);
+  await back.request('g.ready', { ready: true });
+  await until(() => back.last('m.public').phase !== 'PREP', 15_000, 'the battle again');
+  assert.equal(back.last('m.public').replayRound, undefined);
   back.socket.close();
 });
 

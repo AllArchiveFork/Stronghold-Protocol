@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { matchNoticeText, MATCH_NOTICE_REFRESH_MS } from '../../public/js/ui/matchNotice.js';
+import { matchNoticeText, replayingRound, MATCH_NOTICE_REFRESH_MS } from '../../public/js/ui/matchNotice.js';
 
 test('maintenance outranks the announcement banner; no line without either', () => {
   const notices = [{ title: 'x', paragraphs: ['y'], banner: ' 今晚 0:00 起维护 ' }];
@@ -13,6 +13,24 @@ test('maintenance outranks the announcement banner; no line without either', () 
   assert.equal(matchNoticeText(null, [{ title: 'x', paragraphs: ['y'], banner: 'x'.repeat(161) }]), null);
   assert.equal(matchNoticeText(null, null), null);
   assert.ok(MATCH_NOTICE_REFRESH_MS >= 60_000, 'no more often than the lobby');
+});
+
+test('a round restored from its prep end says so first, during that prep only', () => {
+  const notices = [{ title: 'x', paragraphs: ['y'], banner: '今晚 0:00 起维护' }];
+  const replay = '服务器重启后已恢复对局：本回合回到休整期，战斗将重新进行';
+  assert.equal(matchNoticeText({ maintenance: true }, notices, { replay: true }), replay);
+  assert.equal(matchNoticeText({ maintenance: true }, notices, { replay: false }), '服务器即将维护，暂停开启新的模拟');
+  assert.equal(replayingRound({ phase: 'PREP', round: 4, replayRound: 4 }), true);
+  for (const pub of [null, undefined, { phase: 'PREP', round: 4 }, { phase: 'COMBAT', round: 4, replayRound: 4 },
+    { phase: 'PREP', round: 5, replayRound: 4 }, { phase: 'PREP', round: 0, replayRound: 0 }, { phase: 'PREP', round: 4, replayRound: '4' }]) {
+    assert.equal(replayingRound(pub), false, JSON.stringify(pub));
+  }
+  const main = fs.readFileSync('public/js/main.js', 'utf8');
+  assert.match(main, /useStore\(\(s\) => replayingRound\(s\.match\?\.public\)\)/);
+  assert.match(main, /data\.get\('announcements'\), \{ replay \}\)/);
+  for (const lang of ['en', 'ja', 'ko', 'zh-TW']) {
+    assert.ok(JSON.parse(fs.readFileSync(`public/i18n/${lang}.json`, 'utf8'))[replay], lang);
+  }
 });
 
 test('mounted on the match route only; placed under the in-match top bar and the connection banner', () => {

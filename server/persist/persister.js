@@ -17,7 +17,7 @@
 // Nothing here may disturb a match: a capture that fails keeps the previous checkpoint, a store that is down is skipped
 // (and counted), every timer is unref'd.
 
-import { snapshotMatch, restoreMatch } from '../match/snapshot.js';
+import { snapshotMatch, restoreMatch, CHECKPOINT_PREP_END } from '../match/snapshot.js';
 import { createRngFromState } from '../sim/rng.js';
 import { restoreLobby, roomDoc, sessionDoc, LOBBY_DOC_VERSION, SESSION_FIELDS } from './lobbyState.js';
 
@@ -263,7 +263,9 @@ export class LobbyPersister {
     const result = this.lobby.startMatch(room, room.matchKey, room.matchKeys, { restore: {
       seed: cp.seed, matchNo: cp.matchNo, seats: doc.seats, spectators: room.spectators.map((s) => s.playerId),
       apply: (match) => {
-        if (!restoreMatch(match, doc, { createRngFromState, log: this.log })) { refused = true; throw new Error('checkpoint refused'); }
+        if (!restoreMatch(match, doc, { createRngFromState, log: this.log, replay: cp.reason === CHECKPOINT_PREP_END })) {
+          refused = true; throw new Error('checkpoint refused');
+        }
       },
     } });
     if (result?.error || refused || !room.match) return false;

@@ -55,7 +55,7 @@ export async function startGameNode({ host = '127.0.0.1', port = 0, nodeId, gene
   if (!int(ticketTtlMs, 1, 30_000)) throw new RangeError('invalid admission ticket lifetime');
   if ([getLoadState, getLoadDetails].some(fn => fn !== undefined && typeof fn !== 'function')) throw new TypeError('invalid load provider');
   if (typeof streamMarkers !== 'boolean') throw new TypeError('invalid game stream markers');
-  // restoreSource(assignmentId) → Promise<{ spec, left, match } | null>: the checkpoints (server/persist/node.js)
+  // restoreSource(assignmentId) → Promise<{ spec, left, match, reason } | null>: the checkpoints (server/persist/node.js)
   if (restoreSource !== null && typeof restoreSource !== 'function') throw new TypeError('invalid restore source');
   if (publicSlot !== null && publicGameLabel(publicSlot) === null) throw new TypeError('invalid public node slot');
   const authority = createRpcAuthenticator({ key, scope: nodeId, now });

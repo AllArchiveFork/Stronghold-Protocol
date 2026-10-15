@@ -37,7 +37,7 @@ import { render } from '../vendor/preact.module.js';
 import { useEffect, useErrorBoundary } from '../vendor/hooks.module.js';
 import { html, UiHosts, Button, MicroLabel, closeAllDialogs, confirmDialog } from './ui/components.js';
 import { ConnectionBanner } from './ui/connBanner.js';
-import { MatchNotice, matchNoticeText, MATCH_NOTICE_REFRESH_MS } from './ui/matchNotice.js';
+import { MatchNotice, matchNoticeText, replayingRound, MATCH_NOTICE_REFRESH_MS } from './ui/matchNotice.js';
 import { ToastHost, toast, toastError, describeError } from './ui/toasts.js';
 import { net, identity, NetError } from './net.js';
 import { createAuthProbe } from './authProbe.js';
@@ -413,6 +413,7 @@ function ScreenCrashed({ error, reset }) {
 function MatchNoticeHost() {
   useData('announcements');
   const maintenance = useStore((s) => s.connection.status === 'online' && s.presence?.maintenance === true);
+  const replay = useStore((s) => replayingRound(s.match?.public));
   useEffect(() => {
     const timer = setInterval(() => {
       const status = data.status('announcements');
@@ -420,7 +421,7 @@ function MatchNoticeHost() {
     }, MATCH_NOTICE_REFRESH_MS);
     return () => clearInterval(timer);
   }, []);
-  return html`<${MatchNotice} text=${matchNoticeText(maintenance ? { maintenance } : null, data.get('announcements'))} />`;
+  return html`<${MatchNotice} text=${matchNoticeText(maintenance ? { maintenance } : null, data.get('announcements'), { replay })} />`;
 }
 
 function App() {

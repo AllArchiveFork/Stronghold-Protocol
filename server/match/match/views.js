@@ -101,6 +101,8 @@ export class MatchViews {
       localReplica: !this.clientCombat && !!this.localReplica,
       // solo pause (g.pause, DESIGN §14): the battle, its field clock and every deadline are frozen while true
       paused: !!this.paused,
+      // restored from the checkpoint of this round's prep end (server/match/snapshot.js): its battle is fought again
+      ...(this.replayRound && this.phase === PHASE.PREP && this.round === this.replayRound ? { replayRound: this.replayRound } : {}),
       revival: {
         enabled: this.revivalEnabled,
         cost: REVIVAL_COST,

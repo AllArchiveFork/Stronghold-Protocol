@@ -68,6 +68,7 @@ test('a solo run survives a server restart: same identity, same room, same round
   assert.equal(state.code, room.code);
   const pub = await c.waitFor('m.public', (m) => m.phase === 'PREP');
   assert.equal(pub.round, 2);
+  assert.equal(pub.replayRound, undefined, 'stopped during the prep: the prep goes on, nothing is fought again');
   const restored = b.lobby.rooms.get(room.code).match.players.get(welcome.playerId);
   assert.equal(restored.funds, funds);
   assert.equal(restored.lp, lp);
@@ -79,6 +80,36 @@ test('a solo run survives a server restart: same identity, same room, same round
   b.lobby.disposeRoom(b.lobby.rooms.get(room.code), 'empty');
   assert.equal(await b.persistence.persister.flush('tick'), true);
   assert.deepEqual(store.keys('sp:cp:'), []);
+});
+
+test('a run stopped during its battle comes back in that round\'s prep, which says the battle is fought again', { timeout: 60_000 }, async (t) => {
+  const store = new MemoryValkey();
+  const a = await startServer(serverOpts(store));
+  let c = await TestClient.connect(`ws://127.0.0.1:${a.port}/ws`);
+  const welcome = await c.hello('Doctor', undefined, { matchmakingVersion: MATCHMAKING_VERSION });
+  assert.equal((await c.request({ t: 'room.create', mode: 'solo', difficulty: 'NORMAL' })).t, 'ok');
+  const room = await c.waitFor('room.state');
+  assert.equal((await c.request({ t: 'room.start' })).t, 'ok');
+  const match = a.lobby.rooms.get(room.code).match;
+  await driveTo(match, welcome.playerId, 2);
+  match.handle(welcome.playerId, { t: 'g.ready', ready: true });
+  for (let i = 0; i < 20000 && match.phase === 'PREP'; i++) await new Promise((r) => setImmediate(r));
+  assert.equal(match.round, 2);
+  assert.ok(!['PREP', 'ROUND_START', 'SP_DRAFT'].includes(match.phase), `past the prep (${match.phase})`);
+  await a.close();
+  await c.closed;
+
+  const b = await startServer(serverOpts(store));
+  t.after(() => b.close());
+  c = await TestClient.connect(`ws://127.0.0.1:${b.port}/ws`);
+  await c.hello('Doctor', welcome.token, { matchmakingVersion: MATCHMAKING_VERSION });
+  const pub = await c.waitFor('m.public', (m) => m.phase === 'PREP');
+  assert.equal(pub.round, 2);
+  assert.equal(pub.replayRound, 2);
+  c.send({ t: 'g.ready', ready: true });
+  const next = await c.waitFor('m.public', (m) => m.phase !== 'PREP', 15000);
+  assert.equal(next.replayRound, undefined, 'only during that prep');
+  await c.close();
 });
 
 test('a lobby room and its waiting players come back; a visitor outside any room gets a fresh identity', { timeout: 60_000 }, async (t) => {

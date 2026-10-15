@@ -446,6 +446,7 @@
   "正在进入模拟…": "Entering simulation...",
   "正在恢复对局…": "Restoring the match…",
   "服务器重启后正在恢复对局，最长约需两分钟。": "The server restarted and is restoring the match. This can take up to about two minutes.",
+  "服务器重启后已恢复对局：本回合回到休整期，战斗将重新进行": "The server restarted and the match was restored: this round goes back to the Rest Phase and its battle will be fought again",
   "渲染器暂时未能加载，已切换为简化视图（功能不受影响，可刷新重试）": "The renderer could not load. Switched to the simplified view (all features remain available; reload to retry).",
   "已配发的装备无法销毁": "Equipped Equipment cannot be destroyed",
   "销毁道具": "Destroy Item",

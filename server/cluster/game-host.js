@@ -6,7 +6,7 @@ import { experimentalOptions, isExperimental } from '../../shared/experimental.j
 import { SKIN_LIMITS, isSkinChoices } from '../../shared/skins.js';
 import { DIFFICULTIES, ERR, NAME_MAX_LEN, modeIdFor } from '../../shared/constants.js';
 import { roomCapacity } from '../../shared/playerCapacity.js';
-import { restoreMatch } from '../match/snapshot.js';
+import { restoreMatch, CHECKPOINT_PREP_END } from '../match/snapshot.js';
 import { createRngFromState } from '../sim/rng.js';
 
 const OK = Object.freeze({ ok: true });
@@ -317,7 +317,7 @@ export class GameHost {
    * restoreMatch) — and committed at once: no start, no channel to wait for; each member binds when its player comes
    * back (bind → onReconnect, a full resync). `saved.left`: players that had departed. The coordinator publishes it.
    * @param {object} spec assignment DTO (copyAssignmentSpec), current build / protocol / spectators
-   * @param {{ match: object, left: string[] }} saved
+   * @param {{ match: object, left: string[], reason?: string | null }} saved `reason`: the checkpoint's (snapshot.js replay)
    */
   restore(spec, saved) {
     if (this.closed) throw new GameHostError('HOST_CLOSED');
@@ -335,7 +335,9 @@ export class GameHost {
     this.contexts.set(safe.assignmentId, ctx);
     try {
       ctx.match = this._construct(ctx);
-      if (!restoreMatch(ctx.match, saved.match, { createRngFromState, log: this.log })) throw new GameHostError('RESTORE_REFUSED');
+      if (!restoreMatch(ctx.match, saved.match, { createRngFromState, log: this.log, replay: saved.reason === CHECKPOINT_PREP_END })) {
+        throw new GameHostError('RESTORE_REFUSED');
+      }
     } catch (e) {
       this._log('restore');
       this._retire(ctx, 'failed');

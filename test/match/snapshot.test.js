@@ -8,7 +8,7 @@ import { PHASE } from '../../shared/constants.js';
 import { OFFLINE_TAKEOVER_ROUNDS } from '../../server/match/Match.js';
 import { createRngFromState } from '../../server/sim/rng.js';
 import { canSnapshot, snapshotMatch, restoreMatch, matchState, encodeValue, decodeValue, MATCH_FIELDS, PLAYER_FIELDS,
-  SNAPSHOT_VERSION, RESTORE_SEQ_GAP, MIN_RECOVER_PREP_SEC } from '../../server/match/snapshot.js';
+  SNAPSHOT_VERSION, RESTORE_SEQ_GAP, MIN_RECOVER_PREP_SEC, CHECKPOINT_PREP_END } from '../../server/match/snapshot.js';
 
 const classified = (lists) => new Set(Object.values(lists).flat());
 const twenty = { revivalEnabled: true, disableSharedPool: false, playerCapacity: 20 };
@@ -18,7 +18,7 @@ function restored(doc, o = {}) {
   const json = JSON.parse(JSON.stringify(doc));
   const r = makeMatch({ mode: o.mode ?? 'coop', difficulty: o.difficulty ?? 'NORMAL', seats: json.seats, seed: json.seed,
     matchNo: o.matchNo, experimental: o.experimental });
-  assert.equal(restoreMatch(r.m, json, { createRngFromState, log: { warn: (...a) => r.logs.warn.push(a.join(' ')) } }), true);
+  assert.equal(restoreMatch(r.m, json, { createRngFromState, log: { warn: (...a) => r.logs.warn.push(a.join(' ')) }, replay: o.replay }), true);
   return r;
 }
 
@@ -189,6 +189,31 @@ test('the match offers its safe points: drafts and the prep end (before the end 
   h.runToPhase(PHASE.PREP, 3);
   assert.ok(seen.includes('band-draft'));
   assert.ok(seen.filter((r) => r === 'prep-end').length >= 2);
+  assert.equal(CHECKPOINT_PREP_END, 'prep-end');
+});
+
+test('a restore from the prep end replays the round: m.public names it through that prep only', () => {
+  let doc = null;
+  const h = makeMatch({ humans: 1, bots: 3, seed: 73 }).autoHumans();
+  h.m.opts.onCheckpoint = (m, reason) => { if (reason === CHECKPOINT_PREP_END && m.round === 2 && !doc) doc = snapshotMatch(m); };
+  h.start();
+  h.run(() => h.m.round === 2 && h.m.phase === PHASE.COMBAT);
+  assert.ok(doc, 'the prep end of round 2 was checkpointed');
+  assert.equal(h.m.publicView().replayRound, undefined, 'a match that never restarted names nothing');
+  const r = restored(doc, { replay: true });
+  assert.equal(r.m.phase, PHASE.PREP);
+  assert.equal(r.m.round, 2);
+  assert.equal(r.m.replayRound, 2);
+  assert.equal(r.m.publicView().replayRound, 2);
+  r.autoHumans();
+  r.run(() => r.m.phase !== PHASE.PREP);
+  assert.equal(r.m.round, 2);
+  assert.equal(r.m.publicView().replayRound, undefined, 'gone once the round\'s battle starts again');
+  r.run(() => r.m.round === 3 && r.m.phase === PHASE.PREP);
+  assert.equal(r.m.publicView().replayRound, undefined, 'and the next prep is an ordinary one');
+  // a checkpoint taken during the prep (the periodic round, a shutdown) resumes the prep: nothing is fought again
+  assert.equal(restored(doc).m.publicView().replayRound, undefined);
+  assert.equal(restored(doc, { replay: false }).m.replayRound, 0);
 });
 
 test('a seat under 掉线由 AI 接管 is restored under it, and its player\'s return hands it back', () => {
