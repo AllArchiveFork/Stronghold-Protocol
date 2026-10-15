@@ -30,6 +30,7 @@
 import { useEffect, useReducer } from '../vendor/hooks.module.js';
 import { applyFileOverlay } from '../../shared/i18nData.js';
 import { canonicalLang } from '../../shared/i18nPacks.js';
+import { codeSource } from './codeSource.js';
 
 /** Known data files (name → URL basename). Unknown names are allowed too (`/data/<name>.json`). */
 export const DATA_FILES = Object.freeze({
@@ -121,11 +122,13 @@ const transientFailure = (err) => {
  * user playtest #3 item 9); a transient failure is retried (RETRY_DELAYS_MS) while the file stays 'loading', so a
  * network hiccup does not leave the texts of a whole session missing. `local` and `assets` are reported `missing` on
  * the first failure or timeout (the emote glyph) and stay that way through a retry; a later success is `ready`.
- * @param {{ fetch?: typeof fetch, base?: string, retryDelays?: number[], wait?: (ms: number) => Promise<void>, timeoutMs?: number, coreTimeoutMs?: number, setTimeout?: typeof setTimeout, clearTimeout?: typeof clearTimeout }} [opts]
- *   `timeoutMs` / `coreTimeoutMs` 0 disables that clock. Timers and retry waits are injectable for tests.
+ * @param {{ fetch?: typeof fetch, base?: string, source?: ReturnType<import('./codeSource.js').createCodeSource> | null, retryDelays?: number[], wait?: (ms: number) => Promise<void>, timeoutMs?: number, coreTimeoutMs?: number, setTimeout?: typeof setTimeout, clearTimeout?: typeof clearTimeout }} [opts]
+ *   `timeoutMs` / `coreTimeoutMs` 0 disables that clock. Timers and retry waits are injectable for tests. `source`: the
+ *   release's Studio copy of the files (codeSource.js), tried before `base`; the page's own store uses it.
  */
 export function createDataStore(opts = {}) {
   const base = opts.base ?? '/data/';
+  const source = opts.source || null;
   const doFetch = opts.fetch || ((...a) => globalThis.fetch(...a));
   const retryDelays = Array.isArray(opts.retryDelays) ? opts.retryDelays : RETRY_DELAYS_MS;
   const timeoutMs = opts.timeoutMs === undefined ? ART_MANIFEST_TIMEOUT_MS : Number(opts.timeoutMs);
@@ -156,7 +159,8 @@ export function createDataStore(opts = {}) {
     }
   };
 
-  const urlFor = (name) => base + (DATA_FILES[name] || `${name}.json`);
+  const fileOf = (name) => DATA_FILES[name] || `${name}.json`;
+  const urlFor = (name) => base + fileOf(name);
 
   /** Each attempt's deadline covers both headers and the response body; a stale request can never win a retry. */
   function readJson(name, entry) {
@@ -175,7 +179,8 @@ export function createDataStore(opts = {}) {
     entry.cancel = cancel;
     if (Number.isFinite(ms) && ms > 0) timer = armTimer(() => stop(Object.assign(new Error('timeout'), { timeout: true })), ms);
     const run = async () => {
-      const res = await doFetch(urlFor(name), { cache: 'no-cache', signal: controller.signal });
+      const init = { cache: 'no-cache', signal: controller.signal };
+      const res = await (source ? source.fetchData(fileOf(name), urlFor(name), init, doFetch) : doFetch(urlFor(name), init));
       if (!res || !res.ok) throw Object.assign(new Error(`HTTP ${res ? res.status : '???'}`), { status: res ? res.status : null });
       try { return await res.json(); } catch (err) {
         // A truncated/aborted body is a transport failure, not evidence of invalid JSON.
@@ -417,7 +422,7 @@ export function createDataStore(opts = {}) {
 }
 
 /** Browser data store singleton. */
-export const data = createDataStore();
+export const data = createDataStore({ source: codeSource });
 
 /** @param {...string} names @returns {Promise<any[]>} */
 export const loadData = (...names) => data.loadAll(...names);

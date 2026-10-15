@@ -45,6 +45,7 @@
 import { appearanceEntry } from './ui/skinAssets.js';
 import { loadMaterialImage } from './materialFallback.js';
 import { installPixiMaterialFallback } from './render/materialLoader.js';
+import { codeSource } from './codeSource.js';
 
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const str = (v) => (typeof v === 'string' && v ? v : null);
@@ -732,8 +733,9 @@ const transientFetch = (err) => {
  * their fallbacks — but the failure is never kept: the next `ready()` fetches again and the store tries again by itself
  * after MANIFEST_BACKOFF_MS (bounded; a 404 or a body that is no JSON only on the next `ready()`). `onChange(fn)` is told
  * when the manifest (`'manifest'`) or the optional local-client manifest (`'local'`) arrives, so views built without it
- * resolve their models then (render/app.js → UnitView.retryAssets).
- * @param {{ url?: string, fetch?: typeof fetch, manifest?: object, localManifest?: object, loadImage?: (url) => Promise<any>,
+ * resolve their models then (render/app.js → UnitView.retryAssets). `source` (codeSource.js): the release's Studio copy of
+ * /data/assets.json, tried first when `url` is the default; the page's own store uses it.
+ * @param {{ url?: string, source?: object | null, fetch?: typeof fetch, manifest?: object, localManifest?: object, loadImage?: (url) => Promise<any>,
  *           loadSpine?: (entry) => Promise<any>, unloadSpine?: (entry, value, keepPages:Set<string>) => (Promise<void>|void),
  *           spineMax?: number, spineTimeout?: number, spineWeigh?: (key, spineData) => number, spineIdleBytes?: number,
  *           spineQuietBytes?: number, spineIdleGrace?: number, spineEvictDelay?: number, spineQuietDelay?: number,
@@ -743,6 +745,7 @@ const transientFetch = (err) => {
 export function createAssets(options) {
   const opts = options && typeof options === 'object' ? options : {};
   const url = opts.url || '/data/assets.json';
+  const source = opts.url ? null : opts.source || null;
   const localUrl = opts.localUrl || '/data/local-assets.json';
   let localManifest = isObj(opts.localManifest) ? opts.localManifest : null;
   let localPromise = localManifest ? Promise.resolve(localManifest) : null;
@@ -780,7 +783,7 @@ export function createAssets(options) {
 
   /** One fetch of the manifest → the JSON object, or throws (err.status / err.badJson as data.js). */
   async function fetchOnce() {
-    const res = await doFetch(url, { cache: 'no-cache' });
+    const res = await (source ? source.fetchData('assets.json', url, { cache: 'no-cache' }, doFetch) : doFetch(url, { cache: 'no-cache' }));
     if (!res || !res.ok) throw Object.assign(new Error(`HTTP ${res ? res.status : '???'}`), { status: res ? res.status : null });
     let json;
     try { json = await res.json(); } catch (err) { throw Object.assign(err instanceof Error ? err : new Error(String(err)), { badJson: true }); }
@@ -972,4 +975,4 @@ export function createAssets(options) {
 }
 
 /** Browser singleton. */
-export const assets = createAssets();
+export const assets = createAssets({ source: codeSource });

@@ -85,6 +85,7 @@ import { unitStatsEntry, fxForm } from '../../../shared/protocol.js';
 import { spectateEffects, uniteRelayKey } from './observe.js';
 import { MAX_PLAYER_CAPACITY } from '../../../shared/playerCapacity.js';
 import { recordError, setBattleSource } from '../diag.js';
+import { codeSource } from '../codeSource.js';
 
 const TICK = 1 / 30;
 /** Fast-forward budget per frame (ticks) when far behind. */
@@ -193,6 +194,33 @@ export async function loadBrowserSim({ base = '/sim/', dataBase = '/data/', fetc
   return { spec, ds: new simdata.DataSource(raw, null), sync };
 }
 
+/** How long the Studio copy of the simulation (codeSource.js) may take to load before the page loads its own. */
+export const SIM_REMOTE_TIMEOUT_MS = 20000;
+
+/**
+ * The simulation from the release's Studio copy (codeSource.js) when there is one — the whole module graph and its data
+ * from there, so simdata.js exists once — else, or when that fails or takes longer than `timeoutMs`, from this host.
+ * A failure is sticky for the page (source.fail): the next b.start loads from this host at once.
+ */
+export async function loadSimFrom(source, { load = loadBrowserSim, timeoutMs = SIM_REMOTE_TIMEOUT_MS } = {}) {
+  const sim = source ? await source.base('sim') : null;
+  if (sim) {
+    const data = await source.base('data');
+    let timer = null;
+    try {
+      return await Promise.race([
+        load({ base: sim, ...(data ? { dataBase: data } : {}) }),
+        new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('timeout')), timeoutMs); }),
+      ]);
+    } catch (err) {
+      source.fail('sim', err);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  return load();
+}
+
 /**
  * Battle logger: content errors are isolated by the sim; report them as warnings (the server logs its own) and keep
  * them for the diagnostics a player copies (diag.js).
@@ -218,7 +246,7 @@ export function createBattleRunner(deps) {
   const setIv = deps.setInterval || ((fn, ms) => globalThis.setInterval(fn, ms));
   const clearIv = deps.clearInterval || ((h) => globalThis.clearInterval(h));
   const doc = deps.doc !== undefined ? deps.doc : (typeof document !== 'undefined' ? document : null);
-  const loadSim = deps.loadSim || (() => loadBrowserSim());
+  const loadSim = deps.loadSim || (() => loadSimFrom(codeSource));
   const logger = deps.logger || SIM_LOGGER;
 
   const listeners = new Map();

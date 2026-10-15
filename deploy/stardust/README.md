@@ -24,6 +24,7 @@
 | `nginx/`、`static/` | 入口代理、精确公开资源路由、静态源缓存/CORS 配置 |
 | `openi-resolver/`、[OPENI.md](OPENI.md) | 签名重定向、同版本回退及镜像清单；serving 配置不持有账户 Token |
 | [MATERIAL-SOURCES.md](MATERIAL-SOURCES.md)、`material-lb/` | 多源 immutable 素材、宿主 Lua/JSON profile 与缓存边界 |
+| [STUDIO-CODE-SOURCE.md](STUDIO-CODE-SOURCE.md)、`tools/studio-code-source.mjs` | 每版 `/sim`、`/shared`、`/data` 的创空间公开副本，`/code-source.json` 与回退 |
 | `tools/prepare-auth-assets.mjs` | 从匹配依赖和本地字体生成 ignored PRTS 库文件 |
 | `tools/prepare-static-release.mjs` | 离线准备/校验公开素材、字体、vendor、音频 alias 与 SHA-256 清单 |
 | `tools/prepare-localcode-release.mjs` | 固定源码、精确白名单的私有 JS/CSS 供给，不是公开缓存 |

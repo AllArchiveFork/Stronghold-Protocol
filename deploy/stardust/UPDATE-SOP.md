@@ -55,6 +55,8 @@ node deploy/stardust/tools/prepare-static-release.mjs --verify "$STAGE"
 
 多源 profile 不是通用 env-switch；实现见 [access.lua](material-lb/access.lua)、[header.lua](material-lb/header.lua)、[prepare-material-lb.py](tools/prepare-material-lb.py) 和 [test-prepare-material-lb.py](tools/test-prepare-material-lb.py)。已知公开 302 缓存不超过 60 秒；OpenI 另受 `Expires-now-30` 限制，只允许固定 `sp_request=cors|display`，去重 Vary Origin/Sec-Fetch-Mode。ModelScope 固定 resolve 入口不套用 OpenI auth_key TTL，也不保证所有下游 CDN 错误自动回退。目标 OpenResty 若在 Lua 后应用 add_header，公开 location 重复必要安全头，但不再次追加 Lua 管理的 Cache-Control/CORS/Vary。
 
+服主例外（2026-10-15）：`/sim`、`/shared`、`/data` 每版另有创空间公开副本，由 `/code-source.json` 指向，济南门禁后的副本保留作回退，见 [STUDIO-CODE-SOURCE.md](STUDIO-CODE-SOURCE.md)。它和本版私有代码 include 同批切换、同批回滚。
+
 ## 四、预置与切换前检查
 
 1. 将新镜像及素材预置到新标签/新目录，保持现用配置。校验归档路径/链接，再逐文件完整 hash；新静态 includes 只在取得对应供给授权、保留旧目录且真实配置测试成功后正常 reload。准备完不代表 game 已切源。

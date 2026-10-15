@@ -49,6 +49,20 @@ import { getSimData } from './sim/simdata.js';
 export function getData() { return getSimData() || {}; }
 export function resetData() {}
 `;
+/**
+ * GET /code-source.json (public/js/codeSource.js): the release's public Studio copy of /sim, /shared and /data. The edge
+ * answers it per release (deploy/stardust/STUDIO-CODE-SOURCE.md); this server answers SP_CODE_SOURCE (that JSON — a test,
+ * a host without the edge) or null, and the page then reads everything from here.
+ */
+export function codeSourceFromEnv(env = process.env) {
+  const raw = String(env.SP_CODE_SOURCE ?? '').trim();
+  if (!raw) return null;
+  try {
+    const v = JSON.parse(raw);
+    return v && typeof v === 'object' && !Array.isArray(v) ? v : null;
+  } catch { return null; }
+}
+
 /** Files under server/sim that are never served (Node-only). */
 const SIM_PRIVATE = new Set(['nodedata.js']); // lower-case (compared case-insensitively)
 
@@ -69,10 +83,11 @@ const EMPTY_LOCAL_ART = Buffer.from(JSON.stringify({ version: 1, source: 'none',
  *   packs: the server's pack registry (default: one over publicDir, dataDir and packsDir — ROOT/packs);
  *   metrics: optional phase recorder (coordinator /healthz): request count and wall time per mount, `static.<mount>`;
  *   assetIndex / views: the content hashes and the served manifests (none: plain URLs, size-mtime ETags)
+ *   codeSource: the /code-source.json answer (default: codeSourceFromEnv())
  * @returns {(req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse, rawPath: string, query: string) => Promise<void>}
  */
 export function createStaticHandler({ publicDir, dataDir, sharedDir, simDir = path.join(ROOT, 'server', 'sim'), packsDir = path.join(ROOT, 'packs'), packs = null, log = noopLog,
-  metrics = NO_PHASES, assetIndex = null, views = null }) {
+  metrics = NO_PHASES, assetIndex = null, views = null, codeSource = codeSourceFromEnv() }) {
   const registry = packs || createPackRegistry({ publicDir, dataDir, packsDir }, { log: /** @type {any} */ (log) });
   const mounts = [
     { prefix: '/data/', name: 'data', dir: path.resolve(dataDir) },
@@ -108,6 +123,7 @@ export function createStaticHandler({ publicDir, dataDir, sharedDir, simDir = pa
     const hashed = splitHashedPath(decoded);
     const urlHash = hashed.hash;
     decoded = hashed.path;
+    if (decoded === '/code-source.json') { sendJson(req, res, 200, codeSource); return; }
     if (decoded === '/data.js') {
       const headers = { 'Content-Type': MIME['.js'], 'Cache-Control': 'no-cache', ETag: shimTag, 'Content-Length': shimBody.length };
       if (isNotModified(req, shimTag, new Date(0))) { delete headers['Content-Length']; res.writeHead(304, headers); res.end(); return; }

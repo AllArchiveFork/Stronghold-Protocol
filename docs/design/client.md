@@ -101,6 +101,14 @@ failed WebSocket cannot report — asks the player to sign in again by reloading
 server keeps a dropped seat through the reconnect window (the AFK rule counts online seats only) and reports hello
 outcomes and match-seat departures in `/healthz` `reconnect`.
 
+Studio code source (2026-10-15, the owner's request to take load off the Jinan edge): `codeSource.js` reads
+`/code-source.json` once per page — the release's public ModelScope Studio copy of `/sim`, `/shared` and `/data`
+(`deploy/stardust/STUDIO-CODE-SOURCE.md`). `runner.js loadSimFrom` loads the whole simulation from that one base (the
+content modules import `simdata.js` relatively, so a graph split across two origins would hold an empty second
+`simdata`), the data store and the asset manifest try each file there first, and every failure, timeout or missing
+answer falls back to this host for the rest of the page. `announcements.json` and `local-assets.json` always come from
+this host. Without the file (a dev server answers `null`) nothing changes.
+
 Fork local-candidate UI (2026-10-09): the current 机变 draft reads confirmed choices from existing public `sp.picks`,
 shows each teammate's selected card label, and lists **every** picker on a reused card rather than only `taken`'s first
 picker. It does not store pick history or reveal PREP personal choices. The host's expanded-co-op experimental dialog
