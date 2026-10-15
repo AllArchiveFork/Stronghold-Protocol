@@ -85,15 +85,15 @@ test('shipped announcement data validates; optional board is mounted from the lo
   assert.match(board, /ariaLabel=\$\{t\('大厅公告板'\)\} trapFocus=\$\{true\}/);
 });
 
-test('today is one notice: the new interface with its design credit, what it adds where, the access rule live since 10-13 and the maintenance; the introduction is retained with the credit and a first-visit guide', () => {
+test('today is one notice: this update (the lobby on open, 对局音乐, the 联防 halves online, the steady 观战 board, 8–20 seats), the 10-15 interface recalled with its design credit, the access rule and the maintenance; the introduction is retained with the credit and a first-visit guide', () => {
   const entries = parseAnnouncements(JSON.parse(source('../../data/announcements.json')));
   assert.equal(entries.length, 2);
-  assert.equal(entries[0].title, '新版界面上线：大厅、房间与干员调配全新改版');
+  assert.equal(entries[0].title, '版本更新：直接进入大厅、对局音乐可选、联防视角修复');
   assert.equal(entries[1].title, '欢迎游玩卫戍协议！卫来！');
   assert.equal(entries[1].date, '2026-10-06');
   const today = entries[0].paragraphs.join('\n');
-  for (const phrase of ['Bilibili@雨千代chiyo', '请刷新页面重新进入', '成就统计', '名片干员', '名片底图', '大厅音乐', '只保存在本机', '卡片视图',
-    '「异形屏适配」', '「实验性选项」', '多人匹配', '只向中国大陆网络开放']) assert.ok(today.includes(phrase), phrase);
+  for (const phrase of ['Bilibili@雨千代chiyo', '请刷新页面重新进入', '直接进入大厅', '✎', '「对局音乐」', '上海Major暂停BGM', '只保存在当前浏览器', '最长 5 分钟',
+    '‹ ›', '不再整体闪烁', '合力击败敌方领袖', '「协议启动」', '成就统计', '「实验性选项」', '只向中国大陆网络开放']) assert.ok(today.includes(phrase), phrase);
   assert.doesNotMatch(today, /保证不卡顿|带宽无限|固定比例下降|会话重置.*已修复|正在进行服务器扩容|不[^。；]{0,100}，也不/);
   assert.match(entries[1].paragraphs.join('\n'), /纯公益.*非官方/);
   assert.match(entries[1].paragraphs.join('\n'), /github\.com\/sganggs\/Stronghold-Protocol/);
