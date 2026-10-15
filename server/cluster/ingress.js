@@ -6,7 +6,7 @@
 import http from 'node:http';
 import { WebSocket, WebSocketServer } from 'ws';
 import { createLinkClient } from './link-client.js';
-import { NET_DEFAULTS, TokenBucket, clientAddress, encode, sendRaw, errorMsg, CLOSE, HEAVY_TYPES } from '../net.js';
+import { NET_DEFAULTS, TokenBucket, clientAddress, encode, sendRaw, errorMsg, CLOSE, HEAVY_TYPES, netCounters } from '../net.js';
 import { C2S, validateC2S } from '../../shared/protocol.js';
 import { ERR } from '../../shared/constants.js';
 import { isCompressibleType, resolveWsCompression } from '../wsCompression.js';
@@ -134,8 +134,8 @@ export async function startIngress({ host = '127.0.0.1', port = 0, coordinatorUr
     if (type?.startsWith('cluster.')) { closePeer(peer, 1011, 'INVALID_GAME_FRAME'); return; }
     if (game.published && game.bound && game.started) { outward(peer, raw, type); return; }
     const bytes = raw.length;
-    if (game.pendingBytes + bytes > NET_DEFAULTS.hardBufferBytes) { closePeer(peer, 1013, 'BACKPRESSURE'); return; }
-    if (type === 'b.snap' && game.pendingBytes > NET_DEFAULTS.snapDropBytes) return;
+    if (game.pendingBytes + bytes > NET_DEFAULTS.hardBufferBytes) { netCounters.backpressureClosed++; closePeer(peer, 1013, 'BACKPRESSURE'); return; }
+    if (type === 'b.snap' && game.pendingBytes > NET_DEFAULTS.snapDropBytes) { netCounters.snapDropped++; return; }
     game.pending.push({ raw, type }); game.pendingBytes += bytes;
   }
   function route(peer, message) {
@@ -151,7 +151,9 @@ export async function startIngress({ host = '127.0.0.1', port = 0, coordinatorUr
       const game = { socket, assignmentId: message.assignmentId, bound: false, started: false, published: message.published,
         pending: [], pendingBytes: 0, expectedClose: false, terminal: false };
       peer.game = game;
-      socket.on('open', () => inward(socket, JSON.stringify({ t: 'cluster.bind', assignmentId: message.assignmentId, sessionId: peer.playerId, ticket: message.ticket })));
+      // the browser's hello.stateDelta: the node encodes m.public / m.private as m.state for this channel (relayed as is)
+      socket.on('open', () => inward(socket, JSON.stringify({ t: 'cluster.bind', assignmentId: message.assignmentId, sessionId: peer.playerId, ticket: message.ticket,
+        ...(peer.stateDelta ? { stateDelta: peer.stateDelta } : {}) })));
       socket.on('message', (raw, binary) => gameFrame(peer, game, raw, binary));
       socket.on('error', () => { if (!game.expectedClose && peer.game === game) closePeer(peer); });
       socket.on('close', (code, reason) => {
@@ -200,7 +202,7 @@ export async function startIngress({ host = '127.0.0.1', port = 0, coordinatorUr
     let at;
     try { at = clock(); } catch { client.on('error', () => {}); client.close(1011, 'CLOCK_UNAVAILABLE'); return; }
     const peer = { client, control: null, controlReady: false, controlPending: [], controlBytes: 0, playerId: null,
-      game: null, previousGame: null, matchedPending: [], matchedBytes: 0, closing: false, handoff: false, alive: true,
+      game: null, previousGame: null, matchedPending: [], matchedBytes: 0, closing: false, handoff: false, alive: true, stateDelta: 0,
       bucket: new TokenBucket(NET_DEFAULTS.ratePerSec, NET_DEFAULTS.rateBurst, at),
       heavy: new TokenBucket(NET_DEFAULTS.heavyPerSec, NET_DEFAULTS.heavyBurst, at), dropWindowAt: at, drops: 0 };
     peers.add(peer);
@@ -271,6 +273,7 @@ export async function startIngress({ host = '127.0.0.1', port = 0, coordinatorUr
       if (HEAVY_TYPES.has(message.t) && !peer.heavy.take(at)) {
         outward(peer, encode(errorMsg(ERR.RATE, rid))); return;
       }
+      if (message.t === 'hello') peer.stateDelta = Number.isSafeInteger(message.stateDelta) && message.stateDelta > 0 ? message.stateDelta : 0;
       const game = peer.game;
       if (game?.bound && game.started && game.published && (gameIntent(message.t) || message.t === 'ping')) {
         if (!inward(game.socket, raw)) closePeer(peer);

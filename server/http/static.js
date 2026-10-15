@@ -99,6 +99,18 @@ export function codeSourceFromEnv(env = process.env) {
   } catch { return null; }
 }
 
+/**
+ * SP_CLIENT: 'build' serves the Vite bundle of the UI layer (`npm run build` → public/build/, vite.config.js) — `/` and
+ * `/index.html` answer public/build/index.html (no-cache) and /build/assets/<name>-<hash>.* are immutable; anything
+ * else (the default 'source') serves public/index.html with its native modules. /js/, /css/, /shared/, /sim/ and /data/
+ * are served either way (the bundle leaves /shared, /sim, the boot scripts and the Workers at their own URLs).
+ * @returns {'source' | 'build'}
+ */
+export function clientModeFromEnv(env = process.env) {
+  return String(env.SP_CLIENT ?? '').trim().toLowerCase() === 'build' ? 'build' : 'source';
+}
+const BUILD_ASSET = /^\/build\/assets\/[A-Za-z0-9_.-]+-[A-Za-z0-9_-]{8}\.(?:js|css)$/;
+
 /** Files under server/sim that are never served (Node-only). */
 const SIM_PRIVATE = new Set(['nodedata.js']); // lower-case (compared case-insensitively)
 
@@ -136,12 +148,14 @@ const CS_FILE = /^\/cs\/([0-9a-f]{16})\/([A-Za-z0-9._\/-]{1,200})$/;
  *   size-mtime ETags); visual: the visual sets (default: one over the registry — a registry of 0.2.0's shape has none:
  *   /vs/ and /p/ answer 404); contents: the content sets with gameplay plugins (DESIGN §32.6; none: only the vanilla
  *   set's /cs/ manifest)
- *   codeSource: the /code-source.json answer (default: codeSourceFromEnv())
+ *   codeSource: the /code-source.json answer (default: codeSourceFromEnv()); client: 'build' or 'source' (default:
+ *   clientModeFromEnv()) — 'build' without a public/build/index.html logs once and serves the source page
  * @returns {(req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse, rawPath: string, query: string) => Promise<void>}
  */
 export function createStaticHandler({ publicDir, dataDir, sharedDir, simDir = path.join(ROOT, 'server', 'sim'), packsDir = path.join(ROOT, 'packs'),
   pluginsDir = path.join(path.dirname(path.resolve(packsDir)), 'plugins'), packs = null, content = null, log = noopLog,
-  metrics = NO_PHASES, assetIndex = null, views = null, visual = null, contents = null, codeSource = codeSourceFromEnv() }) {
+  metrics = NO_PHASES, assetIndex = null, views = null, visual = null, contents = null, codeSource = codeSourceFromEnv(),
+  client = clientModeFromEnv() }) {
   const registry = packs || createPluginRegistry({ publicDir, dataDir, packsDir, pluginsDir }, { log: /** @type {any} */ (log) });
   const sets = visual || (typeof registry.pluginFile === 'function' ? createVisualSets({ registry, log }) : null);
   let vanilla = content;
@@ -163,6 +177,8 @@ export function createStaticHandler({ publicDir, dataDir, sharedDir, simDir = pa
   const shimBody = Buffer.from(DATA_SHIM_JS);
   const shimTag = `"shim-${shimBody.length.toString(16)}"`;
   const gzipCache = new CompressCache(); // brotli and gzip bodies (files.js)
+  const buildPage = path.join(path.resolve(publicDir), 'build', 'index.html');
+  let buildMissing = false;
 
   if (metrics.enabled) {
     // Wall time per request (stat/gzip/await included): a count of what the coordinator still serves itself.
@@ -190,6 +206,16 @@ export function createStaticHandler({ publicDir, dataDir, sharedDir, simDir = pa
     const urlHash = hashed.hash;
     decoded = hashed.path;
     if (decoded === '/code-source.json') { sendJson(req, res, 200, codeSource); return; }
+    if (client === 'build' && !buildMissing && (decoded === '/' || decoded === '/index.html')) {
+      let stat = null;
+      try { stat = await fsp.stat(buildPage); } catch { /* not built */ }
+      if (stat?.isFile()) {
+        await serveFile(req, res, buildPage, stat, 'public', ['build', 'index.html'], query, gzipCache, log, { cacheControl: 'no-cache' });
+        return;
+      }
+      buildMissing = true;
+      log.warn?.('[http] SP_CLIENT=build but public/build/index.html is missing (npm run build): serving the source page');
+    }
     if (decoded === '/data.js') {
       const headers = { 'Content-Type': MIME['.js'], 'Cache-Control': 'no-cache', ETag: shimTag, 'Content-Length': shimBody.length };
       if (isNotModified(req, shimTag, new Date(0))) { delete headers['Content-Length']; res.writeHead(304, headers); res.end(); return; }
@@ -358,7 +384,10 @@ export function createStaticHandler({ publicDir, dataDir, sharedDir, simDir = pa
       if (real === worker) res.setHeader('Content-Security-Policy', SIM_WORKER_CSP);
     }
     const indexed = mount.name === 'public' && segments.length > 1 && ASSET_INDEX_ROOTS.includes(segments[0]);
-    const opts = indexed ? hashedFileOpts(assetIndex, segments.join('/'), stat, urlHash) : (urlHash ? { cacheControl: 'no-cache' } : {});
+    const opts = indexed ? hashedFileOpts(assetIndex, segments.join('/'), stat, urlHash)
+      // the bundle's chunks are named by their content hash (vite.config.js)
+      : mount.name === 'public' && BUILD_ASSET.test(decoded) ? { cacheControl: IMMUTABLE_JSON }
+        : (urlHash ? { cacheControl: 'no-cache' } : {});
     await serveFile(req, res, absPath, stat, mount.name, segments, query, gzipCache, log, opts);
   }
 }

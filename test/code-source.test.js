@@ -48,6 +48,15 @@ describe('parseCodeSource', () => {
       { ...SOURCE, data: 'https://u:p@modelscope.cn/d/' }, { version: 1, sim: SOURCE.sim },
     ]) assert.equal(parseCodeSource(bad), null, JSON.stringify(bad));
   });
+
+  test('fork: an optional material profile (the service worker\'s art cache key), with or without the Studio copy', () => {
+    assert.deepEqual(parseCodeSource({ ...SOURCE, material: '20261016-jinan-v030-r0' }), { sim: SOURCE.sim, data: SOURCE.data, material: '20261016-jinan-v030-r0' });
+    assert.deepEqual(parseCodeSource({ version: 1, material: 'v030' }), { sim: null, data: null, material: 'v030' });
+    for (const material of ['', '../x', 'a b', 'x'.repeat(65), 1]) {
+      assert.deepEqual(parseCodeSource({ ...SOURCE, material }), { sim: SOURCE.sim, data: SOURCE.data }, String(material));
+      assert.equal(parseCodeSource({ version: 1, material }), null);
+    }
+  });
 });
 
 describe('createCodeSource', () => {

@@ -50,6 +50,7 @@ import { normalizeClusterLoad } from '../shared/cluster-load.js';
 import { ERR, ERR_TEXT, PROTOCOL_VERSION, MATCHMAKING_VERSION } from '../shared/constants.js';
 import { PLAYER_CAPACITY_VERSION } from '../shared/playerCapacity.js';
 import { isCompressibleType } from './wsCompression.js';
+import { negotiateStateDelta, prepareStateFrame } from './stateTransport.js';
 import { moderateName } from '../shared/names.js';
 import { NO_PHASES } from './phaseMetrics.js';
 import { serverFullDetail } from './onlineLimit.js';
@@ -316,6 +317,13 @@ export function encode(msg) {
 
 const onSendDone = (err) => { void err; }; // errors surface through the socket's 'error'/'close' events
 
+/**
+ * Backpressure since start, this process (after xinhai-ai's droppedSnapshots / slowDisconnects): b.snap frames skipped
+ * on a congested socket (also an ingress / game node's own pre-bind queues) and sockets terminated past the hard
+ * limit. Shown in /healthz `net`; a cluster process logs them (cluster/start.mjs).
+ */
+export const netCounters = { snapDropped: 0, backpressureClosed: 0 };
+
 const corkedSockets = new WeakSet();
 const uncorkTurn = (socket) => {
   corkedSockets.delete(socket);
@@ -349,8 +357,8 @@ export function sendRaw(ws, data, { droppable = false, compress = false } = {}) 
   if (!ws || ws.readyState !== WS_OPEN || (typeof data !== 'string' && !Buffer.isBuffer(data))) return false;
   try {
     const queued = ws.bufferedAmount;
-    if (queued > NET_DEFAULTS.hardBufferBytes) { ws.terminate(); return false; }
-    if (droppable && queued > NET_DEFAULTS.snapDropBytes) return false;
+    if (queued > NET_DEFAULTS.hardBufferBytes) { netCounters.backpressureClosed++; ws.terminate(); return false; }
+    if (droppable && queued > NET_DEFAULTS.snapDropBytes) { netCounters.snapDropped++; return false; }
     // A Buffer would default to a binary frame: say text explicitly; string sends keep their exact options.
     ws.send(data, typeof data === 'string' ? { compress: compress === true } : { compress: compress === true, binary: false }, onSendDone);
     return true;
@@ -385,8 +393,8 @@ export function sendEncodedParts(entries, shared, { droppable = false, compress 
       if (ws && ws.linked === true && ws.link && typeof ws.link.fanout === 'function') {
         if (ws.readyState !== WS_OPEN) continue;
         const queued = ws.bufferedAmount;
-        if (queued > NET_DEFAULTS.hardBufferBytes) { ws.terminate(); continue; }
-        if (droppable && queued > NET_DEFAULTS.snapDropBytes) continue;
+        if (queued > NET_DEFAULTS.hardBufferBytes) { netCounters.backpressureClosed++; ws.terminate(); continue; }
+        if (droppable && queued > NET_DEFAULTS.snapDropBytes) { netCounters.snapDropped++; continue; }
         let targets = links.get(ws.link);
         if (!targets) { targets = []; links.set(ws.link, targets); }
         targets.push({ socket: ws, prefix, suffix });
@@ -417,7 +425,20 @@ export const isDroppable = (msg) => !!msg && msg.t === 'b.snap';
 export function send(ws, msg) {
   const data = encode(msg);
   if (data == null) return false;
-  return sendRaw(ws, data, { droppable: isDroppable(msg), compress: isCompressibleType(msg?.t) });
+  return sendMessage(ws, msg, data);
+}
+
+/**
+ * send() for a message already encoded as `data` (a broadcast encodes once for all members). m.public / m.private go
+ * out as m.state on a socket that negotiated the state-delta transport (server/stateTransport.js). Never throws.
+ * @param {import('ws').WebSocket | null | undefined} ws @param {object} msg @param {string} data encode(msg)
+ * @returns {boolean}
+ */
+export function sendMessage(ws, msg, data) {
+  const frame = prepareStateFrame(ws, msg, data);
+  const queued = sendRaw(ws, frame.data, { droppable: isDroppable(msg), compress: isCompressibleType(msg?.t) });
+  if (queued) frame.commit();
+  return queued;
 }
 
 /**
@@ -889,6 +910,8 @@ export class Network {
     session.limitKey = conn.key;
     session.matchmakingVersion = msg.matchmakingVersion ?? null;
     session.playerCapacityVersion = msg.playerCapacityVersion ?? null;
+    // m.public / m.private as m.state deltas on this socket (a repeated hello keeps its baselines)
+    negotiateStateDelta(conn.ws, msg.stateDelta);
 
     let extra = null;
     try { extra = this.handler.welcomeInfo?.() ?? null; } catch (e) { this.log.error('[net] welcomeInfo crashed', e); }

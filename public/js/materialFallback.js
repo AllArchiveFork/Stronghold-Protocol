@@ -1,7 +1,17 @@
 // Public material failover only: retry a failed same-origin asset once through the paired OpenI inventory.
 // Never inspect provider redirects/signatures, replace global fetch, or change authentication/business requests.
+//
+// Weak networks (ideas from xinhai-ai/Stronghold-Protocol 6e4acd3): MATERIAL_TIMEOUT_MS bounds the wait for a first
+// sign of life only. A load that reports progress (response headers, then body bytes — fetchMaterial, the Pixi loaders)
+// may then take as long as it keeps moving: MATERIAL_IDLE_MS without a byte fails it, MATERIAL_TOTAL_MS ends it anyway.
+// An <img> reports no progress and waits MATERIAL_IMAGE_TIMEOUT_MS. When both sources failed transiently (a timeout, a
+// network error, 408/425/429/5xx — never a 404), the pair is tried again after MATERIAL_RETRY_MS.
 
 export const MATERIAL_TIMEOUT_MS = 8000;
+export const MATERIAL_IDLE_MS = 20000;
+export const MATERIAL_TOTAL_MS = 120000;
+export const MATERIAL_IMAGE_TIMEOUT_MS = 15000;
+export const MATERIAL_RETRY_MS = Object.freeze([2000, 6000]);
 const EXTENSIONS = /\.(?:png|jpg|jpeg|webp|gif|atlas|skel|obj|mtl|json|mp3|m4a|aac|ogg|oga|opus|wav)$/;
 
 /** Raw-path validation comes before URL normalization (which would hide traversal). No signed/custom queries. */
@@ -29,48 +39,100 @@ export function openiFallbackUrl(value, origin = globalThis.location?.origin) {
 }
 
 const aborted = () => Object.assign(new Error('material load aborted'), { name: 'AbortError' });
+const noProgress = () => {};
 
-/** One bounded attempt; abort fetch/Image when possible and dispose abandoned late decoded resources. */
-function attempt(url, load, { timeoutMs, signal, discard }) {
+/**
+ * One bounded attempt; abort fetch/Image when possible and dispose abandoned late decoded resources. `load(url, signal,
+ * progress)` may call progress() whenever the transfer moves: from then on only a stall (idleMs) or totalMs ends it.
+ */
+function attempt(url, load, { timeoutMs, idleMs = MATERIAL_IDLE_MS, totalMs = MATERIAL_TOTAL_MS, signal, discard }) {
   if (signal?.aborted) return Promise.reject(aborted());
   return new Promise((resolve, reject) => {
     const controller = new AbortController();
-    let done = false, timer;
+    let done = false, timer, total;
     const finish = (err, value) => {
       if (done) { if (!err) { try { discard?.(value); } catch { /* abandoned resource */ } } return; }
       done = true;
-      clearTimeout(timer);
+      clearTimeout(timer); clearTimeout(total);
       signal?.removeEventListener('abort', cancel);
       if (err) { controller.abort(); reject(err); } else resolve(value);
     };
     const cancel = () => finish(aborted());
+    const expire = () => finish(Object.assign(new Error('material load timeout'), { timeout: true }));
+    const progress = () => { if (done) return; clearTimeout(timer); timer = setTimeout(expire, Math.max(idleMs, timeoutMs)); };
     signal?.addEventListener('abort', cancel, { once: true });
-    timer = setTimeout(() => finish(new Error('material load timeout')), timeoutMs);
-    Promise.resolve().then(() => load(url, controller.signal)).then(v => finish(null, v), err => finish(err));
+    timer = setTimeout(expire, timeoutMs);
+    if (totalMs > 0) total = setTimeout(expire, Math.max(totalMs, timeoutMs));
+    Promise.resolve().then(() => load(url, controller.signal, progress)).then(v => finish(null, v), err => finish(err));
   });
 }
 
-/** Successful requests are never duplicated. An explicit OpenI attempt cannot recurse; caller cancellation cannot retry. */
+/** A failure worth another round later: a timeout, a network error, or an HTTP status that may pass (never a 404). */
+export const transientMaterialError = (err) => err?.name !== 'AbortError'
+  && (err?.timeout === true || err?.name === 'TypeError' || [408, 425, 429].includes(err?.status) || err?.status >= 500);
+
+function pause(ms, signal) {
+  if (signal?.aborted) return Promise.reject(aborted());
+  return new Promise((resolve, reject) => {
+    const done = () => { signal?.removeEventListener('abort', stop); resolve(); };
+    const timer = setTimeout(done, ms);
+    const stop = () => { clearTimeout(timer); reject(aborted()); };
+    signal?.addEventListener('abort', stop, { once: true });
+  });
+}
+
+/**
+ * Successful requests are never duplicated. An explicit OpenI attempt cannot recurse; caller cancellation cannot retry.
+ * `fallback: false` (a caller running its own failover) also takes no later rounds: retries never multiply.
+ */
 export async function withMaterialFallback(url, load, options = {}) {
-  if (!materialUrl(url, options.origin)) return load(url, options.signal);
+  if (!materialUrl(url, options.origin)) return load(url, options.signal, noProgress);
   const settings = { timeoutMs: MATERIAL_TIMEOUT_MS, ...options };
-  try { return await attempt(url, load, settings); }
-  catch (err) {
-    const fallback = openiFallbackUrl(url, options.origin);
-    if (!fallback || options.fallback === false || options.signal?.aborted || err?.name === 'AbortError') throw err;
-    return attempt(fallback, load, settings);
+  const rounds = options.fallback === false ? [] : (options.retryMs ?? MATERIAL_RETRY_MS);
+  const fallback = openiFallbackUrl(url, options.origin);
+  for (let round = 0; ; round++) { // bounded: rounds.length + 1 rounds
+    let err;
+    try { return await attempt(url, load, settings); }
+    catch (primary) {
+      err = primary;
+      if (options.signal?.aborted || err?.name === 'AbortError') throw err;
+      if (fallback && options.fallback !== false) {
+        try { return await attempt(fallback, load, settings); }
+        catch (second) { err = second; }
+      }
+    }
+    if (round >= rounds.length || options.signal?.aborted || !transientMaterialError(err)) throw err;
+    await pause(rounds[round] * (0.8 + Math.random() * 0.4), options.signal);
   }
+}
+
+/**
+ * The response with its body read through, calling progress() per chunk (a stalled body is then an idle timeout,
+ * not a 120 s wait). A body without a stream reader is returned as it is.
+ * @param {Response} res @param {() => void} progress @returns {Promise<Response>}
+ */
+export async function readMaterialBody(res, progress) {
+  const reader = res?.body?.getReader?.();
+  if (!reader) return res;
+  const chunks = [];
+  for (;;) { // ends with the body, or with the attempt's abort (the read rejects)
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (value?.byteLength) { chunks.push(value); progress(); }
+  }
+  return new Response(new Blob(chunks), { status: res.status, statusText: res.statusText, headers: res.headers });
 }
 
 /** Consume inside the attempt: stalled/error bodies and invalid JSON can fail over, not just fetch() headers. */
 export function fetchMaterial(url, read = r => r.arrayBuffer(), { fetch: doFetch = (...a) => globalThis.fetch(...a), ...options } = {}) {
-  return withMaterialFallback(url, async (source, signal) => {
+  return withMaterialFallback(url, async (source, signal, progress) => {
     const res = await doFetch(source, { credentials: 'omit', signal });
     if (!res?.ok || /(?:text\/html|application\/xhtml\+xml)/i.test(res.headers?.get?.('content-type') || '')) {
       try { void res?.body?.cancel?.().catch(() => {}); } catch { /* unusable response */ }
       throw Object.assign(new Error('material response unavailable'), { status: res?.status, badContentType: !!res?.ok });
     }
-    return read(res);
+    progress();
+    return read(await readMaterialBody(res, progress));
   }, options);
 }
 
@@ -87,5 +149,5 @@ export function loadMaterialImage(url, options) {
     img.onerror = () => { clear(); reject(new Error('material image unavailable')); };
     signal?.addEventListener('abort', cancel, { once: true });
     img.src = source;
-  }), options);
+  }), { timeoutMs: MATERIAL_IMAGE_TIMEOUT_MS, ...options });
 }

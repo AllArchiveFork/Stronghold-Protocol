@@ -15,7 +15,8 @@ const OPTIONS = Object.freeze({
 
 // State frames and the battle stream. Deflating each small b.snap/b.ev on its own cost more CPU than it saved; with the
 // shared context they shrink several-fold for little CPU. b.ext (a boss replica's pool record) rides along.
-const COMPRESSIBLE = new Set(['m.public', 'm.private', 'm.unitStats', 'm.field', 'm.damage', 'b.damage', 'b.start', 'b.snap', 'b.ev', 'b.ext']);
+// m.state carries m.public / m.private (server/stateTransport.js).
+const COMPRESSIBLE = new Set(['m.public', 'm.private', 'm.state', 'm.unitStats', 'm.field', 'm.damage', 'b.damage', 'b.start', 'b.snap', 'b.ev', 'b.ext']);
 
 export function resolveWsCompression(mode = 'off') {
   if (mode === 'off') return false;

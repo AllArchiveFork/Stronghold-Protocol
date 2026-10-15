@@ -34,15 +34,16 @@
 // Polyfills first (older Safari / Firefox ESR): every module evaluated after this one sees them.
 import './ui/compat.js';
 import { render } from '../vendor/preact.module.js';
-import { useErrorBoundary } from '../vendor/hooks.module.js';
+import { useEffect, useErrorBoundary } from '../vendor/hooks.module.js';
 import { html, UiHosts, Button, MicroLabel, closeAllDialogs, confirmDialog } from './ui/components.js';
 import { ConnectionBanner } from './ui/connBanner.js';
+import { MatchNotice, matchNoticeText, MATCH_NOTICE_REFRESH_MS } from './ui/matchNotice.js';
 import { ToastHost, toast, toastError, describeError } from './ui/toasts.js';
 import { net, identity, NetError } from './net.js';
 import { createAuthProbe } from './authProbe.js';
 import './queueCancellation.js';
 import { store, useStore, emptyMatch, selectRoute, sessionResetNotice, isSpectating } from './store.js';
-import { data } from './data.js';
+import { data, useData } from './data.js';
 import { GAME_FILES } from './ui/gameComponents.js';
 import { NameHost, sanitizeName, defaultName } from './ui/nickname.js';
 import { LobbyScreen, rememberRoom, parseRoomParam, joinRoom } from './screens/lobby.js';
@@ -54,6 +55,7 @@ import { matchMusic } from './ui/lobbyMusic.js';
 import { GuideHost } from './ui/guide.js';
 import { installDeviceSupport } from './ui/device.js';
 import { registerImportedAssetWorker } from './assetCache.js';
+import { codeSource } from './codeSource.js';
 import { LoadoutHost } from './screens/loadout.js';
 import { StatsHost } from './screens/stats.js';
 import { installRehearsal } from './battle/rehearsal.js';
@@ -395,6 +397,23 @@ function ScreenCrashed({ error, reset }) {
   </div>`;
 }
 
+/**
+ * The match route's notice line (ui/matchNotice.js): the optional announcement file is loaded and re-read here, outside
+ * the match UI (which waits only for GAME_FILES — ui/gameComponents.js), with the server's maintenance switch.
+ */
+function MatchNoticeHost() {
+  useData('announcements');
+  const maintenance = useStore((s) => s.connection.status === 'online' && s.presence?.maintenance === true);
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const status = data.status('announcements');
+      if (document.visibilityState !== 'hidden' && (status === 'ready' || status === 'missing')) data.invalidate('announcements');
+    }, MATCH_NOTICE_REFRESH_MS);
+    return () => clearInterval(timer);
+  }, []);
+  return html`<${MatchNotice} text=${matchNoticeText(maintenance ? { maintenance } : null, data.get('announcements'))} />`;
+}
+
 function App() {
   const route = useStore(selectRoute);
   useLang(); // a language switch re-renders the whole tree in place
@@ -405,6 +424,7 @@ function App() {
     ${error ? html`<${ScreenCrashed} error=${error} reset=${resetError} />` : html`<${Screen} key=${route} />`}
     <${TrustedNotice} />
     <${ConnectionBanner} />
+    ${route === 'game' ? html`<${MatchNoticeHost} />` : null}
     <${ToastHost} />
     <${UiHosts} />
     <${GuideHost} />
@@ -452,8 +472,9 @@ async function boot() {
   installTrafficMeter();
   // touch / hover / fullscreen classes, zoom-gesture blocking, rotation re-layout (ui/device.js, css/devices.css)
   installDeviceSupport();
-  // Hashed art a player imported. HTTPS or localhost only; a failure here must not stop boot.
-  void registerImportedAssetWorker();
+  // Hashed art a player imported, and — with the release's material profile (/code-source.json) — the art this page
+  // fetches, kept by path across the provider's rotating signed redirects. HTTPS or localhost only; never stops boot.
+  void codeSource.get().then((source) => registerImportedAssetWorker(undefined, undefined, source?.material ?? null));
   // A page restored from the back/forward cache has a dead socket and a stale token choice: start over.
   window.addEventListener('pageshow', (ev) => { if (ev.persisted) location.reload(); });
   // Pick this tab's reconnect token (asks other live tabs; ≤150 ms) while fonts load.

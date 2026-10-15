@@ -6,6 +6,10 @@ import { loadClusterConfig } from './config.js';
 import { startGameRuntime } from './game-runtime.js';
 import { startCoordinator } from './coordinator.js';
 import { startIngress } from './ingress.js';
+import { netCounters } from '../net.js';
+import { stateDeltaStats } from '../stateTransport.js';
+
+const NET_LOG_MS = 60_000;
 
 export async function startConfiguredCluster(config) {
   const { role, ...options } = config;
@@ -45,6 +49,15 @@ async function main() {
   });
   // Readiness is administrative output only: no keys, tickets, sessions or full config.
   console.log(JSON.stringify({ event: 'ready', role: config.role, node: process.version }));
+  // backpressure and m.state totals since start, once a minute when they moved (this role has no /healthz of its own)
+  let lastNet = '';
+  setInterval(() => {
+    const net = { ...netCounters, stateDelta: { ...stateDeltaStats } };
+    const text = JSON.stringify(net);
+    if (text === lastNet) return;
+    lastNet = text;
+    console.log(JSON.stringify({ event: 'net', role: config.role, ...net }));
+  }, NET_LOG_MS).unref();
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main().catch(() => { console.error('[cluster] startup refused'); process.exitCode = 1; });

@@ -29,11 +29,20 @@ function baseUrl(v) {
   } catch { return null; }
 }
 
-/** { version: 1, sim, data } → { sim, data }; null for anything else. */
+/** A material profile id (deploy/stardust/MATERIAL-SOURCES.md): what the edge's /assets/ and /media/ answer. */
+export const MATERIAL_PROFILE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+
+/**
+ * { version: 1, sim, data, material? } → { sim, data, material? }; { version: 1, material } alone → { sim: null,
+ * data: null, material } (no Studio copy, only the profile); null for anything else. `material` keys the service
+ * worker's runtime art cache (public/sw.js): a new profile is a new cache.
+ */
 export function parseCodeSource(json) {
   if (!json || typeof json !== 'object' || json.version !== 1) return null;
   const sim = baseUrl(json.sim), data = baseUrl(json.data);
-  return sim && data ? { sim, data } : null;
+  const material = typeof json.material === 'string' && MATERIAL_PROFILE_RE.test(json.material) ? json.material : null;
+  if (sim && data) return material ? { sim, data, material } : { sim, data };
+  return material ? { sim: null, data: null, material } : null;
 }
 
 /** fetch with its own deadline for the response headers, chained to the caller's signal (no AbortSignal.any: Safari < 17.4). */

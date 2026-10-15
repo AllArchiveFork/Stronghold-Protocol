@@ -5,8 +5,10 @@
 //   detects dead sockets (a ping left unanswered — no inbound frame at all — for DEAD_AFTER_MS ⇒
 //   close ⇒ reconnect). Measured from the oldest unanswered ping, not from the last inbound frame,
 //   so a background tab whose timers the browser throttles to ~1/min is not mistaken for dead.
-// - On every (re)connect, once a player name is known, sends `hello {name, token, version}`;
+// - On every (re)connect, once a player name is known, sends `hello {name, token, version, stateDelta}`;
 //   the session is "online" after `welcome`.
+// - m.state frames (the state-delta transport, shared/stateDelta.js) are decoded back into m.public / m.private
+//   before dispatch; a broken chain reconnects, which restarts both ends from full frames.
 // - `request(t, fields)` adds a `rid` and resolves on the matching `ok` (or any reply carrying the
 //   rid), rejects with a NetError on `error` or after REQUEST_TIMEOUT_MS. Requests made while
 //   reconnecting are queued and flushed after `welcome` (still bound by their timeout).
@@ -34,6 +36,7 @@ import { PLAYER_CAPACITY_VERSION } from '../../shared/playerCapacity.js';
 import { validateC2S, normalizeServerLoad, normalizeLoadDetails } from '../../shared/protocol.js';
 import { normalizeClusterLoad } from '../../shared/cluster-load.js';
 import { N_ } from '../../shared/i18n.js';
+import { StateReceiver, STATE_DELTA_VERSION } from '../../shared/stateDelta.js';
 import { ownerKey } from './ownerKey.js';
 
 export const REQUEST_TIMEOUT_MS = 8000;
@@ -189,6 +192,7 @@ export class Net {
     this._helloRid = null;
     this._helloSentName = null;
     this._helloToken = null;
+    this._states = new StateReceiver(); // m.state baselines of the current socket
     this._lastRx = 0;
     this._unansweredSince = null; // monotonic time of the oldest ping since the last inbound frame
     this._pings = new Map();   // rid -> { c: epoch time, at: monotonic time, order }
@@ -383,6 +387,7 @@ export class Net {
       ws.onopen = ws.onmessage = ws.onerror = ws.onclose = null;
     }
     this.ws = null;
+    this._states.reset();
     this._resetLatency();
     this._clockSamples = [];
     this.clockSynced = false;
@@ -405,7 +410,8 @@ export class Net {
   _sendHello() {
     if (!this.name) return;
     const rid = this._nextRid();
-    const msg = { t: 'hello', rid, name: this.name, version: PROTOCOL_VERSION, matchmakingVersion: MATCHMAKING_VERSION, playerCapacityVersion: PLAYER_CAPACITY_VERSION };
+    const msg = { t: 'hello', rid, name: this.name, version: PROTOCOL_VERSION, matchmakingVersion: MATCHMAKING_VERSION, playerCapacityVersion: PLAYER_CAPACITY_VERSION,
+      stateDelta: STATE_DELTA_VERSION };
     let token = null;
     try { token = this.getToken(); } catch { token = null; }
     if (typeof token === 'string' && token.length > 0 && token.length <= 64) {
@@ -592,6 +598,16 @@ export class Net {
       return;
     }
     if (!msg || typeof msg !== 'object' || Array.isArray(msg) || typeof msg.t !== 'string') return;
+    if (msg.t === 'm.state') {
+      const decoded = this._states.receive(msg);
+      if (!decoded) return; // a duplicate
+      if (!('message' in decoded)) {
+        console.warn('[net] state stream out of step; reconnecting');
+        this.reconnectNow();
+        return;
+      }
+      msg = decoded.message;
+    }
     const { t } = msg;
     const rid = msg.rid;
     const isHelloError = t === 'error' && rid != null && rid === this._helloRid;

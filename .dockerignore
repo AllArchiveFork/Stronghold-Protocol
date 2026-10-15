@@ -27,6 +27,8 @@ docs/research/*.md
 public/assets
 # generated from node_modules inside the image
 public/vendor
+# built inside the image (npm run build)
+public/build
 scripts/service.env.cmd
 .DS_Store
 Thumbs.db

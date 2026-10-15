@@ -255,6 +255,8 @@ docker run -d --name stronghold -p 3000:3000 --restart unless-stopped \
 
 镜像从源码（`git clone`）构建，Releases 的整合包不含 `Dockerfile`。镜像基于 `node:24-alpine`，多阶段构建，只含生产依赖（包括 `ses@2.3.0` 和 `acorn@8.18.0`）；`public/vendor`（含 `ses.umd.js` / `acorn.mjs`）在构建时生成。`node_modules` 是镜像安装目录里的实际文件，不是指向镜像外的符号链接，脚本沙箱子进程可以在 `--allow-fs-read` 范围内读取。`.dockerignore` 排除了 `public/assets`（不会把宿主机素材打进构建上下文）；`public/fonts`、`data/assets.json` 和 `data/local-assets.json` 若存在会被复制进去。环境变量同 README（`-e SP_VERIFY=sample` 等）。健康检查：`GET /healthz`。
 
+**前端打包（本 fork）**：镜像另有一个构建阶段，用开发依赖里的 Vite 运行 `npm run build`，把界面层（`public/js`、`public/css`）打成 `public/build/` 里带内容哈希的文件，运行阶段只复制结果（Vite 不进运行镜像），并默认 `SP_CLIENT=build`：首页使用打包版本，`/build/assets/` 下的文件可长期缓存。`/shared`、`/sim`、`/data`、两个 Web Worker、启动脚本、图标、字体和 Pixi 仍按原路径提供，所以 `public/js` 也照常保留在镜像里。设 `-e SP_CLIENT=source` 可改回源码页面。不用 Docker 时，`npm run build` 后以 `SP_CLIENT=build npm start` 启动；没有打包结果时会退回源码页面并在日志里提示。
+
 **持久化插件**：把命名卷或宿主机目录挂到 `/app/plugins`，例如加 `-v stronghold-plugins:/app/plugins`。
 镜像在 `/app/plugin-resources` 保留只读的 `_template/`、`README.md` 和 `AGENTS.md`，用
 `SP_PLUGIN_RESOURCES=/app/plugin-resources` 让工作台读取模板；不要把卷挂到这个资源目录。

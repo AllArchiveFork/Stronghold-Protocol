@@ -32,7 +32,7 @@
    `node deploy/stardust/tools/studio-code-source.mjs stage --localcode "$STAGE/localcode/cluster-formal-$BUILD" --build "$BUILD" --repo "$STUDIO_CHECKOUT"`
 3. 在创空间检出目录中只提交新增的 `releases/$BUILD/`，然后普通推送（不强推）。
 4. `node deploy/stardust/tools/studio-code-source.mjs verify --repo "$STUDIO_CHECKOUT" --build "$BUILD" --base "https://modelscope.cn/studio/Stardust/arknight-proto/resolve/$STUDIO_COMMIT/releases/$BUILD/"`：逐个文件核对状态码、SHA-256、`Access-Control-Allow-Origin: *`，以及 `.js` 的 MIME。
-5. 用 `node deploy/stardust/tools/studio-code-source.mjs nginx --base <同上>` 生成 `location = /code-source.json`，追加到本版私有代码 include，跟发版共用同一次 `openresty -t` 和 reload。
+5. 用 `node deploy/stardust/tools/studio-code-source.mjs nginx --base <同上> --material <当前素材 profile>` 生成 `location = /code-source.json`，追加到本版私有代码 include，跟发版共用同一次 `openresty -t` 和 reload。`--material` 写入 `material` 字段：页面据此把 Service Worker 注册为 `/sw.js?material=<profile>`，按路径缓存已下载的素材（[public/sw.js](../../public/sw.js)）；换素材 profile 时要重新生成这一段（不换代码也要），否则浏览器会继续用旧 profile 的缓存。不写 `--material` 时不缓存。
 6. 验收：在浏览器 Network 面板里确认 `/sim`、`/data` 的请求发往 `modelscope.cn`，`announcements.json` 仍走本站；本地演算的校验值一致，没有退回服务器推流。
 
 回滚或关闭：从 include 去掉这个 location 再 reload。请求会落到协调器，协调器返回 `null`，页面全部改从本站读取；已打开的页面刷新后生效。

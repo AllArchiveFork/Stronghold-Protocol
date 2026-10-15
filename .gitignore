@@ -92,3 +92,5 @@ deploy/stardust/**/auth-secrets/
 
 # tools/sim-check.mjs: the corpus and its Node traces for /dev/sim-check.html
 public/dev/simcheck/data/
+# the Vite bundle of the UI layer (npm run build; vite.config.js)
+public/build/

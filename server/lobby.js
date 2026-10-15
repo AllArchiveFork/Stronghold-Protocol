@@ -190,7 +190,7 @@ import { checkLoadout, checkLoadoutOps, cultivationCharIds, checkNotOwned, check
 import { isSkinChoices } from '../shared/skins.js';
 import { EXPERIMENTAL_DEFAULTS, experimentalOptions, isExperimental, sameExperimental } from '../shared/experimental.js';
 import { MAX_PLAYER_CAPACITY, PLAYER_CAPACITY_VERSION, roomCapacity } from '../shared/playerCapacity.js';
-import { encode, isDroppable, isErrCode, sendEncodedMany, sendRaw, sendSession, TokenBucket } from './net.js';
+import { encode, isErrCode, sendEncodedMany, sendMessage, sendRaw, sendSession, TokenBucket } from './net.js';
 import { isCompressibleType } from './wsCompression.js';
 import { getData as defaultGetData, lookup } from './data.js';
 import { Match as DefaultMatch, AFK_REMOVE_ROUNDS } from './match/Match.js';
@@ -2512,8 +2512,7 @@ export class Lobby {
     if (room.disposed) return null;
     const data = encode(msg);
     if (data == null) { this.log.error(`[lobby] ${room.code} unserializable broadcast ${msg && msg.t}`); return null; }
-    const droppable = isDroppable(msg);
-    for (const session of this.memberSessions(room)) sendRaw(session.ws, data, { droppable, compress: isCompressibleType(msg?.t) });
+    for (const session of this.memberSessions(room)) sendMessage(session.ws, msg, data);
     return data;
   }
 

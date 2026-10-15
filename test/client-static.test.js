@@ -439,7 +439,9 @@ describe('net.js', () => {
     net.setName('  凯尔希  ');
     const hello = ws().last('hello');
     const { PLAYER_CAPACITY_VERSION } = await import(pathToFileURL(path.join(ROOT, 'shared/playerCapacity.js')).href);
-    assert.deepEqual({ ...hello, rid: 0 }, { t: 'hello', rid: 0, name: '凯尔希', version: PROTOCOL_VERSION, matchmakingVersion: MATCHMAKING_VERSION, playerCapacityVersion: PLAYER_CAPACITY_VERSION, token: 'tok-1' });
+    const { STATE_DELTA_VERSION } = await import(pathToFileURL(path.join(ROOT, 'shared/stateDelta.js')).href);
+    assert.deepEqual({ ...hello, rid: 0 }, { t: 'hello', rid: 0, name: '凯尔希', version: PROTOCOL_VERSION, matchmakingVersion: MATCHMAKING_VERSION, playerCapacityVersion: PLAYER_CAPACITY_VERSION,
+      stateDelta: STATE_DELTA_VERSION, token: 'tok-1' });
     assert.equal(net.status, 'handshaking');
     ws().recv({ t: 'welcome', rid: hello.rid, playerId: 'p_1', token: 't', name: '凯尔希', serverNow: Date.now() });
     assert.equal(net.status, 'online');

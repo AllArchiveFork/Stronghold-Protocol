@@ -38,6 +38,8 @@ class ClusterSourceExportTests(unittest.TestCase):
         self.put('public/assets/local/mesh/map_autochess_bkg/floor.obj', 'fixture mesh')
         self.put('public/fonts/font.woff2', 'fixture font')
         self.put('public/vendor/preact.js', 'fixture vendor')
+        self.put('public/build/index.html', 'fixture bundle page')
+        self.put('public/build/assets/index-AbCdEfGh.js', 'fixture bundle')
         self.put('node_modules/dependency/package.json', '{}')
 
     def git(self, *args):
@@ -120,7 +122,7 @@ class ClusterSourceExportTests(unittest.TestCase):
         for relative in ['node_modules/dependency/types.d.ts', 'node_modules/dependency/legacy.js']:
             self.put(relative, '')
         identity = exporter.export(self.root, self.output, self.revision)
-        self.assertEqual(identity['resourceFiles'], 5)
+        self.assertEqual(identity['resourceFiles'], 7)  # + the two bundle files (public/build)
         for relative in ['node_modules/dependency/types.d.ts', 'node_modules/dependency/legacy.js']:
             self.assertTrue((self.output / 'app' / relative).is_file())
             self.assertEqual((self.output / 'app' / relative).read_bytes(), b'')

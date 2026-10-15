@@ -76,6 +76,7 @@ export function parseTrialWorkers(value) {
  *   assetIndex?: boolean | { cacheFile?: string | null, delayMs?: number }, studio?: boolean,
  *   matchHost?: object,
  * }} [opts]
+ *   client: 'build' or 'source' — which page `/` is (default SP_CLIENT; http/static.js clientModeFromEnv);
  *   assetIndex: the content-hash index (default on; false or SP_ASSET_INDEX=0: off — config.js assetIndexOptionsFrom);
  *   studio: the plugin studio at /studio/ (default on for this machine and the local network — SP_STUDIO=local|off;
  *   false: none);
@@ -162,7 +163,7 @@ export async function startServer(opts = {}) {
       getLoadDetails: () => publicLoadDetails(healthMetrics?.snapshot?.()),
     }));
     serveStatic = createStaticHandler({ publicDir, dataDir, sharedDir, simDir, packsDir, pluginsDir, packs, content, log, metrics: opts.phaseMetrics,
-      assetIndex, views, visual, contents });
+      assetIndex, views, visual, contents, ...(opts.client ? { client: opts.client } : {}) });
     // the plugin studio (DESIGN §32.9): its page and API for this machine and the local network; it watches plugins/ only
     // once it is used (hot reload), and rooms whose host is the author or alone follow a plugin's changes by themselves
     studio = opts.studio === false ? null : createStudio({ publicDir, pluginsDir, dataDir, registry: packs, lobby, sessions: registry, log, fetch: opts.fetch });

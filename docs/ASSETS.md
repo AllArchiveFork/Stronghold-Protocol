@@ -701,6 +701,16 @@ Verification uses the served manifests (`GET /data/assets.json`, and `GET /data/
 
 Accepted bytes go into Cache Storage under the name `sp-imported-assets-v1`, at the hashed `/assets/` or `/fonts/` URL and, for audio, also at the `/media/~<hash>/…` URL playback requests. As an import ends, the pathnames it stored are added to one JSON entry of that cache, `/sp-imported-index.json`, which the dialog's count and the download queue read: Chrome refuses `Cache.keys()` for a cache of more than about 15,000 entries ("Operation too large"), and a whole pack stores some 43,000. `public/sw.js` is a classic service worker (not a module, so the browsers this project already supports can register it). `public/js/main.js` registers it on a secure context only (`updateViaCache: 'none'`, scope `/`). It intercepts same-origin GET whose path matches `/assets/~<16 hex>/`, `/fonts/~<16 hex>/` or `/media/~<16 hex>/`. A cache hit is returned. A miss is fetched from the network and is not written into this cache. A request with a `Range` header is not intercepted. HTML, scripts, `/data/`, `/sim/` and `/ws` are never handled.
 
+Fork runtime art cache (2026-10-16, after xinhai-ai/Stronghold-Protocol 4b47e3d): when `/code-source.json` names the
+material profile (`material`, deploy/stardust/STUDIO-CODE-SOURCE.md), the page registers the same worker as
+`/sw.js?material=<profile>`. It then also answers same-origin GET of public art — the `/assets/` and `/media/` paths
+`public/js/materialFallback.js` accepts, without a query or with its OpenI retry `?sp_source=openi` — from the Cache
+Storage cache `sp-material-<profile>`, keyed by origin + path, so the provider's rotating signed redirect does not
+download the same file again. A miss is fetched in CORS mode (an opaque response is never kept) and only a complete 200
+that is not HTML and not `no-store` is written. Activating a worker of another profile deletes the other `sp-material-*`
+caches; a worker registered without a profile (the page could not read `/code-source.json`) keeps nothing and deletes
+nothing. A `Range` request is not intercepted.
+
 `worker-src 'self' blob:` was already the site policy (`server/http/csp.js`). `'self'` is what `/sw.js` needs. `blob:` stays for the simulation worker the page already starts. No remote worker origin is added, and `SIM_WORKER_CSP` does not gain this worker.
 
 On `http://` to a LAN IP, `isSecureContext` is false. The import controls explain why and do not throw. Download still works over plain HTTP. The download queue does not request a URL already present in the import cache. Closing the import dialog cancels an in-progress import; closing the download dialog pauses the download. Clear deletes only this cache. `navigator.storage.estimate()` is the whole origin, and `navigator.storage.persist()` is a request the browser may refuse.

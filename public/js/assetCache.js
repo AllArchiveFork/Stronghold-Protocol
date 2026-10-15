@@ -47,14 +47,24 @@ export function importSupport(nav = globalThis.navigator, secure = globalThis.is
   return { ok: true };
 }
 
+/** Cache Storage names of the worker's runtime art cache: this prefix + the material profile (public/sw.js). */
+export const MATERIAL_CACHE_PREFIX = 'sp-material-';
+
+/** The worker's script URL: with a material profile (/code-source.json `material`), it also keeps the art it fetches. */
+export function assetWorkerUrl(material = null) {
+  return typeof material === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(material)
+    ? `/sw.js?material=${material}` : '/sw.js';
+}
+
 /**
  * Register public/sw.js. Failures are swallowed: a missing worker must not stop the game.
  * Call only from boot. Unit tests import the downloader and must not register a worker as a side effect.
+ * @param {string | null} [material] the material profile: turns on the runtime art cache (fork; public/sw.js)
  * @returns {Promise<boolean>}
  */
-export function registerImportedAssetWorker(nav = globalThis.navigator, secure = globalThis.isSecureContext) {
+export function registerImportedAssetWorker(nav = globalThis.navigator, secure = globalThis.isSecureContext, material = null) {
   if (!secure || !nav?.serviceWorker?.register) return Promise.resolve(false);
-  return nav.serviceWorker.register('/sw.js', { scope: '/', updateViaCache: 'none' }).then(() => true, () => false);
+  return nav.serviceWorker.register(assetWorkerUrl(material), { scope: '/', updateViaCache: 'none' }).then(() => true, () => false);
 }
 
 /** Content-Type stored with an imported response, chosen from the URL the game will request. */

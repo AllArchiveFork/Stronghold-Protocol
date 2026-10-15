@@ -23,7 +23,8 @@
 import { PROTOCOL_VERSION, APP_VERSION } from '../../shared/constants.js';
 import { PERFORMANCE_UNAVAILABLE } from '../healthMetrics.js';
 import { setSecurityHeaders, sendError, sendJson, splitUrl } from './common.js';
-import { clientAddress, isLocalIp } from '../net.js';
+import { clientAddress, isLocalIp, netCounters } from '../net.js';
+import { stateDeltaStats } from '../stateTransport.js';
 
 const MAX_URL_LENGTH = 4096;
 
@@ -67,6 +68,8 @@ export function healthReport({ startedAt, network, registry, lobby, content = nu
     // since start: hello outcomes (net.js helloStats) and the human seats that left a running match (lobby.js departureStats)
     reconnect: { hello: network.helloStats?.() ?? null, matchSeats: lobby.departureStats?.() ?? null },
     performance: getHealthMetrics?.()?.snapshot() ?? PERFORMANCE_UNAVAILABLE,
+    // since start: backpressure (net.js netCounters) and the m.state transport (stateTransport.js)
+    net: { ...netCounters, stateDelta: { ...stateDeltaStats } },
   };
   if (trusted && Object.keys(trusted).length) report.plugins = trusted;
   if (withTraffic && traffic) report.traffic = traffic.snapshot();

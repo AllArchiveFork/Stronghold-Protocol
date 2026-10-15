@@ -1027,6 +1027,37 @@
 .conn-banner .icon { width: .22rem; height: .22rem; color: var(--orange-hi); }
 .conn-banner__sub { color: var(--text-lo); font-family: var(--font-num); font-size: calc(.15 * var(--t)); }
 
+/* In-match notice line (ui/matchNotice.js): the lobby's maintenance / announcement banner during a match. Under the
+   top bar like the connection banner (below it while that shows); toasts move down while it shows (html.sp-notice).
+   Only on the match screen itself (html.sp-in-match): the briefing and draft screens keep their title row free. */
+.match-notice {
+  display: none;
+  position: fixed;
+  left: 50%;
+  top: calc(.16rem + var(--sa-t, 0px));
+  transform: translateX(-50%);
+  z-index: var(--z-banner);
+  align-items: center;
+  gap: .1rem;
+  max-width: min(92vw, 9rem);
+  padding: .06rem .06rem .06rem .14rem;
+  background: rgba(40, 24, 6, .88);
+  border: 1px solid var(--amber);
+  color: var(--amber);
+  font-size: calc(.15 * var(--t));
+  line-height: 1.4;
+  pointer-events: none;
+}
+.match-notice > .icon { flex: none; width: .18rem; height: .18rem; }
+.match-notice__text { min-width: 0; overflow-wrap: anywhere; }
+.match-notice__close { flex: none; display: grid; place-items: center; width: .3rem; height: .3rem; padding: 0; border: 0; background: transparent; color: inherit; cursor: pointer; pointer-events: auto; }
+.match-notice__close:hover { color: var(--text-hi); }
+.match-notice__close .icon { width: .16rem; height: .16rem; }
+.sp-in-match .match-notice { display: flex; top: calc(1.34rem + var(--sa-t, 0px)); }
+.sp-in-match.sp-conn .match-notice { top: calc(2.0rem + var(--sa-t, 0px)); }
+.sp-in-match.sp-notice .toast-host { top: calc(1.96rem + var(--sa-t, 0px)); }
+.sp-in-match.sp-conn.sp-notice .toast-host { top: calc(2.62rem + var(--sa-t, 0px)); }
+
 /* ---- misc shared bits ------------------------------------------------------------------------------ */
 .kv { display: flex; align-items: baseline; gap: .08rem; }
 .kv__k { color: var(--text-lo); font-size: calc(.14 * var(--t)); }

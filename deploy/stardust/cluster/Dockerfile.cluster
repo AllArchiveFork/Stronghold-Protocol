@@ -14,10 +14,12 @@ LABEL org.opencontainers.image.source="https://github.com/Stardust-minus/Strongh
 RUN test -n "${SOURCE_REVISION}" && test -n "${SOURCE_MANIFEST_SHA256}" && test -n "${RESOURCE_MANIFEST_SHA256}" \
  && test -n "${APP_VERSION}" && { test "${SOURCE_KIND}" = commit || test "${SOURCE_KIND}" = tree; }
 # SP_ASSET_INDEX=0: the art is redirected to the material sources by plain path, so manifests carry no content hashes.
-ENV NODE_ENV=production SP_COMBAT=server SP_VERIFY=off SP_SNAPSHOT_HZ=10 SP_ASSET_INDEX=0
+# SP_CLIENT=build: the coordinator's / is the Vite bundle's page (public/build/, exported prebuilt — UPDATE-SOP.md).
+ENV NODE_ENV=production SP_COMBAT=server SP_VERIFY=off SP_SNAPSHOT_HZ=10 SP_ASSET_INDEX=0 SP_CLIENT=build
 WORKDIR /app
 COPY app/ /app/
-RUN for file in name-policy.mjs name-dictionary.mjs name-sensitive-dictionary.mjs \
+RUN test -s public/build/index.html && ls public/build/assets/*.js >/dev/null \
+ && for file in name-policy.mjs name-dictionary.mjs name-sensitive-dictionary.mjs \
       name-filter-vendor.mjs name-filter-node.mjs NAME-DICTIONARY-LICENSE.txt \
       NAME-FILTER-LICENSE.txt NAME-CATEGORIES-LICENSE.txt NAME-POLITICAL-LICENSE.txt; do \
       test -s "deploy/stardust/auth/$file" || exit 1; \

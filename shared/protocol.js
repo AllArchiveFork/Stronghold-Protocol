@@ -448,8 +448,8 @@ export const C2S = {
   // owner: the 服主 key (server/ownerFile.js) — verified on every hello, answered by welcome.owner: true; never echoed or logged
   hello: { name: (v) => isStr(v, NAME_MAX_LEN) && v.trim().length > 0, token: (v) => v == null || isStr(v, 64), version: (v) => v == null || isInt(v, 0, 1e6),
     matchmakingVersion: isId, playerCapacityVersion: isId, noReplace: isBool, claimAt: (v) => isNum(v, 0, Number.MAX_SAFE_INTEGER),
-    owner: (v) => isStr(v, 128),
-    $optional: ['token', 'version', 'matchmakingVersion', 'playerCapacityVersion', 'noReplace', 'claimAt', 'owner'] },
+    owner: (v) => isStr(v, 128), stateDelta: (v) => isInt(v, 0, 1e6),
+    $optional: ['token', 'version', 'matchmakingVersion', 'playerCapacityVersion', 'noReplace', 'claimAt', 'owner', 'stateDelta'] },
   // full: this ping wants the whole cluster load summary in its pong (server/net.js CLUSTER_LOAD_EVERY_MS)
   ping: { c: (v) => typeof v === 'number' && Number.isFinite(v), full: isBool, $optional: ['full'] },
   'room.create': { mode: (v) => v === 'solo' || v === 'coop', difficulty: (v) => DIFFICULTIES.includes(v), experimental: isExperimental, $optional: ['experimental'] },
@@ -610,6 +610,9 @@ export const S2C = [
   // retain completed { round, fieldId, battleId, helpers, through } rows. Current field helpers <=2,
   // final uniteResult.helpers aggregates <=4 actual participants; b.result limits remain unchanged.
   'm.public', 'm.private', 'm.field', 'm.toast', 'm.ticker', 'm.emote', 'm.result',
+  // m.state — m.public / m.private on a socket whose hello said stateDelta: 1 (shared/stateDelta.js):
+  // { kind, seq, full } or { kind, seq, base, patch }; the browser decodes it back before dispatch
+  'm.state',
   // m.layer { playerId, bondId, add } — own live prep layer gain; ephemeral, never replayed on resync.
   'm.layer',
   // m.unitStats { seq, round, units: [unitStatsEntry] } — the answer to g.unitStats (the requester only)

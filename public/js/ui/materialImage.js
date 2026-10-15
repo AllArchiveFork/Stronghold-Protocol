@@ -4,9 +4,9 @@
 // element itself before swapping to OpenI. A timer that ends while the page is hidden waits for it to be shown again.
 import { h } from '../../vendor/preact.module.js';
 import { useEffect, useRef, useState } from '../../vendor/hooks.module.js';
-import { MATERIAL_TIMEOUT_MS, openiFallbackUrl } from '../materialFallback.js';
+import { MATERIAL_IMAGE_TIMEOUT_MS, openiFallbackUrl } from '../materialFallback.js';
 
-export function MaterialImage({ src, onLoad, onError, loading, timeoutMs = MATERIAL_TIMEOUT_MS, ...props }) {
+export function MaterialImage({ src, onLoad, onError, loading, timeoutMs = MATERIAL_IMAGE_TIMEOUT_MS, ...props }) {
   const [retry, setRetry] = useState(null);
   const source = retry?.original === src ? retry.source : src;
   const node = useRef(null);

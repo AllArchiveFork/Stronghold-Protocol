@@ -8,7 +8,7 @@ import { rewriteManifest } from '../../server/http/assetViews.js';
 import { siteCsp, SIM_WORKER_CSP } from '../../server/http/csp.js';
 import { createAssetDownload } from '../../public/js/assetDownload.js';
 import {
-  IMPORTED_ASSET_CACHE, IMPORTED_ASSET_CACHE_PREFIX, IMPORTED_ASSET_PATH, IMPORTED_INDEX_URL,
+  IMPORTED_ASSET_CACHE, IMPORTED_ASSET_CACHE_PREFIX, IMPORTED_ASSET_PATH, IMPORTED_INDEX_URL, MATERIAL_CACHE_PREFIX, assetWorkerUrl,
   addImportedPaths, countImportedFiles, importSupport, listImportedPaths, shouldServeImportedAsset,
 } from '../../public/js/assetCache.js';
 import {
@@ -513,7 +513,7 @@ test('the worker answers only hashed asset GET, and its copy matches the module'
   assert.ok(sw.includes(`const IMPORTED_ASSET_CACHE = '${IMPORTED_ASSET_CACHE}';`));
   assert.ok(sw.includes(`const IMPORTED_ASSET_CACHE_PREFIX = '${IMPORTED_ASSET_CACHE_PREFIX}';`));
   assert.ok(sw.includes(`const IMPORTED_ASSET_PATH = ${IMPORTED_ASSET_PATH};`));
-  assert.equal(sw.includes('.put('), false);
+  // registered without a material profile: nothing is ever written (the sandbox's put throws)
 
   const origin = 'http://127.0.0.1:9';
   const deleted = [];
@@ -615,6 +615,76 @@ test('the worker answers only hashed asset GET, and its copy matches the module'
   assert.equal(await (await missPromise).text(), 'from-network');
   assert.equal(fetched.length, fetchedBeforeHit + 1);
   assert.equal(fetched.at(-1), miss.url);
+});
+
+test('fork: with a material profile the worker keeps public art by path; another profile drops the old cache', async () => {
+  const sw = fs.readFileSync(path.resolve('public/sw.js'), 'utf8');
+  assert.ok(sw.includes(`const MATERIAL_CACHE_PREFIX = '${MATERIAL_CACHE_PREFIX}';`));
+  assert.equal(assetWorkerUrl('20261016-jinan-v030-r0'), '/sw.js?material=20261016-jinan-v030-r0');
+  assert.equal(assetWorkerUrl('bad/profile'), '/sw.js');
+  assert.equal(assetWorkerUrl(null), '/sw.js');
+  const origin = 'https://game.example';
+  const run = (material, store, fetched, deleted, { network } = {}) => {
+    const listeners = {};
+    const sandbox = {
+      self: { location: { origin, href: `${origin}${assetWorkerUrl(material)}` }, addEventListener(type, fn) { listeners[type] = fn; },
+        skipWaiting: () => Promise.resolve(), clients: { claim: () => Promise.resolve() } },
+      caches: {
+        async open(name) {
+          const map = store.get(name) ?? new Map(); store.set(name, map);
+          return {
+            async match(key, options) { assert.equal(options, undefined); const hit = map.get(typeof key === 'string' ? key : key.url); return hit ? new Response(hit) : undefined; },
+            async put(key, response) { map.set(key, await response.text()); },
+          };
+        },
+        async keys() { return [...store.keys()]; },
+        async delete(name) { deleted.push(name); return store.delete(name); },
+      },
+      fetch: async (request, init) => {
+        const url = typeof request === 'string' ? request : request.url;
+        fetched.push([url, init?.mode ?? null]);
+        return network ? network(url) : new Response(`net:${url}`, { headers: { 'content-type': 'image/png' } });
+      },
+      URL: globalThis.URL, Response: globalThis.Response, Promise: globalThis.Promise,
+    };
+    vm.runInNewContext(sw, sandbox, { filename: 'public/sw.js' });
+    const fire = async (url, init = {}) => {
+      let responded = null; const waits = [];
+      listeners.fetch({ request: new Request(url, init), respondWith(p) { responded = p; }, waitUntil(p) { waits.push(p); } });
+      if (!responded) return null;
+      const res = await responded; await Promise.all(waits);
+      return res;
+    };
+    const activate = async () => { let p; listeners.activate({ waitUntil(x) { p = x; } }); await p; };
+    return { fire, activate };
+  };
+  const store = new Map([['sp-material-old', new Map()], ['other-cache', new Map()]]), fetched = [], deleted = [];
+  const w = run('v030', store, fetched, deleted);
+  await w.activate();
+  assert.deepEqual(deleted, ['sp-material-old'], 'another profile is dropped, unrelated caches stay');
+  assert.equal(await (await w.fire(`${origin}/assets/char/a.png`)).text(), `net:${origin}/assets/char/a.png`);
+  assert.deepEqual(fetched.at(-1), [`${origin}/assets/char/a.png`, 'cors'], 'a miss is fetched in CORS mode');
+  assert.equal(await (await w.fire(`${origin}/assets/char/a.png`)).text(), `net:${origin}/assets/char/a.png`);
+  assert.equal(fetched.length, 1, 'the second request is a hit');
+  assert.equal(await (await w.fire(`${origin}/assets/char/b.png?sp_source=openi`)).text(), `net:${origin}/assets/char/b.png?sp_source=openi`);
+  assert.equal(await (await w.fire(`${origin}/assets/char/b.png`)).text(), `net:${origin}/assets/char/b.png?sp_source=openi`, 'the OpenI retry fills the path entry');
+  assert.equal(fetched.length, 2);
+  for (const url of [`${origin}/assets/char/a.png?Signature=x`, `${origin}/data/assets.json`, `${origin}/js/main.js`, `${origin}/assets/x.svg`,
+    `${origin}/assets/a%5cx.png`, `${origin}/assets/.hidden.png`, 'https://other.example/assets/char/a.png', `${origin}/ws`]) {
+    assert.equal(await w.fire(url), null, url);
+  }
+  assert.equal(await w.fire(`${origin}/assets/char/a.png`, { headers: { Range: 'bytes=0-1' } }), null, 'Range goes to the network');
+  // errors, HTML and no-store are not kept
+  const bad = run('v030', store, fetched, deleted, { network: (url) => url.includes('err') ? new Response('x', { status: 503 })
+    : url.includes('html') ? new Response('<html>', { headers: { 'content-type': 'text/html' } })
+      : new Response('y', { headers: { 'cache-control': 'public, no-store' } }) });
+  for (const name of ['err', 'html', 'nostore']) await bad.fire(`${origin}/assets/x/${name}.png`);
+  assert.deepEqual([...store.get('sp-material-v030').keys()].sort(), [`${origin}/assets/char/a.png`, `${origin}/assets/char/b.png`]);
+  // a worker without a profile keeps nothing and drops nothing
+  const none = run(null, store, fetched, deleted);
+  await none.activate();
+  assert.equal(await none.fire(`${origin}/assets/char/c.png`), null);
+  assert.ok(store.has('sp-material-v030'));
 });
 
 test('site CSP keeps worker-src self and blob, and the sim worker policy does not gain the asset worker', () => {

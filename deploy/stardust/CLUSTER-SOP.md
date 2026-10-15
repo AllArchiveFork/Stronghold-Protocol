@@ -39,7 +39,10 @@ TLS、共享口令、每次私有请求门禁、可信 Host/Origin、CSRF、登�
 
 `tools/cluster-source-export.py` 给出完整真实 commit、与 blob 一致的 checkout 和不存在的新输出目录。源码和 `cluster/Dockerfile.cluster` 逐 Git blob 校验；`tools/cluster-generated-assets.py` 单独验证索引 schema/计数、atlas/mesh 与普通非空引用，写入 resource manifest 的 `generated-renderer-data` 项，不把索引或美术提交为 Git blob。
 
+前端打包（2026-10-16 起）：导出前在同一 checkout 里运行 `npm run build`（Vite 在 devDependencies 里，`npm ci` 已装），生成 `public/build/`。它和 `public/vendor` 一样是 ignored 的生成物，由导出工具作为资源收入 resource manifest；`cluster/Dockerfile.cluster` 设 `SP_CLIENT=build`，缺少 `public/build/index.html` 时镜像构建失败。济南边缘对 `/build/assets/` 使用一年的 `immutable` 缓存（文件名带内容哈希），首页和 `/js/`、`/css/` 仍按原规则重新验证。
+
 ```sh
+npm run build
 python3 -I deploy/stardust/tools/cluster-source-export.py \
   --source "$REPO" --revision "$COMMIT" --out "$NEW_CONTEXT"
 ```

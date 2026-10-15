@@ -5,7 +5,8 @@ import { WebSocketServer } from 'ws';
 import { GameHost } from './game-host.js';
 import { createRpcAuthenticator, createRpcHandler, RpcError } from './rpc.js';
 import { createTicketAuthority } from './tickets.js';
-import { NET_DEFAULTS, TokenBucket, corkTurn, encode, sendRaw, isErrCode } from '../net.js';
+import { NET_DEFAULTS, TokenBucket, corkTurn, encode, sendRaw, isErrCode, netCounters } from '../net.js';
+import { negotiateStateDelta, prepareStateFrame } from '../stateTransport.js';
 import { C2S, validateC2S, normalizeServerLoad, normalizeLoadDetails } from '../../shared/protocol.js';
 import { ERR, PROTOCOL_VERSION } from '../../shared/constants.js';
 import { normalizeGameLoad, normalizeClusterLoad, publicGameLabel } from '../../shared/cluster-load.js';
@@ -317,14 +318,17 @@ export async function startGameNode({ host = '127.0.0.1', port = 0, nodeId, gene
     if (conn.pending === null) return write(conn, type, data);
     const queued = conn.pendingBytes + conn.ws.bufferedAmount;
     const bytes = Buffer.byteLength(data);
-    if (queued + bytes > NET_DEFAULTS.hardBufferBytes) { closeConn(conn, 1013, 'CHANNEL_UNAVAILABLE'); return false; }
-    if (type === 'b.snap' && queued > NET_DEFAULTS.snapDropBytes) return false;
+    if (queued + bytes > NET_DEFAULTS.hardBufferBytes) { netCounters.backpressureClosed++; closeConn(conn, 1013, 'CHANNEL_UNAVAILABLE'); return false; }
+    if (type === 'b.snap' && queued > NET_DEFAULTS.snapDropBytes) { netCounters.snapDropped++; return false; }
     conn.pending.push({ type, data }); conn.pendingBytes += bytes;
     return true;
   }
   function bind(conn, message) {
-    if (!plain(message) || Object.keys(message).length !== 4
+    // stateDelta (optional): the browser's hello.stateDelta, relayed by the ingress (server/stateTransport.js)
+    const keys = plain(message) ? Object.keys(message) : [];
+    if (!plain(message) || keys.length !== 4 + (Object.hasOwn(message, 'stateDelta') ? 1 : 0)
       || !['t', 'assignmentId', 'sessionId', 'ticket'].every(k => Object.hasOwn(message, k))
+      || (Object.hasOwn(message, 'stateDelta') && !(Number.isSafeInteger(message.stateDelta) && message.stateDelta > 0))
       || message.t !== 'cluster.bind' || !id(message.assignmentId) || !id(message.sessionId) || typeof message.ticket !== 'string') {
       error(conn, 'BAD_BIND'); closeConn(conn, 1008, 'BAD_BIND'); return;
     }
@@ -339,6 +343,7 @@ export async function startGameNode({ host = '127.0.0.1', port = 0, nodeId, gene
       nodeId, role: member.role, build: assignment.build, protocol: assignment.protocol };
     if (!tickets.verify(message.ticket, expected)) { error(conn, 'UNAUTHORIZED'); closeConn(conn, 1008, 'UNAUTHORIZED'); return; }
     conn.assignmentId = assignment.assignmentId; conn.sessionId = message.sessionId;
+    negotiateStateDelta(conn.ws, message.stateDelta);
     // onReconnect/addSpectator may synchronously produce state. The short queue
     // ensures cluster.bound precedes it, and keeps already-encoded frames intact.
     conn.pending = [];
@@ -415,7 +420,14 @@ export async function startGameNode({ host = '127.0.0.1', port = 0, nodeId, gene
       heavy: new TokenBucket(NET_DEFAULTS.heavyPerSec, NET_DEFAULTS.heavyBurst, at), dropWindowAt: at, drops: 0 };
     conn.channel = {
       // `wire` is the host's JSON.stringify(message) of a shared frame: reuse it instead of encoding per member.
-      send(message, wire) { const data = typeof wire === 'string' ? wire : encode(message); return data !== null && enqueue(conn, message?.t, data); },
+      send(message, wire) {
+        const data = typeof wire === 'string' ? wire : encode(message);
+        if (data === null) return false;
+        // m.public / m.private as m.state when the browser negotiated it; the baseline moves only once queued
+        const frame = prepareStateFrame(conn.ws, message, data);
+        if (!enqueue(conn, message?.t, frame.data)) return false;
+        frame.commit(); return true;
+      },
       sendEncoded(type, data) { return enqueue(conn, type, data); },
       close(code, reason) { closeConn(conn, code, reason); },
     };

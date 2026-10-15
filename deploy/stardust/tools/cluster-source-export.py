@@ -87,7 +87,8 @@ def export(root, output, revision):
     source_digest = hashlib.sha256(source_raw).hexdigest()
     (output / 'source-manifest.json').write_bytes(source_raw)
     resources = []
-    for category in ('public/assets', 'public/fonts', 'public/vendor'):
+    # public/build: the Vite bundle of the UI layer (npm run build, vite.config.js) — the image serves it (SP_CLIENT=build)
+    for category in ('public/assets', 'public/fonts', 'public/vendor', 'public/build'):
         directory = root / category
         if not directory.is_dir() or directory.is_symlink():
             raise Refused('matched public resource directory required')

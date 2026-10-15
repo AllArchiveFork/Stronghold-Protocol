@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { openiFallbackUrl, withMaterialFallback, fetchMaterial, loadMaterialImage } from '../public/js/materialFallback.js';
+import { openiFallbackUrl, withMaterialFallback, fetchMaterial, loadMaterialImage, transientMaterialError } from '../public/js/materialFallback.js';
 import { installPixiMaterialFallback } from '../public/js/render/materialLoader.js';
 
 const origin = 'https://game.example';
@@ -62,7 +62,7 @@ test('caller cancellation does not start fallback and both hanging attempts rema
   await assert.rejects(pending, { name: 'AbortError' });
   assert.deepEqual(seen, [path]);
   seen.length = 0;
-  await assert.rejects(withMaterialFallback(path, source => { seen.push(source); return new Promise(() => {}); }, { timeoutMs: 15 }), /timeout/);
+  await assert.rejects(withMaterialFallback(path, source => { seen.push(source); return new Promise(() => {}); }, { timeoutMs: 15, retryMs: [] }), /timeout/);
   assert.deepEqual(seen, [path, forced]);
 });
 
@@ -79,7 +79,7 @@ for (const mode of ['network', '404', '403', '503', 'html', 'bad-json', 'body-er
       if (mode === 'bad-json') return new Response('not json');
       return { ok: true, json: () => mode === 'body-error' ? Promise.reject(new Error('broken body')) : new Promise(() => {}) };
     };
-    assert.deepEqual(await fetchMaterial(path, r => r.json(), { fetch, timeoutMs: 20 }), { ok: true });
+    assert.deepEqual(await fetchMaterial(path, r => r.json(), { fetch, timeoutMs: 20, idleMs: 20 }), { ok: true });
     assert.deepEqual(seen, [path, forced]);
   });
 }
@@ -188,4 +188,67 @@ test('Pixi detects HTTP/HTML/binary-body failures but does not alter unrelated a
   const binary = { load: async url => url.includes('?') ? new Uint8Array([1, 2]).buffer : new ArrayBuffer(0) };
   installPixiMaterialFallback({ Assets: { loader: { parsers: [binary] } } });
   assert.equal((await binary.load('/assets/test/model.skel')).byteLength, 2);
+});
+
+// Weak networks (after xinhai-ai 6e4acd3): progress keeps a slow transfer alive, a stall still fails over, and only
+// transient failures of both sources take later rounds.
+const trickle = (parts, everyMs, { stallAfter = Infinity } = {}) => new Response(new ReadableStream({
+  async start(controller) {
+    for (let i = 0; i < parts.length; i++) {
+      if (i >= stallAfter) return; // never closes
+      await new Promise(resolve => setTimeout(resolve, everyMs));
+      controller.enqueue(new TextEncoder().encode(parts[i]));
+    }
+    controller.close();
+  },
+}), { headers: { 'content-type': 'application/json' } });
+
+test('a slow but moving body outlives the first-response timeout; a stalled one fails over after idleMs', async () => {
+  const seen = [];
+  const parts = ['{"ok"', ':', 'tr', 'u', 'e', '}'];
+  const slow = async url => { seen.push(url); return trickle(parts, 15); };
+  assert.deepEqual(await fetchMaterial(path, r => r.json(), { fetch: slow, timeoutMs: 20, idleMs: 60, retryMs: [] }), { ok: true });
+  assert.deepEqual(seen, [path], '~90 ms of steady bytes against a 20 ms first-response timeout: no failover');
+  seen.length = 0;
+  const stalls = async url => { seen.push(url); return url === path ? trickle(parts, 5, { stallAfter: 2 }) : trickle(parts, 1); };
+  assert.deepEqual(await fetchMaterial(path, r => r.json(), { fetch: stalls, timeoutMs: 20, idleMs: 40, retryMs: [] }), { ok: true });
+  assert.deepEqual(seen, [path, forced]);
+});
+
+test('transient failures of both sources take later rounds; a 404, a plain error and fallback: false do not', async () => {
+  for (const [label, status, rounds, fallback, expected] of [
+    ['503 then fine', 503, 2, undefined, [path, forced, path, forced, path]],
+    ['404', 404, 2, undefined, [path, forced]],
+    ['no own failover', 503, 2, false, [path]],
+  ]) {
+    const seen = [];
+    let n = 0;
+    const fetch = async url => { seen.push(url); return ++n <= 4 ? new Response('x', { status }) : new Response('{"ok":true}'); };
+    const run = fetchMaterial(path, r => r.json(), { fetch, timeoutMs: 50, retryMs: Array(rounds).fill(5), ...(fallback === false ? { fallback } : {}) });
+    if (label === '503 then fine') assert.deepEqual(await run, { ok: true });
+    else await assert.rejects(run);
+    assert.deepEqual(seen, expected, label);
+  }
+  assert.equal(transientMaterialError(Object.assign(new Error('t'), { timeout: true })), true);
+  assert.equal(transientMaterialError(new TypeError('network')), true);
+  assert.equal(transientMaterialError(Object.assign(new Error('gone'), { status: 404 })), false);
+  assert.equal(transientMaterialError(Object.assign(new Error('x'), { name: 'AbortError' })), false);
+});
+
+test('a caller cancelling during the pause between rounds stops at once', async () => {
+  const controller = new AbortController();
+  const seen = [];
+  const pending = fetchMaterial(path, r => r.json(), { signal: controller.signal, timeoutMs: 50, retryMs: [10_000],
+    fetch: async url => { seen.push(url); if (url !== path) setTimeout(() => controller.abort(), 5); return new Response('x', { status: 502 }); } });
+  await assert.rejects(pending, { name: 'AbortError' });
+  assert.deepEqual(seen, [path, forced]);
+});
+
+test('Pixi loads through the adapter report progress: a slow skeleton keeps loading past the first-response timeout', async () => {
+  const seen = [];
+  const adapter = { fetch: async url => { seen.push(url); return trickle(['sk', 'el', 'et', 'on'], 15); } };
+  const parser = { load: async url => (await adapter.fetch(url)).text() };
+  installPixiMaterialFallback({ settings: { ADAPTER: adapter }, Assets: { loader: { parsers: [parser] } } }, { timeoutMs: 20, idleMs: 60, retryMs: [] });
+  assert.equal(await parser.load('/assets/test/slow.skel'), 'skeleton');
+  assert.deepEqual(seen, ['/assets/test/slow.skel']);
 });

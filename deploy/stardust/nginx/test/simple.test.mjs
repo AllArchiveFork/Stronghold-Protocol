@@ -84,6 +84,7 @@ for (const [profile, name, upstream, statusPath] of [
   assert.doesNotMatch(route, /proxy_method|content_by_lua|return 200|Access-Control-Allow-Origin|proxy_pass.*\$/);
   assert.match(text, /add_header Cache-Control (?:\$ark_proto_cache|"private, no-store") always;/);
   if (text.includes('$ark_proto_cache {')) assert.ok(text.includes('~^(200|304):/(js|css|sim|shared|data|i18n)/ "private, no-cache";'), 'private code revalidates');
+  if (text.includes('$ark_proto_cache {')) assert.ok(text.includes('~^(200|304):/build/assets/ "private, max-age=31536000, immutable";'), 'hashed bundle chunks are kept');
   assert.match(text, /add_header Allow \$ark_(?:proto|beta)_health_allow always;/);
   assert.match(text, /~\^\/healthz:\(\?!GET\$\|HEAD\$\) "GET, HEAD";/);
   assert.match(text, /location ~ "\^\/.*healthz\|control\|_material.*return 404;/);

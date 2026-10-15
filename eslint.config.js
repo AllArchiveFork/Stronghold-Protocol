@@ -59,6 +59,7 @@ export default [
     ignores: [
       'node_modules/**',
       'public/vendor/**',
+      'public/build/**', // the Vite bundle (npm run build)
       'public/assets/**',
       'public/fonts/**',
       'public/dev/**',

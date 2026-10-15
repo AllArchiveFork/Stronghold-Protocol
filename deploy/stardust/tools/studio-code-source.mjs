@@ -6,8 +6,10 @@
 //          to <repo>/releases/<id>/{server/sim,shared,data} plus server/data.js and SHA256SUMS. Never overwrites.
 //   verify --repo <studio checkout> --build <id> --base <https URL of releases/<id>/ at the pushed commit>
 //          GET every file of SHA256SUMS from the Studio: status, bytes, CORS and the JavaScript MIME of modules.
-//   nginx  --base <https URL of releases/<id>/>
-//          print the edge's `location = /code-source.json` for this release's private-code include.
+//   nginx  --base <https URL of releases/<id>/> [--material <profile>]
+//          print the edge's `location = /code-source.json` for this release's private-code include. --material names
+//          the active material profile: the page's service worker then keeps the art it fetches (public/sw.js).
+//          Print it again with the new profile when the profile changes.
 //
 // No network access except `verify`'s GETs; no Git operation (commit / push stay manual, after authorization).
 
@@ -115,7 +117,8 @@ async function verify(o) {
 
 function nginx(o) {
   need(o, 'base');
-  const body = JSON.stringify({ version: 1, sim: `${o.base}server/sim/`, data: `${o.base}data/` });
+  if (o.material !== undefined && !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(o.material)) throw new Error('--material: a profile id (letters, digits, . _ -)');
+  const body = JSON.stringify({ version: 1, sim: `${o.base}server/sim/`, data: `${o.base}data/`, ...(o.material ? { material: o.material } : {}) });
   if (body.includes("'")) throw new Error('unexpected quote in --base');
   process.stdout.write(`location = /code-source.json {
     auth_request /_gate/check;

@@ -53,11 +53,23 @@ RUN node tools/vendor.mjs \
     fi \
  && rm -rf .cache
 
+# ---- 2b. the Vite bundle of the UI layer (fork; vite.config.js — the dev dependencies stay in this stage) ----------
+FROM ${NODE_IMAGE} AS client
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci --ignore-scripts --no-audit --no-fund
+COPY vite.config.js ./
+COPY shared ./shared
+COPY --from=build /app/public ./public
+RUN npx vite build && rm -rf node_modules
+
 # ---- 3. runtime ---------------------------------------------------------------------------------------
 FROM ${NODE_IMAGE}
+# SP_CLIENT=build: / is the bundle's page (public/build/, server/http/static.js)
 ENV NODE_ENV=production \
     PORT=3000 \
     HOST=0.0.0.0 \
+    SP_CLIENT=build \
     SP_PLUGIN_RESOURCES=/app/plugin-resources
 WORKDIR /app
 COPY --from=deps /app/package.json ./package.json
@@ -67,6 +79,7 @@ COPY --from=build /app/deploy/stardust/auth ./deploy/stardust/auth
 COPY --from=build /app/server ./server
 COPY --from=build /app/data ./data
 COPY --from=build /app/public ./public
+COPY --from=client /app/public/build ./public/build
 # the Spine and atlas parsers the plugin packer and the plugin studio use (server/plugins/pack.js, server/studio/)
 COPY --from=build /app/tools/assets ./tools/assets
 COPY --from=build /app/tools/plugin.mjs ./tools/plugin.mjs

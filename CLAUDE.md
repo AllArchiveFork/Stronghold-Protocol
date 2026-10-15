@@ -14,7 +14,7 @@ Read [AGENTS.md](AGENTS.md) for the upstream document index and verification gui
 
 ## Implementation and verification
 
-- Node ESM with native HTTP and `ws`; Preact/htm and native CSS on the client, PixiJS/Spine for rendering. No application bundler; do not introduce an unrelated framework, Redis or a database.
+- Node ESM with native HTTP and `ws`; Preact/htm and native CSS on the client, PixiJS/Spine for rendering. Vite bundles only the UI layer (`/js`, `/css` → `public/build/`, `npm run build`, owner's decision of 2026-10-16); `/sim`, `/shared` and `/data` stay native, unbundled modules and files. Do not introduce an unrelated framework, Redis or a database.
 - Match existing style, comment density and module boundaries. Preserve the synchronous/virtual simulation path alongside Worker execution.
 - Use the lockfile. `npm ci` provisions dependencies and client vendor; game art/fonts are provisioned separately. `node deploy/stardust/tools/prepare-auth-assets.mjs` generates ignored login dependencies from installed/local inputs.
 - `npm test` is the baseline. Host Python tests and opt-in native/browser checks have separate coverage; report pass, fail, skip and cancellation accurately.

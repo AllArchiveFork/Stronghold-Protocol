@@ -1,9 +1,19 @@
 // Pixi's loader parsers fetch Spine skeletons, atlases and every page separately. Keep their canonical cache keys,
 // parse/unload/refcount behavior, and retry only the resource that failed (never re-download an entire model).
-import { isPublicMaterialUrl, loadMaterialImage, withMaterialFallback } from '../materialFallback.js';
+import { MATERIAL_IMAGE_TIMEOUT_MS, isPublicMaterialUrl, loadMaterialImage, readMaterialBody, withMaterialFallback } from '../materialFallback.js';
 
 const parsers = new WeakSet();
 const adapters = new WeakSet();
+/** URL → the running attempt's progress(): a parser's own adapter.fetch reports headers and body bytes to it. */
+const progressFor = new Map();
+
+/** The response, its body counted as progress (a slow skeleton keeps loading while it moves). */
+function counted(res, progress) {
+  if (!progress || !res?.body?.pipeThrough || typeof TransformStream !== 'function') return res;
+  progress();
+  const body = res.body.pipeThrough(new TransformStream({ transform(chunk, out) { progress(); out.enqueue(chunk); } }));
+  return new Response(body, { status: res.status, statusText: res.statusText, headers: res.headers });
+}
 
 export function installPixiMaterialFallback(PIXI, options) {
   const adapter = PIXI?.settings?.ADAPTER;
@@ -13,9 +23,9 @@ export function installPixiMaterialFallback(PIXI, options) {
       const res = await fetch.call(this, url, init);
       if (isPublicMaterialUrl(url, options?.origin) && (!res?.ok || /text\/html|application\/xhtml\+xml/i.test(res.headers?.get?.('content-type') || ''))) {
         try { void res?.body?.cancel?.().catch(() => {}); } catch { /* unusable response */ }
-        throw new Error('material response unavailable');
+        throw Object.assign(new Error('material response unavailable'), { status: res?.status });
       }
-      return res;
+      return typeof url === 'string' ? counted(res, progressFor.get(url)) : res;
     };
     adapters.add(adapter);
   }
@@ -23,13 +33,14 @@ export function installPixiMaterialFallback(PIXI, options) {
     if (!parser.load || parsers.has(parser)) continue;
     const load = parser.load;
     parser.load = function (url, asset, loader) {
-      return withMaterialFallback(url, async (source, signal) => {
+      const isTexture = isPublicMaterialUrl(url, options?.origin) && parser.name === 'loadTextures' && PIXI.BaseTexture && PIXI.Texture;
+      const bitmap = isTexture && typeof createImageBitmap === 'function' && parser.config.preferCreateImageBitmap;
+      return withMaterialFallback(url, async (source, signal, progress) => {
         let value;
-        if (isPublicMaterialUrl(url, options?.origin) && parser.name === 'loadTextures' && PIXI.BaseTexture && PIXI.Texture) {
+        if (isTexture) {
           // The stock worker's decode error can escape its promise, and its Image branch may resolve an already
           // complete but broken image. Keep decoding inside this attempt so both failures reach the one retry.
-          const bitmap = typeof createImageBitmap === 'function' && parser.config.preferCreateImageBitmap;
-          const image = bitmap ? await createImageBitmap(await (await adapter.fetch(source, { credentials: 'omit', signal })).blob())
+          const image = bitmap ? await createImageBitmap(await (await readMaterialBody(await adapter.fetch(source, { credentials: 'omit', signal }), progress)).blob())
             : await loadMaterialImage(source, { ...options, signal, fallback: false });
           const data = { ...asset?.data };
           data.resolution ??= PIXI.utils.getResolutionOfUrl(url);
@@ -54,7 +65,11 @@ export function installPixiMaterialFallback(PIXI, options) {
             base.once?.('destroyed', forget);
             texture.once?.('destroyed', forget);
           } catch (err) { if (bitmap) image.close(); throw err; }
-        } else value = await load.call(this, source, asset, loader);
+        } else {
+          progressFor.set(source, progress);
+          try { value = await load.call(this, source, asset, loader); }
+          finally { if (progressFor.get(source) === progress) progressFor.delete(source); }
+        }
         if (isPublicMaterialUrl(url, options?.origin)) {
           const text = typeof value === 'string' ? value : value instanceof ArrayBuffer
             ? new TextDecoder().decode(value.slice(0, 96)) : null;
@@ -63,7 +78,8 @@ export function installPixiMaterialFallback(PIXI, options) {
           }
         }
         return value;
-      }, { ...options, discard: value => { if (value?.baseTexture) parser.unload?.(value, asset, loader); } });
+      }, { ...(isTexture && !bitmap ? { timeoutMs: MATERIAL_IMAGE_TIMEOUT_MS } : {}), ...options,
+        discard: value => { if (value?.baseTexture) parser.unload?.(value, asset, loader); } });
     };
     parsers.add(parser);
   }
