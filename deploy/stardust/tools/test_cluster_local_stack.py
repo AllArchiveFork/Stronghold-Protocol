@@ -92,6 +92,24 @@ class LocalStackTests(unittest.TestCase):
         with self.assertRaises(local.Refused):
             local.compose(self.core, self.root / 'tiny', profile=self.profile, valkey=True, valkey_maxmemory_mb=1)
 
+    def test_server_switches_reach_the_coordinator_and_every_game_only(self):
+        prod = {'SP_PLUGINS': 'off', 'SP_CSP': 'off', 'SP_STUDIO': 'off'}
+        summary = local.compose(self.core, self.root / 'switches', profile=self.profile, ingress_instances=2, server_env=prod)
+        compose = json.loads((self.root / 'switches/compose.json').read_text())
+        for name, service in compose['services'].items():
+            env = service['environment']
+            if name == 'coordinator' or name.startswith('game-'):
+                self.assertEqual({k: env[k] for k in prod}, prod, name)
+            else:
+                self.assertFalse(set(prod) & set(env), name)
+        self.assertEqual(summary['serverEnv'], prod)
+        plain, plain_compose = self.stack('plain', instances=2)
+        self.assertNotIn('serverEnv', plain)
+        self.assertNotIn('SP_PLUGINS', plain_compose['services']['coordinator']['environment'])
+        for i, bad in enumerate(({'SP_PLUGINS': 'on'}, {'SP_PLUGIN_SCRIPTS': 'trusted'}, {'SP_CSP': 'report'}, {'NODE_OPTIONS': 'x'})):
+            with self.assertRaises(local.Refused):
+                local.compose(self.core, self.root / ('bad-%d' % i), profile=self.profile, ingress_instances=2, server_env=bad)
+
     def test_online_limit_directory_is_mounted_read_only_into_the_coordinator_only(self):
         limits = self.root / 'limits'
         limits.mkdir(mode=0o755)

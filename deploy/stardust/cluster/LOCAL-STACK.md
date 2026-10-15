@@ -66,6 +66,19 @@ python3 -I /opt/ark-cluster-formal/tools/cluster-local-stack.py --profile formal
 - coordinator 与每个 game 增加 `SP_REDIS_URL=redis://<core_ip(5)>:6379/0`、`SP_REDIS_PASSWORD_FILE`、`SP_REDIS_PREFIX=<profile>:` 和 `depends_on: [valkey]`（停止时先停角色、让它们写完最后一次存档，启动时先起存储）；ingress 不连存储。`stack-summary.json` 增加 `checkpointStore`（服务、镜像、地址、内存上限、前缀，无秘密），容器数加 1。
 - 不加该选项时输出逐字节不变。主线程优先级工具（`main-thread-priority.py --profile local`）按固定目标清单核对，开启前要确认它不把多出的 `valkey` 容器当作未知目标拒绝（它不是 Node 角色，不调优先级）。
 
+### 服务器开关（`--server-env KEY=VALUE`，可重复）
+
+给 coordinator 与全部 game 加环境变量开关（ingress 不加），只接受 `SERVER_ENV` 里的键和取值：`SP_PLUGINS=off|host|fixed`、`SP_PLUGIN_SCRIPTS=off|sandbox`、`SP_CSP=off`、`SP_STUDIO=off|local|lan`、`SP_BOT_REHEARSAL=host`；core bundle 已带同名变量时拒绝。`stack-summary.json` 记 `serverEnv`。不加时输出不变。
+
+生产（rel17 起，服主 2026-10-16 决定：不开插件房/脚本插件/创作工坊，不加站点 CSP）：
+
+```sh
+python3 -I /opt/ark-cluster-formal/tools/cluster-local-stack.py --profile formal \
+  --core-bundle "$NEW_CORE_BUNDLE" --out "$NEW_LOCAL_STACK" --ingress-instances 16 --online-limit-dir /opt/ark-cluster-formal/limits \
+  --ingress-link --valkey --valkey-maxmemory-mb 2048 \
+  --server-env SP_PLUGINS=off --server-env SP_CSP=off --server-env SP_STUDIO=off
+```
+
 ## Nginx 与私有码（生成器，不再手改）
 
 ```sh

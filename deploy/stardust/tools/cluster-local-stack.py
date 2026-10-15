@@ -67,6 +67,12 @@ VALKEY_SUFFIX = 5
 # nested mount point inside a read-only bind (rel17 2026-10-16: the coordinator did not start).
 VALKEY_PASSWORD_MOUNT = '/run/store/valkey.pass'
 VALKEY_MAXMEMORY_MB = 2048
+# The server switches an operator may set on the coordinator and every game (--server-env KEY=VALUE), each with the
+# values the server understands (server/plugins/policy.js, server/match/host/childHost.js, server/index.js,
+# server/studio/gate.js, server/match/Match.js). Production since rel17 (owner 2026-10-16): SP_PLUGINS=off SP_CSP=off
+# SP_STUDIO=off; SP_PLUGIN_SCRIPTS and SP_BOT_REHEARSAL stay unset.
+SERVER_ENV = {'SP_PLUGINS': ('off', 'host', 'fixed'), 'SP_PLUGIN_SCRIPTS': ('off', 'sandbox'), 'SP_CSP': ('off',),
+              'SP_STUDIO': ('off', 'local', 'lan'), 'SP_BOT_REHEARSAL': ('host',)}
 
 
 def valkey_config(password, maxmemory_mb):
@@ -78,7 +84,7 @@ def valkey_config(password, maxmemory_mb):
 
 
 def compose(core_bundle, out, *, profile='beta', ingress_instances=1, ingress_link=False, online_limit_dir=None,
-            valkey=False, valkey_maxmemory_mb=VALKEY_MAXMEMORY_MB):
+            valkey=False, valkey_maxmemory_mb=VALKEY_MAXMEMORY_MB, server_env=None):
     p = profiles.get_profile(profile)
     if online_limit_dir is not None:
         online_limit_dir = protected(online_limit_dir, profile)
@@ -90,6 +96,9 @@ def compose(core_bundle, out, *, profile='beta', ingress_instances=1, ingress_li
     require(ingress_link in (True, False), 'invalid ingress link option')
     require(valkey in (True, False) and type(valkey_maxmemory_mb) is int and 256 <= valkey_maxmemory_mb <= 65536,
             'invalid checkpoint store option')
+    server_env = dict(server_env or {})
+    require(all(type(k) is str and type(v) is str and v in SERVER_ENV.get(k, ()) for k, v in server_env.items()),
+            'invalid server switch')
     core_bundle, out = protected(core_bundle, profile), protected(out, profile, missing=True)
     require(not out.exists(), 'output already exists; never overwrite a release')
     parent = out.parent.stat()
@@ -185,6 +194,10 @@ def compose(core_bundle, out, *, profile='beta', ingress_instances=1, ingress_li
             # stopped after the roles (their last checkpoints), started before them
             value['depends_on'] = ['valkey']
         store_volumes = {'valkey-data': {}}
+    for name in expected:
+        value = services[name]
+        require(not set(server_env) & set(value['environment']), 'server switch already set by the core bundle')
+        value['environment'] = {**value['environment'], **server_env}
     config = {'role': 'ingress', 'host': '0.0.0.0', 'port': 3000, 'coordinatorUrl': f'http://{p.core_ip(2)}:3000',
               'nodes': [{'nodeId': 'game-%02d' % i, 'url': f'http://{p.game_ip(i)}:3000'} for i in range(1, nodes + 1)],
               'origins': [p.origin], 'wsCompression': 'on', 'trustProxy': 'auto'}
@@ -213,7 +226,8 @@ def compose(core_bundle, out, *, profile='beta', ingress_instances=1, ingress_li
                'gameNodes': nodes, 'ingress': ingress, 'coordinatorPort': p.coordinator_port, 'hostManagerLeases': False,
                **({'onlineLimitDir': str(online_limit_dir)} if online_limit_dir is not None else {}),
                **({'checkpointStore': {'service': 'valkey', 'image': VALKEY_IMAGE, 'container_ip': p.core_ip(VALKEY_SUFFIX),
-                                       'maxmemoryMb': valkey_maxmemory_mb, 'prefix': p.name + ':'}} if valkey else {})}
+                                       'maxmemoryMb': valkey_maxmemory_mb, 'prefix': p.name + ':'}} if valkey else {}),
+               **({'serverEnv': dict(sorted(server_env.items()))} if server_env else {})}
     deploy.write_new(out / 'stack-summary.json', deploy.canonical(summary), mode=0o600, gid=0)
     return summary
 
@@ -232,12 +246,17 @@ def main():
     # opt-in match checkpoints: a Valkey store on the bridge for the coordinator and the games (docs/DEPLOY.md「断点续玩」)
     parser.add_argument('--valkey', action='store_true')
     parser.add_argument('--valkey-maxmemory-mb', type=int, default=VALKEY_MAXMEMORY_MB)
+    # server switches for the coordinator and every game, e.g. --server-env SP_PLUGINS=off (SERVER_ENV)
+    parser.add_argument('--server-env', action='append', default=[], metavar='KEY=VALUE')
     args = parser.parse_args()
     try:
+        require(all('=' in item for item in args.server_env), 'invalid server switch')
+        server_env = dict(item.split('=', 1) for item in args.server_env)
+        require(len(server_env) == len(args.server_env), 'server switch given twice')
         require(os.geteuid() == 0, 'host root required for protected stack generation')
         summary = compose(args.core_bundle, args.out, profile=args.profile, ingress_instances=args.ingress_instances,
                           ingress_link=args.ingress_link, online_limit_dir=args.online_limit_dir,
-                          valkey=args.valkey, valkey_maxmemory_mb=args.valkey_maxmemory_mb)
+                          valkey=args.valkey, valkey_maxmemory_mb=args.valkey_maxmemory_mb, server_env=server_env)
         print(json.dumps({'event': 'cluster-local-stack-prepared', 'project': summary['project'],
                           'ingress': len(summary['ingress']), 'activated': False}))
         return 0
