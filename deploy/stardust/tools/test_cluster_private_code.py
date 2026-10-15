@@ -381,5 +381,97 @@ class RuntimeStaticTests(unittest.TestCase):
         with self.assertRaises(code.Refused): code.verify(b.output, b.manifest, b.digest, b.build)
 
 
+class ClientBuildTests(unittest.TestCase):
+    """Opt-in client build (2026-10-16): the Vite chunks under public/build/assets/ from the export's resource manifest."""
+
+    def setUp(self):
+        self.runtime = RuntimeStaticTests()
+        self.runtime.setUp()
+        self.addCleanup(self.runtime.doCleanups)
+        b = self.base = self.runtime.base
+        (b.source / 'data/local-fx.json').write_bytes(b'{"generated":"fx"}')  # ignored by Git like local-assets.json
+        self.chunks = []
+        for name, body in (('index-fZZ6UYkX.js', b'import"/shared/constants.js";\n'), ('app-DPi2_UuZ.js', b'export const app = 1;\n'),
+                           ('index-BBPOlTA9.css', b'body{margin:0}\n')):
+            file = b.source / 'public/build/assets' / name
+            file.parent.mkdir(parents=True, exist_ok=True)
+            file.write_bytes(body)
+            file.chmod(0o644)
+            self.chunks.append({'path': 'public/build/assets/' + name, 'bytes': len(body), 'sha256': code.sha(body), 'mode': '0o644'})
+        (b.source / 'public/build/index.html').write_bytes(b'<!doctype html><head></head>')  # the coordinator's page, never aliased
+        self.resources = b.root / 'resource-manifest.json'
+        self.write_resources()
+
+    def write_resources(self, extra=(), **override):
+        b = self.base
+        rows = sorted([*self.chunks, {'path': 'public/build/index.html', 'bytes': 28, 'sha256': 'c' * 64, 'mode': '0o644'},
+                       {'path': 'public/assets/test.png', 'bytes': 25, 'sha256': 'd' * 64, 'mode': '0o644'}, *extra],
+                      key=lambda row: row['path'])
+        value = {'version': 1, 'sourceKind': 'tree', 'build': b.build, 'sourceManifestSha256': b.digest, 'files': rows, **override}
+        raw = code.canonical(value)
+        self.resources.write_bytes(raw)
+        self.resource_digest = code.sha(raw)
+
+    def prepare(self, out=None, **kw):
+        b = self.base
+        return code.prepare(b.source, b.manifest, b.digest, b.build, out or b.output, runtime=True, topology='local',
+                            resource_manifest=self.resources, resource_digest=self.resource_digest, **kw)
+
+    def test_chunks_are_gated_immutable_aliases_and_verify_needs_the_same_resource_manifest(self):
+        b = self.base
+        value = self.prepare()
+        self.assertEqual(value['clientBuildResourceManifestSha256'], self.resource_digest)
+        paths = sorted(row['path'] for row in value['files'])
+        self.assertIn('build/assets/index-fZZ6UYkX.js', paths)
+        self.assertIn('build/assets/index-BBPOlTA9.css', paths)
+        self.assertNotIn('build/index.html', paths)
+        self.assertFalse(any('local-fx' in path or 'local-assets' in path for path in paths))
+        for row in value['files']:
+            self.assertEqual((b.output / ('localcode/cluster-' + b.build) / row['path']).read_bytes(), (b.source / row['sourcePath']).read_bytes())
+        include = (b.output / value['nginx'][0]['path']).read_text()
+        block = include[include.index('location = /build/assets/index-BBPOlTA9.css {'):]
+        block = block[:block.index('\n}\n') + 2]
+        for line in ('auth_request /_gate/check;', 'error_page 404 = @ark_beta_cluster_code;', 'default_type text/css;',
+                     'add_header Cache-Control "private, max-age=31536000, immutable" always;', 'gzip on;'):
+            self.assertIn(line, block)
+        self.assertEqual(include.count('add_header Cache-Control "private, max-age=31536000, immutable" always;'), 3)
+        self.assertIn('location ^~ /build/ {', include)
+        self.assertEqual(include.count('proxy_pass http://172.30.242.2:3000;'), 7)
+        self.assertNotIn('public, max-age', include)
+        self.assertNotIn('Access-Control-Allow-Origin "', include)
+        args = (b.output, b.manifest, b.digest, b.build)
+        self.assertEqual(code.verify(*args, resource_manifest=self.resources, resource_digest=self.resource_digest), value)
+        with self.assertRaises(code.Refused): code.verify(*args)
+        with self.assertRaises(code.Refused): code.verify(*args, resource_manifest=self.resources, resource_digest='e' * 64)
+        # without the opt-in nothing changes: no /build/ aliases and the default bytes
+        plain = code.prepare(b.source, b.manifest, b.digest, b.build, b.root / 'plain', runtime=True, topology='local')
+        self.assertNotIn('clientBuildResourceManifestSha256', plain)
+        self.assertNotIn('/build/', (b.root / 'plain' / plain['nginx'][0]['path']).read_text())
+        with self.assertRaises(code.Refused):
+            code.verify(b.root / 'plain', b.manifest, b.digest, b.build, resource_manifest=self.resources, resource_digest=self.resource_digest)
+
+    def test_chunk_drift_unknown_entries_and_foreign_manifests_are_refused(self):
+        for case in ('extra-chunk', 'bytes', 'unhashed', 'subdir', 'other-build', 'digest', 'missing'):
+            with self.subTest(case=case):
+                fixture = ClientBuildTests()
+                fixture.setUp()
+                try:
+                    b = fixture.base
+                    if case == 'extra-chunk': (b.source / 'public/build/assets/extra-AAAAAAAA.js').write_bytes(b'x')
+                    if case == 'bytes': (b.source / 'public/build/assets/index-BBPOlTA9.css').write_bytes(b'body{margin:1}\n')
+                    if case == 'unhashed':
+                        (b.source / 'public/build/assets/plain.js').write_bytes(b'x')
+                        fixture.write_resources(extra=[{'path': 'public/build/assets/plain.js', 'bytes': 1, 'sha256': code.sha(b'x'), 'mode': '0o644'}])
+                    if case == 'subdir': (b.source / 'public/build/assets/nested').mkdir()
+                    if case == 'other-build': fixture.write_resources(build='f' * 40)
+                    if case == 'digest': fixture.resource_digest = 'e' * 64
+                    if case == 'missing': (b.source / 'public/build/assets/app-DPi2_UuZ.js').unlink()
+                    with self.assertRaises((code.Refused, OSError)):
+                        fixture.prepare()
+                    self.assertFalse(b.output.exists())
+                finally:
+                    fixture.doCleanups()
+
+
 if __name__ == '__main__':
     unittest.main()
