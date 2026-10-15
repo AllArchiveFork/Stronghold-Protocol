@@ -476,3 +476,51 @@ Node 22 的 `--permission` **不限制网络**（TCP/UDP/DNS/监听均可能可�
 扩大可读范围：不要在安装根中放此类链接，包括外链 node_modules、npm link 和配置/存储链接。建议使用容器或
 网络命名空间限制出站与内网访问，并设置 OS 内存/CPU 限额。父进程已对日志、启动错误、发送帧、RPC 回复等 IPC
 做形态和长度复核（DESIGN §32.11），但 Node 在复核前已解码 IPC，不能据此声称免疫内存炸弹或消息洪泛。
+
+## 11. 断点续玩：重启后接着打（可选，Valkey）
+
+默认所有房间、会话和对局只在内存里，重启服务器会让进行中的对局全部结束。设置 `SP_REDIS_URL`
+指向一个 [Valkey](https://valkey.io/)（与 Redis 协议兼容，Redis 也可以）后，服务器会把对局「存档」，
+重启后玩家用同一个浏览器重新连上就回到原来的房间和对局。不设这个变量时什么都不连接，行为与以前完全相同。
+（思路来自 [xinhai-ai/Stronghold-Protocol](https://github.com/xinhai-ai/Stronghold-Protocol) 的 Redis 断点续玩，本服按自己的单机/集群结构重写。）
+
+```bash
+docker run -d --name stronghold-valkey --restart unless-stopped -v stronghold-valkey:/data \
+  valkey/valkey:9.1.2-alpine3.24 valkey-server --appendonly yes --maxmemory 2gb --maxmemory-policy volatile-ttl
+SP_REDIS_URL=redis://127.0.0.1:6379/0 npm start
+```
+
+| 变量 | 含义 |
+|---|---|
+| `SP_REDIS_URL` | `redis://[用户名:密码@]主机[:端口][/库号]`（TLS 用 `rediss://`，也接受 `valkey://` / `valkeys://`）。不设 = 关闭 |
+| `SP_REDIS_PASSWORD_FILE` | 从文件读密码（文件内容即密码），密码不必出现在环境变量里；优先于 URL 里的密码 |
+| `SP_REDIS_PREFIX` | 键前缀，默认 `sp:`；几套服务器共用一个 Valkey 时各用各的前缀 |
+| `SP_PERSIST_SAVE_MS` | 定时存档间隔，默认 10000（毫秒） |
+
+**恢复到哪里**：对局只在「安全阶段」存档——确认信息、选策略、机变、回合开始、休整期（AI 队友的准备做完之后），
+以及每个休整期结束、战斗开始之前那一刻。战斗中重启的对局回到这一回合的休整期结束时：干员、装备、资金、LP、
+卡池和随机数都和当时一样，这一回合的战斗重新打一次。恢复后的休整期至少有 20 秒，真人玩家先回到自己的棋盘、
+不处于「准备」状态；选策略、机变的倒计时重新开始；投票重抽开局取消；独立模拟的暂停不保留。
+
+**会话**：在房间里（等待中、对局中或观战）的玩家身份、令牌、名字、编队设置都会保存，回来时是同一个玩家、
+同一个座位。重启时在线的玩家，重连期限（同盟 10 分钟，独立模拟 24 小时）从重启时重新计算；期限内没回来的座位
+在恢复的对局里按「离开」处理（交给 AI 规则）。不在任何房间里的访客、匹配队列、尚未开始的匹配邀请、上一局的
+结算回放不保存（排队的玩家重新排队即可）。带玩法插件的房间不保存。
+
+**集群**：协调器保存会话、房间和每局所在的分配；每个 game 节点把自己跑的对局按分配 ID 存档。重启后：
+
+- 只重启协调器：对局还在原节点上跑，新协调器直接接管（不重建、不回退）。
+- 整套一起重启（发版）：协调器把每局交给一个就绪的节点，由它从存档重建（新的分配 ID），节点还没起来时最多等 2 分钟。
+- 协调器正常运行、某个 game 节点重启或失联：它上面的对局由其他节点从存档重建，不再直接关闭房间。
+
+重建不了的对局（存档缺失、版本不符、等不到节点）会关闭房间，玩家回来时看到「对局服务器已重启，本局模拟已中断」。
+正常关闭（SIGTERM）时先写最后一次存档，房间不会向玩家发「同盟已关闭」。Valkey 宕机或连不上不会影响对局，只是不存档：
+`/healthz` 的 `persistence` 里有写入/失败/恢复计数（集群另有 `persistence.remote`：接管、重建、失败、等待中），
+game 节点的 `status` RPC 带 `checkpoints` 计数。
+
+**版本**：存档有三个格式版本——对局 `SNAPSHOT_VERSION`（`server/match/snapshot.js`）、大厅文档
+`LOBBY_DOC_VERSION`（`server/persist/lobbyState.js`）、节点信封 `NODE_CHECKPOINT_VERSION`（`server/persist/node.js`）。
+新版本读到其他版本的存档时丢弃该局（记日志、计数），不影响启动。**修改了要保存的字段、它们的含义或恢复规则时必须升版本**；
+`Match` / `PlayerState` 新增实例字段时，`test/match/snapshot.test.js` 会要求把它登记为保存、派生或临时字段。
+所有键都有 25 小时有效期（比独立模拟的 24 小时重连期限长），每次写入刷新；对局结束后它的存档会被删除。
+存档压缩后一局约 10–30 KB（4 人到 20 人房后期），建议 `maxmemory` 至少 1 GB，策略 `volatile-ttl`。

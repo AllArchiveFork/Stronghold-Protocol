@@ -10,6 +10,11 @@ main-thread-priority.py --profile local (MAIN-THREAD-PRIORITY.md).
 Opt-in --ingress-link: one new 32-byte key per local ingress (only here, never copied), each ingress mounting only its
 own key and naming the coordinator's private bridge listener; the coordinator gets a DERIVED runtime (the verified core
 runtime plus `ingresses`) and the link-key directory. Without it the output is byte-identical.
+
+Opt-in --valkey: the match checkpoints' store (docs/DEPLOY.md「断点续玩」, server/persist/): one Valkey container on the
+core bridge (VALKEY_IMAGE pinned by digest, nothing published, AOF on the project's named volume, a new random password
+in a 0440 config only it mounts), and the coordinator and every game get SP_REDIS_URL / SP_REDIS_PASSWORD_FILE /
+SP_REDIS_PREFIX. Without it the output is byte-identical.
 """
 import argparse
 import hashlib
@@ -54,9 +59,24 @@ ONLINE_LIMIT_MOUNT = '/run/limits'
 ONLINE_LIMIT_FILE = ONLINE_LIMIT_MOUNT + '/online-limit.json'
 # The owner (服主) file of the same directory (server/ownerFile.js; {"names": [...], "keySha256": "<64 hex>"}); absent = off.
 OWNER_FILE = ONLINE_LIMIT_MOUNT + '/owner.json'
+# The checkpoint store (--valkey): the newest stable Valkey (9.1.2, 2026-09-01) pinned by digest; it runs as the image's
+# own user (uid 999, gid 1000 — the group every project secret file already has) at core_ip(5), which no role uses.
+VALKEY_IMAGE = 'valkey/valkey:9.1.2-alpine3.24@sha256:48332870af354a799964c0012ae1194a0bf2bf894eb508f945810596dc2d8d11'
+VALKEY_SUFFIX = 5
+VALKEY_PASSWORD_MOUNT = '/run/secrets/valkey.pass'
+VALKEY_MAXMEMORY_MB = 2048
 
 
-def compose(core_bundle, out, *, profile='beta', ingress_instances=1, ingress_link=False, online_limit_dir=None):
+def valkey_config(password, maxmemory_mb):
+    # The bridge is the only network it is on (no published port); AOF every second on the named volume keeps the
+    # checkpoints through a recreate; when full, the keys closest to expiry go first (every key has a TTL).
+    return ('bind 0.0.0.0\nport 6379\nprotected-mode yes\nrequirepass ' + password + '\ndir /data\n'
+            'appendonly yes\nappendfsync everysec\nsave ""\n'
+            'maxmemory ' + str(maxmemory_mb) + 'mb\nmaxmemory-policy volatile-ttl\n').encode()
+
+
+def compose(core_bundle, out, *, profile='beta', ingress_instances=1, ingress_link=False, online_limit_dir=None,
+            valkey=False, valkey_maxmemory_mb=VALKEY_MAXMEMORY_MB):
     p = profiles.get_profile(profile)
     if online_limit_dir is not None:
         online_limit_dir = protected(online_limit_dir, profile)
@@ -66,6 +86,8 @@ def compose(core_bundle, out, *, profile='beta', ingress_instances=1, ingress_li
     # The exact per-inventory bound is checked once the verified core policy fixes the node count.
     require(type(ingress_instances) is int and ingress_instances >= 1, 'invalid fixed ingress instance count')
     require(ingress_link in (True, False), 'invalid ingress link option')
+    require(valkey in (True, False) and type(valkey_maxmemory_mb) is int and 256 <= valkey_maxmemory_mb <= 65536,
+            'invalid checkpoint store option')
     core_bundle, out = protected(core_bundle, profile), protected(out, profile, missing=True)
     require(not out.exists(), 'output already exists; never overwrite a release')
     parent = out.parent.stat()
@@ -134,6 +156,33 @@ def compose(core_bundle, out, *, profile='beta', ingress_instances=1, ingress_li
         volumes = services['coordinator']['volumes']
         services['coordinator']['volumes'] = [str(out / 'runtime' / 'coordinator') + ':/run/config:ro', *volumes[1:],
                                               str(out / 'link-keys') + ':/run/link-secrets:ro']
+    store_volumes = None
+    if valkey:
+        # A new password exists only in this stack: the store's config (only the store mounts it) and the clients' file.
+        deploy.mkdir_new(out / 'valkey')
+        password = secrets.token_hex(32)
+        deploy.write_new(out / 'valkey' / 'valkey.conf', valkey_config(password, valkey_maxmemory_mb))
+        deploy.write_new(out / 'valkey.pass', password.encode())
+        store_ip = p.core_ip(VALKEY_SUFFIX)
+        require(store_ip not in expected.values(), 'checkpoint store address taken')
+        services['valkey'] = {
+            'image': VALKEY_IMAGE, 'pull_policy': 'never', 'container_name': project + '-valkey', 'restart': 'unless-stopped',
+            'user': '999:1000', 'command': ['valkey-server', '/run/valkey/valkey.conf'],
+            'labels': {'cn.stardust.cluster.role': 'store', 'cn.stardust.cluster.namespace': p.name},
+            'ports': [], 'volumes': [str(out / 'valkey') + ':/run/valkey:ro', 'valkey-data:/data'],
+            'read_only': True, 'tmpfs': ['/tmp:rw,noexec,nosuid,size=16m'],
+            'cap_drop': ['ALL'], 'security_opt': ['no-new-privileges:true'], 'pids_limit': 64,
+            'healthcheck': {'disable': True}, 'networks': {'default': {'ipv4_address': store_ip}},
+            'logging': {'driver': 'json-file', 'options': {'max-size': '10m', 'max-file': '3'}},
+        }
+        for name in expected:
+            value = services[name]
+            value['environment'] = {**value['environment'], 'SP_REDIS_URL': f'redis://{store_ip}:6379/0',
+                                    'SP_REDIS_PASSWORD_FILE': VALKEY_PASSWORD_MOUNT, 'SP_REDIS_PREFIX': p.name + ':'}
+            value['volumes'] = [*value['volumes'], str(out / 'valkey.pass') + ':' + VALKEY_PASSWORD_MOUNT + ':ro']
+            # stopped after the roles (their last checkpoints), started before them
+            value['depends_on'] = ['valkey']
+        store_volumes = {'valkey-data': {}}
     config = {'role': 'ingress', 'host': '0.0.0.0', 'port': 3000, 'coordinatorUrl': f'http://{p.core_ip(2)}:3000',
               'nodes': [{'nodeId': 'game-%02d' % i, 'url': f'http://{p.game_ip(i)}:3000'} for i in range(1, nodes + 1)],
               'origins': [p.origin], 'wsCompression': 'on', 'trustProxy': 'auto'}
@@ -151,7 +200,8 @@ def compose(core_bundle, out, *, profile='beta', ingress_instances=1, ingress_li
         value['restart'] = 'unless-stopped'
         services[name] = value
         ingress.append({'service': name, 'container_ip': ip, 'host_port': port})
-    compose_bytes = deploy.canonical({'name': project, 'services': services, 'networks': core['networks']})
+    compose_bytes = deploy.canonical({'name': project, 'services': services, 'networks': core['networks'],
+                                      **({'volumes': store_volumes} if store_volumes else {})})
     deploy.write_new(out / 'compose.json', compose_bytes, mode=0o600, gid=0)
     # This summary contains no secret bytes and is safe to inspect. It is not an activation receipt.
     summary = {'version': 1, 'profile': p.name, 'prepared': True, 'activated': False, 'project': project,
@@ -159,7 +209,9 @@ def compose(core_bundle, out, *, profile='beta', ingress_instances=1, ingress_li
                'composeSha256': hashlib.sha256(compose_bytes).hexdigest(), 'imageId': policy['image_id'],
                'build': policy['build'], 'sourceKind': policy['source_kind'], 'manifestSha256': policy['manifest_sha256'],
                'gameNodes': nodes, 'ingress': ingress, 'coordinatorPort': p.coordinator_port, 'hostManagerLeases': False,
-               **({'onlineLimitDir': str(online_limit_dir)} if online_limit_dir is not None else {})}
+               **({'onlineLimitDir': str(online_limit_dir)} if online_limit_dir is not None else {}),
+               **({'checkpointStore': {'service': 'valkey', 'image': VALKEY_IMAGE, 'container_ip': p.core_ip(VALKEY_SUFFIX),
+                                       'maxmemoryMb': valkey_maxmemory_mb, 'prefix': p.name + ':'}} if valkey else {})}
     deploy.write_new(out / 'stack-summary.json', deploy.canonical(summary), mode=0o600, gid=0)
     return summary
 
@@ -175,11 +227,15 @@ def main():
     parser.add_argument('--ingress-link', action='store_true')
     # optional: mount this host directory for the coordinator's online cap (online-limit.json inside, may be absent)
     parser.add_argument('--online-limit-dir')
+    # opt-in match checkpoints: a Valkey store on the bridge for the coordinator and the games (docs/DEPLOY.md「断点续玩」)
+    parser.add_argument('--valkey', action='store_true')
+    parser.add_argument('--valkey-maxmemory-mb', type=int, default=VALKEY_MAXMEMORY_MB)
     args = parser.parse_args()
     try:
         require(os.geteuid() == 0, 'host root required for protected stack generation')
         summary = compose(args.core_bundle, args.out, profile=args.profile, ingress_instances=args.ingress_instances,
-                          ingress_link=args.ingress_link, online_limit_dir=args.online_limit_dir)
+                          ingress_link=args.ingress_link, online_limit_dir=args.online_limit_dir,
+                          valkey=args.valkey, valkey_maxmemory_mb=args.valkey_maxmemory_mb)
         print(json.dumps({'event': 'cluster-local-stack-prepared', 'project': summary['project'],
                           'ingress': len(summary['ingress']), 'activated': False}))
         return 0

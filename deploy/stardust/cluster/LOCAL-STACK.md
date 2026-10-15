@@ -51,6 +51,21 @@ python3 -I /opt/ark-cluster-formal/tools/cluster-local-stack.py --profile formal
 - 不加该选项时输出与之前逐字节相同。切回直连 = 用不带 `--ingress-link` 的组合栈整体替换（同样结束内存局）；运行中不能逐个 ingress 切换。WG/受管拓扑尚不支持链路（需放行 ingress→coordinator:3001 的租约规则与 host-manager mount 合同）。
 - 验证：`docker compose ... config -q`；启动后 coordinator `/healthz` 的 `sockets` 应等于在线会话数，宿主 `ss -tn` 上 ingress→coordinator:3000 的连接数应接近 0、→:3001 每 ingress 1 条。
 
+### 可选：对局存档 Valkey（`--valkey`，默认关闭）
+
+开启后重启（发版、只重启 coordinator、某个 game 重启）时进行中的对局可以接着打，行为见 [docs/DEPLOY.md §11](../../../docs/DEPLOY.md#11-断点续玩重启后接着打可选valkey)。
+
+```sh
+python3 -I /opt/ark-cluster-formal/tools/cluster-local-stack.py --profile formal \
+  --core-bundle "$NEW_CORE_BUNDLE" --out "$NEW_LOCAL_STACK" --ingress-instances 8 --valkey [--valkey-maxmemory-mb 2048]
+```
+
+- 新增一个 `valkey` 服务：镜像 `valkey/valkey:9.1.2-alpine3.24` 按摘要固定（`VALKEY_IMAGE`，`pull_policy: never`，部署前须先在宿主机 `docker pull`/`load` 并核对摘要），地址 `core_ip(5)`（Formal `172.30.245.5`），**不发布任何端口**，只在 bridge 上；以镜像自带用户 `999:1000` 运行，只读根文件系统、`cap_drop: ALL`、`no-new-privileges`。
+- 数据在 Compose 命名卷 `valkey-data`（AOF 每秒落盘，`maxmemory` 默认 2048 MB，`volatile-ttl`）。同一 project 名的新组合栈沿用这个卷；只要 `valkey` 服务定义不变，`docker compose up -d` 换栈时它不会被重建，存档在内存里一直可用。
+- 只在新组合栈目录生成一个新的随机密码：`valkey/valkey.conf`（含 `requirepass`，只挂进 `valkey`）和 `valkey.pass`（root:1000 0440，只读挂进 coordinator 与全部 game 的 `/run/secrets/valkey.pass`）；密码不进 compose.json、环境变量、argv 或 summary。
+- coordinator 与每个 game 增加 `SP_REDIS_URL=redis://<core_ip(5)>:6379/0`、`SP_REDIS_PASSWORD_FILE`、`SP_REDIS_PREFIX=<profile>:` 和 `depends_on: [valkey]`（停止时先停角色、让它们写完最后一次存档，启动时先起存储）；ingress 不连存储。`stack-summary.json` 增加 `checkpointStore`（服务、镜像、地址、内存上限、前缀，无秘密），容器数加 1。
+- 不加该选项时输出逐字节不变。主线程优先级工具（`main-thread-priority.py --profile local`）按固定目标清单核对，开启前要确认它不把多出的 `valkey` 容器当作未知目标拒绝（它不是 Node 角色，不调优先级）。
+
 ## Nginx 与私有码（生成器，不再手改）
 
 ```sh

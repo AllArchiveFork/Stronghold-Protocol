@@ -1,0 +1,134 @@
+// server/persist/node.js — a game node's match checkpoints (docs/DEPLOY.md「断点续玩」, cluster): every committed actor
+// of the node's GameHost is checkpointed at its match's safe points and every `saveMs`, under its assignment id; the
+// checkpoint is deleted once the actor ends or is released for good. After a restart the coordinator asks a node to
+// `restore` an assignment (server/cluster/game-node.js): the node reads the checkpoint here and the GameHost rebuilds
+// the actor from it (GameHost.restore). A node never restores anything on its own — the coordinator decides which
+// rooms came back.
+//
+// The envelope: { v, kind: 'cluster', assignmentId, roomCode, nodeId, spec (the assignment DTO the actor was prepared
+// with), left (players that departed), match (server/match/snapshot.js) }. Nothing here touches a running match beyond
+// the synchronous capture; a store that is down only skips checkpoints.
+
+import { snapshotMatch } from '../match/snapshot.js';
+import { SAVE_MS } from './persister.js';
+
+/** How long a rebuilt actor keeps the checkpoint it came from (> the node's 20 s publication lease). */
+const SUPERSEDE_MS = 30_000;
+
+/** Envelope version (the match document has its own, SNAPSHOT_VERSION). */
+export const NODE_CHECKPOINT_VERSION = 1;
+
+const noopLog = { info() {}, warn() {}, error() {}, debug() {} };
+
+export class NodeCheckpoints {
+  /**
+   * @param {{ store: import('./store.js').CheckpointStore, gameHost: import('../cluster/game-host.js').GameHost,
+   *   nodeId: string, log?: object, saveMs?: number }} opts
+   */
+  constructor({ store, gameHost, nodeId, log = noopLog, saveMs = SAVE_MS }) {
+    this.store = store;
+    this.gameHost = gameHost;
+    this.nodeId = nodeId;
+    this.log = log;
+    this.saveMs = Math.max(1000, Number(saveMs) || SAVE_MS);
+    /** @type {Map<string, { json: string | null, ctx: object }>} assignment id → the last checkpoint written */
+    this.written = new Map();
+    /**
+     * a rebuilt actor's assignment id → the checkpoint it came from, deleted by a later round once the new actor has
+     * written its own and outlived its publication lease (a restore whose reply was lost is released and retried from it)
+     * @type {Map<string, { id: string, at: number }>}
+     */
+    this.supersedes = new Map();
+    this.timer = null;
+    this.closed = false;
+    this.busy = null;
+    this.counts = { captures: 0, captureSkips: 0, deleted: 0, restores: 0, restoreFailures: 0 };
+    gameHost.onCheckpoint = (ctx, match, reason) => this.capture(ctx, reason);
+  }
+
+  /** Checkpoint one actor now (never throws). @returns {Promise<boolean> | null} its write, null when skipped */
+  capture(ctx, reason = 'tick') {
+    if (this.closed || !ctx?.match || ctx.state !== 'committed' || !ctx.live || ctx.disposed) return null;
+    const doc = snapshotMatch(ctx.match);
+    if (!doc) { this.counts.captureSkips++; return null; }
+    const id = ctx.spec.assignmentId;
+    const left = [...ctx.members].filter(([, m]) => m.role === 'player' && m.left).map(([pid]) => pid);
+    const json = JSON.stringify({ v: NODE_CHECKPOINT_VERSION, kind: 'cluster', assignmentId: id, roomCode: ctx.spec.roomCode,
+      nodeId: this.nodeId, reason, spec: ctx.spec, left, match: doc });
+    const prev = this.written.get(id);
+    if (prev && prev.ctx === ctx && prev.json === json) return null;
+    this.written.set(id, { json, ctx, ok: false });
+    this.counts.captures++;
+    const rec = this.written.get(id);
+    return this.store.saveCheckpoint(id, json).then((ok) => { if (ok) rec.ok = true; return ok; });
+  }
+
+  /** One periodic round: every committed actor, then the checkpoints of actors that ended or were released. */
+  async tick(reason = 'tick') {
+    if (this.busy) { if (reason === 'tick') return; await this.busy; }
+    const run = (async () => {
+      const writes = [];
+      for (const ctx of this.gameHost.contexts.values()) {
+        const w = this.capture(ctx, reason);
+        if (w) writes.push(w);
+      }
+      await Promise.all(writes);
+      if (reason === 'shutdown') return;
+      for (const [id, old] of [...this.supersedes]) {
+        const ctx = this.gameHost.contexts.get(id), rec = this.written.get(id);
+        if (!ctx || ctx.state === 'ended') { this.supersedes.delete(id); continue; }
+        if (!rec?.ok || rec.ctx !== ctx || Date.now() - old.at < SUPERSEDE_MS) continue;
+        this.supersedes.delete(id);
+        if (await this.store.deleteCheckpoint(old.id)) this.counts.deleted++;
+      }
+      for (const [id, rec] of [...this.written]) {
+        const ctx = this.gameHost.contexts.get(id);
+        if (ctx === rec.ctx && ctx.state !== 'ended') continue;
+        this.written.delete(id);
+        // a new incarnation of the id on this node writes its own; an actor that ended or was released is done
+        if (ctx && ctx !== rec.ctx && ctx.state !== 'ended') continue;
+        if (await this.store.deleteCheckpoint(id)) this.counts.deleted++;
+      }
+    })();
+    this.busy = run;
+    try { await run; } finally { if (this.busy === run) this.busy = null; }
+  }
+
+  start() {
+    if (this.timer || this.closed) return this;
+    this.timer = setInterval(() => { this.tick('tick').catch(() => {}); }, this.saveMs);
+    this.timer.unref?.();
+    return this;
+  }
+
+  /**
+   * The checkpoint `checkpointId` the coordinator wants back (game-node `restore`) as the new assignment `assignmentId`
+   * (whose own first checkpoint then replaces it), or null.
+   * @returns {Promise<{ spec: object, left: string[], match: object } | null>}
+   */
+  async load(checkpointId, assignmentId = checkpointId) {
+    const loaded = await this.store.loadCheckpoint(checkpointId);
+    const cp = loaded.value;
+    if (!cp || cp.v !== NODE_CHECKPOINT_VERSION || cp.kind !== 'cluster' || cp.assignmentId !== checkpointId
+      || !cp.spec || typeof cp.spec !== 'object' || !cp.match || !Array.isArray(cp.left)) {
+      this.counts.restoreFailures++;
+      this.log.warn?.(`[persist] checkpoint ${checkpointId.slice(0, 8)} ${loaded.ok ? 'missing or unusable' : 'unreadable'}`);
+      return null;
+    }
+    this.counts.restores++;
+    if (assignmentId !== checkpointId) this.supersedes.set(assignmentId, { id: checkpointId, at: Date.now() });
+    return { spec: cp.spec, left: cp.left.filter((id) => typeof id === 'string'), match: cp.match };
+  }
+
+  /** The last round before the node stops: every committed actor's checkpoint, nothing deleted. */
+  async shutdown() {
+    if (this.closed) return;
+    clearInterval(this.timer);
+    this.timer = null;
+    try { await this.tick('shutdown'); } catch { /* the store may be gone too */ }
+    this.closed = true;
+    if (this.gameHost.onCheckpoint) this.gameHost.onCheckpoint = null;
+  }
+
+  snapshot() { return { enabled: true, saveMs: this.saveMs, ...this.counts, store: this.store.snapshot() }; }
+}

@@ -547,6 +547,14 @@ export class Lobby {
      * @type {((room: { code: string, hostId: string, humans: number, inMatch: boolean }) => boolean) | null}
      */
     this.autoApplyPlugins = null;
+    /**
+     * Checkpoints (docs/DEPLOY.md「断点续玩」, server/persist/persister.js): `onCheckpoint(room, ctx, match, reason)` hears a
+     * running local match's safe points; `closingQuietly` — the state was saved, so a shutdown closes the rooms without
+     * room.closed / notices (their players are coming back).
+     * @type {((room: Room, ctx: object, match: any, reason: string) => void) | null}
+     */
+    this.onCheckpoint = null;
+    this.closingQuietly = false;
     this.offContentStale = plugins?.onContentStale?.((cs, ids) => this.pluginsChanged(cs, ids, 'content')) || null;
   }
 
@@ -1931,14 +1939,16 @@ export class Lobby {
   createMatch(opts) { return new this.MatchClass(opts); }
 
   /** @param {Room} room @param {string | null} [key] per-network limit key of the starter */
-  startMatch(room, key = null, keys = null, { deferPublish = false } = {}) {
+  startMatch(room, key = null, keys = null, { deferPublish = false, restore = null } = {}) {
     if (!room.validCapacity() || !this.capacityClients(room)) return fail(ERR.BAD_MSG);
     const revival = room.revivalState();
     const host = room.seatOf(room.hostId);
     if (host) host.ready = true;
     // the room's data: its content set's in a room with gameplay plugins (header "Gameplay plugins")
     const data = this.dataFor(room);
-    const seats = room.seats.filter(Boolean).map((s) => {
+    // `restore` (server/persist/persister.js): a match coming back from its checkpoint — its own seats, seed and number,
+    // and `apply(match)` instead of start()
+    const seats = restore ? restore.seats : room.seats.filter(Boolean).map((s) => {
       // a setting checked for another content is filtered to this room's data (header "Gameplay plugins")
       const own = s.isBot ? null : this.seatSettings(room, s, data);
       return {
@@ -1969,7 +1979,7 @@ export class Lobby {
       return true;
     };
     let seed = 0;
-    try { seed = this.seedFn() >>> 0; } catch { seed = randomInt(2 ** 32); }
+    try { seed = restore ? restore.seed >>> 0 : this.seedFn() >>> 0; } catch { seed = randomInt(2 ** 32); }
     const modded = room.modded;
     try {
       const opts = {
@@ -1991,7 +2001,7 @@ export class Lobby {
         hostId: room.hostId,
         seed,
         // the room's match number: with the seed it keeps battleIds unique across the room's matches (DESIGN §14)
-        matchNo: room.matchCount + 1,
+        matchNo: restore ? restore.matchNo : room.matchCount + 1,
         // the room's content hash (header "Content identity"): copied into every BattleSpec; its visual set too (a
         // replay names the art), and with gameplay plugins a b.result must name the room's cs (header "Gameplay plugins")
         ...(room.content ? { cs: room.content.cs } : {}),
@@ -2021,6 +2031,8 @@ export class Lobby {
           if (pending || !ctx.live || room.matchCtx !== ctx) return;
           this.matchRemoved(room, playerId, typeof removal?.reason === 'string' ? removal.reason : 'removed');
         },
+        // a safe point for a checkpoint (server/match/snapshot.js; server/persist/persister.js sets onCheckpoint)
+        onCheckpoint: (match, reason) => { if (ctx.live && room.matchCtx === ctx) this.onCheckpoint?.(room, ctx, match, reason); },
       };
       // a room with gameplay plugins plays in its content set's match host when this server has them; every other room
       // (and, in the cluster, every room: the game node runs the content set's match) as always (createMatch)
@@ -2032,10 +2044,10 @@ export class Lobby {
       room.matchKeys = keys;
       room.revivalLocked = Object.freeze(revival);
       room.replay = null;
-      room.matchCount++;
-      this.log.info(`[lobby] ${room.code} match #${room.matchCount} starting (${room.mode}/${room.difficulty}, ${seats.length} seats, seed ${seed}${modded ? `, content ${room.content.cs.slice(0, 8)}${match.hosted ? ' in its match host' : ''}` : ''})`);
+      room.matchCount = restore ? restore.matchNo : room.matchCount + 1;
+      this.log.info(`[lobby] ${room.code} match #${room.matchCount} ${restore ? 'restored' : 'starting'} (${room.mode}/${room.difficulty}, ${seats.length} seats, seed ${seed}${modded ? `, content ${room.content.cs.slice(0, 8)}${match.hosted ? ' in its match host' : ''}` : ''})`);
       if (!deferPublish) this.broadcastState(room);
-      const started = match.start();
+      const started = restore ? restore.apply(match) : match.start();
       if (deferPublish && started && typeof started.then === 'function') {
         Promise.resolve(started).catch((e) => this.log.error(`[lobby] ${room.code} asynchronous start rejected`, e));
         throw new TypeError('public match start must be synchronous');
@@ -2445,7 +2457,7 @@ export class Lobby {
       const session = this.registry.byId(s.playerId);
       if (!session || session.roomCode !== room.code) continue;
       session.roomCode = null;
-      if (s.left || reason === 'empty') continue;
+      if (s.left || reason === 'empty' || this.closingQuietly) continue;
       if (session.connected) sendSession(session, { t: 'room.closed', reason });
       else session.notice = reason;
     }
@@ -2455,6 +2467,7 @@ export class Lobby {
       const session = this.registry.byId(s.playerId);
       if (!session || session.roomCode !== room.code) continue;
       session.roomCode = null;
+      if (this.closingQuietly) continue;
       if (session.connected) sendSession(session, { t: 'room.closed', reason });
       else session.notice = reason;
     }

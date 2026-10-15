@@ -47,6 +47,48 @@ class LocalStackTests(unittest.TestCase):
         self.assertEqual(config['origins'], [p.origin])
         self.assertEqual(len(compose['services']), 25)
 
+    def test_valkey_store_is_opt_in_unpublished_and_named_by_every_core_role(self):
+        _, plain = self.stack('plain', 2)
+        self.assertNotIn('valkey', plain['services'])
+        self.assertNotIn('volumes', plain)
+        summary = local.compose(self.core, self.root / 'store', profile=self.profile, ingress_instances=2, valkey=True)
+        compose = json.loads((self.root / 'store/compose.json').read_text())
+        store = compose['services']['valkey']
+        self.assertEqual(store['image'], local.VALKEY_IMAGE)
+        self.assertIn('@sha256:', store['image'])
+        self.assertEqual(store['ports'], [])
+        self.assertEqual(store['networks']['default']['ipv4_address'], '172.30.245.5')
+        self.assertEqual(store['user'], '999:1000')
+        self.assertTrue(store['read_only'])
+        self.assertEqual(store['cap_drop'], ['ALL'])
+        self.assertEqual(compose['volumes'], {'valkey-data': {}})
+        self.assertIn('valkey-data:/data', store['volumes'])
+        config = (self.root / 'store/valkey/valkey.conf').read_text()
+        password = (self.root / 'store/valkey.pass').read_text()
+        self.assertRegex(password, r'^[0-9a-f]{64}$')
+        self.assertIn('requirepass ' + password, config)
+        self.assertIn('appendonly yes', config)
+        self.assertIn('maxmemory 2048mb', config)
+        self.assertNotIn(password, (self.root / 'store/compose.json').read_text())
+        self.assertNotIn(password, json.dumps(summary))
+        for name in ('valkey/valkey.conf', 'valkey.pass'):
+            self.assertEqual(stat.S_IMODE((self.root / 'store' / name).stat().st_mode), 0o440)
+        for name, service in compose['services'].items():
+            env = service.get('environment', {})
+            if name == 'coordinator' or name.startswith('game-'):
+                self.assertEqual(env['SP_REDIS_URL'], 'redis://172.30.245.5:6379/0')
+                self.assertEqual(env['SP_REDIS_PASSWORD_FILE'], '/run/secrets/valkey.pass')
+                self.assertEqual(env['SP_REDIS_PREFIX'], 'formal:')
+                self.assertIn(str(self.root / 'store/valkey.pass') + ':/run/secrets/valkey.pass:ro', service['volumes'])
+                self.assertEqual(service['depends_on'], ['valkey'])
+            elif name != 'valkey':
+                self.assertNotIn('SP_REDIS_URL', env)
+                self.assertFalse(any('valkey' in v for v in service['volumes']))
+        self.assertEqual(summary['checkpointStore']['container_ip'], '172.30.245.5')
+        self.assertEqual(len(compose['services']), 1 + 16 + 2 + 1)
+        with self.assertRaises(local.Refused):
+            local.compose(self.core, self.root / 'tiny', profile=self.profile, valkey=True, valkey_maxmemory_mb=1)
+
     def test_online_limit_directory_is_mounted_read_only_into_the_coordinator_only(self):
         limits = self.root / 'limits'
         limits.mkdir(mode=0o755)

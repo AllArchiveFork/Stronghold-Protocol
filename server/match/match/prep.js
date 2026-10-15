@@ -237,6 +237,9 @@ export class MatchPrep {
 
   endPrep() {
     if (this.phase !== PHASE.PREP) return;
+    // the round's checkpoint (snapshot.js): the finished prep, before its end changes anything — a match interrupted
+    // during this round's battle comes back here
+    this._checkpoint('prep-end');
     // 挂机移出: an idle human is removed before this round's battle exists (it may end the match)
     this._checkIdle();
     if (this.ended || this.disposed || this.phase !== PHASE.PREP) return;

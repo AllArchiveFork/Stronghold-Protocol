@@ -187,3 +187,15 @@ test('recovery view offers retry/refresh only for slow or failed loading and exp
     assert.ok(tree.some((node) => node.type === 'span' && node.props.children === 'chess.json'));
   }
 });
+
+test('a resumed session waiting for its match says the match is being restored, with no data retry', () => {
+  const reload = () => {};
+  const text = (props) => [...nodes(GameLoadingView({ hasPublic: false, files: [], onRetry() {}, onReload: reload, ...props }))]
+    .flatMap((node) => [node.props?.children].flat()).filter((c) => typeof c === 'string').join(' ');
+  assert.match(text({ slow: false, resumed: true }), /正在恢复对局/);
+  const slow = text({ slow: true, resumed: true });
+  assert.match(slow, /服务器重启后正在恢复对局/);
+  assert.doesNotMatch(slow, /重试只重新下载/);
+  assert.match(text({ slow: false, resumed: false }), /正在进入模拟/);
+  assert.doesNotMatch(text({ slow: false, resumed: true, hasPublic: true }), /正在恢复对局/, 'match state here: loading its data');
+});

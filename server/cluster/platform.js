@@ -317,6 +317,64 @@ export class RemoteGamePlatform {
     } finally { clearTimeout(timer); }
   }
 
+  /**
+   * A match back after a restart (docs/DEPLOY.md「断点续玩」; ClusterLobby.restoreRemoteMatch): `adopt` { nodeId,
+   * nodeGeneration } — its node never restarted, so the actor (input.assignmentId) still runs there: take it over as it
+   * is (status); else a node rebuilds it, as the new assignment input.assignmentId, from the checkpoint `checkpointId`
+   * (`restore`; a new id: an old actor that still runs somewhere can never write over the new one's checkpoint). Either
+   * way the assignment is published at once (no channel to wait for: each member binds as it comes back, through
+   * resume). Throws an AllocationError / RPC error code: NO_NODE, NOT_READY or a transport code (the caller may retry),
+   * STALE_ASSIGNMENT (adopt: the actor is gone), NO_CHECKPOINT, RESTORE_REFUSED, CONTEXT (it cannot come back).
+   * @param {object} input assignment DTO with its assignmentId, the current build / protocol and spectators
+   * @param {{ adopt?: { nodeId: string, nodeGeneration: string } | null, checkpointId?: string }} [opts]
+   */
+  async restore(input, { adopt = null, checkpointId = null } = {}) {
+    if (this.closed) throw new AllocationError('PLATFORM_CLOSED');
+    let spec;
+    try { spec = copyAssignmentSpec(input); }
+    catch (error) { if (error instanceof GameHostError && error.code === 'INVALID_SPEC') throw new TypeError('invalid remote match', { cause: error }); throw error; }
+    if (spec.build !== this.build || spec.protocol !== this.protocol) throw new TypeError('invalid remote match');
+    if (this.contexts.has(spec.assignmentId)) throw new AllocationError('ASSIGNMENT_CONFLICT');
+    const adopting = !!adopt && this.nodes.get(adopt.nodeId)?.generation === adopt.nodeGeneration;
+    // a node that has not answered yet may still run it: ask again (a configured node that is gone is NODE_LOST later)
+    if (adopt && !adopting) throw new AllocationError(this.nodes.has(adopt.nodeId) && this.nodes.get(adopt.nodeId).generation === null ? 'NOT_READY' : 'STALE_ASSIGNMENT');
+    if (!adopting && !safeId(checkpointId)) throw new TypeError('invalid checkpoint');
+    const assignment = this.directory.prepare({ assignmentId: spec.assignmentId, roomCode: spec.roomCode,
+      sessionIds: spec.seats.filter(s => !s.isBot).map(s => s.playerId), build: this.build, protocol: this.protocol,
+      mode: spec.mode, experimental: spec.experimental, nodeId: adopting ? adopt.nodeId : null });
+    const node = this.nodes.get(assignment.nodeId);
+    const ctx = { spec, node, generation: assignment.generation, controller: new AbortController(), isCurrent: () => true, state: 'preparing',
+      remoteCreated: false, cleanup: null, revokedMembers: new Map(), removals: new Map(), terminal: false, restored: true,
+      members: new Map(spec.seats.filter(s => !s.isBot).map(s => [s.playerId, 'player'])) };
+    for (const id of spec.spectators) if (!ctx.members.has(id)) ctx.members.set(id, 'spectator');
+    this.contexts.set(spec.assignmentId, ctx);
+    try {
+      let value;
+      if (adopting) {
+        value = await node.client.call('status', { assignmentId: spec.assignmentId });
+        if (value?.state !== 'committed') throw new AllocationError('STALE_ASSIGNMENT');
+      } else {
+        ctx.remoteCreated = true;
+        value = await node.client.call('restore', { assignmentId: spec.assignmentId, checkpointId, roomCode: spec.roomCode, build: this.build,
+          protocol: this.protocol, spectators: [...spec.spectators] });
+        if (value?.state !== 'committed') throw new AllocationError('RESTORE_REFUSED');
+      }
+      if (!this.valid(ctx) || value.assignmentId !== spec.assignmentId || value.roomCode !== spec.roomCode || value.build !== this.build
+        || value.protocol !== this.protocol || value.generation !== ctx.generation
+        || !Number.isSafeInteger(value.actorGeneration) || value.actorGeneration < 1) throw new AllocationError('NODE_IDENTITY');
+      ctx.actorGeneration = value.actorGeneration;
+      this.directory.commit(spec.assignmentId);
+      for (const [id, role] of ctx.members) if (role === 'spectator') this.directory.attachSpectator(spec.assignmentId, id);
+      ctx.state = 'published';
+      ctx.publication = this.confirmPublication(ctx);
+      return Object.freeze({ assignmentId: spec.assignmentId, nodeId: node.nodeId, generation: ctx.generation, adopted: adopting,
+        commit: () => true, publish: () => true, abort: () => this.release(spec.assignmentId) });
+    } catch (e) {
+      await this.abortContext(ctx);
+      throw e;
+    }
+  }
+
   async confirmPublication(ctx) {
     for (let attempt = 0; attempt < 3; attempt++) {
       if (ctx.state !== 'published' || this.closed) return false;
@@ -549,10 +607,11 @@ export class RemoteGamePlatform {
     }
   }
 
-  async close() {
+  /** `release: false` (a coordinator that saved its state, server/persist/): leave every actor running on its node. */
+  async close({ release = true } = {}) {
     if (this.closed) return;
     this.closed = true;
-    await Promise.all([...this.contexts.keys()].map(id => this.release(id)));
+    if (release) await Promise.all([...this.contexts.keys()].map(id => this.release(id)));
     for (const node of this.nodes.values()) node.client.close();
   }
 }

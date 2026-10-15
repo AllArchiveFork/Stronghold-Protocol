@@ -33,6 +33,7 @@ export class MatchSpDraft {
     this.setDeadline(0);
     this.startSpTurn();
     this.markPublic();
+    this._checkpoint('sp-draft');
   }
 
   /** The seat whose turn it is; null in a concurrent draft (MatchPhases.concurrentDraft). */

@@ -2,7 +2,7 @@
 // here; GameHost/Match retain game ownership. No sessions or pools are created.
 import http from 'node:http';
 import { WebSocketServer } from 'ws';
-import { GameHost } from './game-host.js';
+import { GameHost, GameHostError } from './game-host.js';
 import { createRpcAuthenticator, createRpcHandler, RpcError } from './rpc.js';
 import { createTicketAuthority } from './tickets.js';
 import { NET_DEFAULTS, TokenBucket, corkTurn, encode, sendRaw, isErrCode, netCounters } from '../net.js';
@@ -44,7 +44,7 @@ export async function startGameNode({ host = '127.0.0.1', port = 0, nodeId, gene
   protocol = PROTOCOL_VERSION, data, combatPool, trialPool, MatchClass, onEnd, onRemoved, afkRemoveRounds, now = Date.now, log = noopLog,
   prepareMs = 15_000, bindTimeoutMs = 5000, heartbeatMs = NET_DEFAULTS.heartbeatMs, sweepMs = 1000,
   shutdownMs = 1000, publicationMs = 20_000, ticketsAuthority, ticketIssuer = 'stronghold-cluster', ticketTtlMs = 30_000,
-  futureSkewMs = 0, getLoadState, getLoadDetails, publicSlot = null, streamMarkers = false } = {}) {
+  futureSkewMs = 0, getLoadState, getLoadDetails, publicSlot = null, streamMarkers = false, restoreSource = null, getCheckpointStats = null } = {}) {
   if (![nodeId, generation, build].every(id) || typeof host !== 'string' || !host || !int(port, 0, 65535)
     || !int(protocol, 1, Number.MAX_SAFE_INTEGER) || typeof now !== 'function') throw new TypeError('invalid game node');
   for (const [name, value, max] of [['bindTimeoutMs', bindTimeoutMs, 5000], ['heartbeatMs', heartbeatMs, 300_000],
@@ -55,6 +55,8 @@ export async function startGameNode({ host = '127.0.0.1', port = 0, nodeId, gene
   if (!int(ticketTtlMs, 1, 30_000)) throw new RangeError('invalid admission ticket lifetime');
   if ([getLoadState, getLoadDetails].some(fn => fn !== undefined && typeof fn !== 'function')) throw new TypeError('invalid load provider');
   if (typeof streamMarkers !== 'boolean') throw new TypeError('invalid game stream markers');
+  // restoreSource(assignmentId) → Promise<{ spec, left, match } | null>: the checkpoints (server/persist/node.js)
+  if (restoreSource !== null && typeof restoreSource !== 'function') throw new TypeError('invalid restore source');
   if (publicSlot !== null && publicGameLabel(publicSlot) === null) throw new TypeError('invalid public node slot');
   const authority = createRpcAuthenticator({ key, scope: nodeId, now });
   // Optional peer clock tolerance never relaxes expiry or any context field.
@@ -181,6 +183,37 @@ export async function startGameNode({ host = '127.0.0.1', port = 0, nodeId, gene
       lease.published = true; clearTimeout(lease.timer); lease.timer = null;
       return smallHandle(assignment);
     },
+    /**
+     * The coordinator takes a match back after a restart (docs/DEPLOY.md「断点续玩」): the actor is rebuilt here, as the
+     * new assignment `assignmentId`, from the checkpoint of `checkpointId` (restoreSource) — committed at once, its humans
+     * offline until they bind — under the same unpublished-publication lease as a commit. Only the identifiers travel;
+     * the checkpoint never crosses the RPC.
+     */
+    async restore(payload) {
+      check(payload, ['assignmentId', 'checkpointId', 'roomCode', 'build', 'protocol', 'spectators']); checkAssignment(payload);
+      if (!id(payload.checkpointId)) throw new RpcError('BAD_REQUEST');
+      if (typeof payload.roomCode !== 'string' || !/^[A-Z]{4}(?![\s\S])/.test(payload.roomCode)
+        || !Array.isArray(payload.spectators) || payload.spectators.length > 64 || !payload.spectators.every(id)) throw new RpcError('BAD_REQUEST');
+      if (payload.build !== build || payload.protocol !== protocol) throw new RpcError('CONTEXT');
+      if (!nodeReady()) throw new RpcError('NOT_READY');
+      if (!restoreSource) throw new RpcError('NO_CHECKPOINT');
+      let saved;
+      try { saved = await restoreSource(payload.checkpointId, payload.assignmentId); } catch { saved = null; }
+      if (!saved || saved.spec?.roomCode !== payload.roomCode || !Array.isArray(saved.spec?.seats)) throw new RpcError('NO_CHECKPOINT');
+      if (stopped) throw new RpcError('CLOSED');
+      let view;
+      try {
+        view = gameHost.restore({ ...saved.spec, assignmentId: payload.assignmentId, build, protocol, spectators: payload.spectators,
+          seats: saved.spec.seats.map(s => ({ ...s, connected: s.isBot })) }, saved);
+      } catch (e) { throw new RpcError(e instanceof GameHostError ? e.code : 'RESTORE_REFUSED'); }
+      if (!publications.has(payload.assignmentId)) {
+        const lease = { actorGeneration: view.generation, published: false, deadline: view.committedAt + publicationMs };
+        publications.set(payload.assignmentId, lease);
+        lease.timer = setTimeout(() => expirePublication(payload.assignmentId, lease), publicationMs);
+        lease.timer.unref?.();
+      }
+      return smallHandle(view);
+    },
     abort(payload) {
       check(payload, ['assignmentId']); checkAssignment(payload);
       const result = gameHost.abort(payload.assignmentId);
@@ -201,6 +234,8 @@ export async function startGameNode({ host = '127.0.0.1', port = 0, nodeId, gene
       check(payload, [], ['assignmentId', 'sessionId', 'receipt']);
       const value = { nodeId, generation, build, protocol, ready: nodeReady(), streamMarkers, terminalControl: streamMarkers, counts: gameHost.stats(),
         publicSlot, ...cachedLoad(), health: { combat: poolHealth(combatPool), trial: poolHealth(trialPool) } };
+      // the node's checkpoint counters (server/persist/node.js), when it keeps checkpoints
+      if (typeof getCheckpointStats === 'function') { try { value.checkpoints = getCheckpointStats(); } catch { value.checkpoints = null; } }
       if (payload.assignmentId !== undefined) {
         checkAssignment(payload);
         const assignment = gameHost.get(payload.assignmentId);

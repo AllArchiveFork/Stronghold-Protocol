@@ -11,7 +11,7 @@
 - 高频 `m.field/b.snap/b.ev/m.damage` 等从所属节点直接到入口，沿用压缩白名单和背压，不绕协调器 MainThread。协调器和 ingress 的 combat/trial 为 0。
 - 固定 `cluster-deploy.py` core bundle 为一个 coordinator + 固定数量 game，每 game 默认 8 combat + 2 trial（`--combat-workers 1..8`、`--trial-workers 0..2`，全部 game 相同）：Formal 为 16 或 32（`--game-nodes 32`），Beta 固定 16。Formal edge bundle 支持每入口 1–8 个 ingress，Beta 保留 1–2 个，配置覆盖全部 game 节点。无 WG 的同机组合栈见 [cluster/LOCAL-STACK.md](cluster/LOCAL-STACK.md)。逻辑分组不是匹配分区；这些是模板约束，不是运行数量或容量证明。
 
-不恢复 rolling/drain/多版本更新网关，不引入跨版本内存迁移。运行主机按部署者策略只保留必要镜像、宿主管理/恢复工具、runtime、密钥挂载与守卫；开发 checkout、导出、测试工具、文档和证据留开发/管理环境。必要宿主程序不能误删为开发源码。
+不恢复 rolling/drain/多版本更新网关，不引入跨版本内存迁移。可选的对局存档（Valkey，`SP_REDIS_URL`；组合栈 `--valkey`，见 [cluster/LOCAL-STACK.md](cluster/LOCAL-STACK.md)）不是迁移：新版本只读取同格式版本的存档，按[断点续玩](../../docs/DEPLOY.md#11-断点续玩重启后接着打可选valkey)从上一个安全点重建对局，格式不符即丢弃该局。运行主机按部署者策略只保留必要镜像、宿主管理/恢复工具、runtime、密钥挂载与守卫；开发 checkout、导出、测试工具、文档和证据留开发/管理环境。必要宿主程序不能误删为开发源码。
 
 ## 分配、观战与重连合同
 
@@ -78,7 +78,7 @@ edge 默认 1 保留单实例合同。Formal 显式 `--ingress-instances 2..8` �
 
 先完成固定候选和隔离验收，取得具体环境/组件的部署授权与内存状态丢失确认，再接入口流量；Beta 完成不自动切 Formal，不设定时上线。记录阶段真实结果，控制器中断先读状态，不重放已消费脚本。
 
-**协调状态仍在单个 coordinator 内存，未提供持久化/协调 HA。** 重启可能失去身份、队列、房间索引与分配；game 重启丢失所属对局。多入口只能为仍存活 owner 提供其他连接路径，不是内存容灾，不承诺容量线性增长或增加共享链路带宽。
+**协调状态仍在单个 coordinator 内存，未提供协调 HA。** 未开启对局存档时，重启会失去身份、队列、房间索引与分配，game 重启丢失所属对局。开启后（Valkey）：coordinator 每 10 秒及正常停止时保存房间内会话、房间与分配，game 在安全阶段保存所属对局；只重启 coordinator 时接管仍在运行的对局，整体重启或 game 重启/失联时由就绪节点从存档重建，玩家凭原令牌回到原座位；匹配队列和邀请不保存，战斗中断的对局回到本回合休整期结束时重打。Valkey 不可用只会停止存档，不影响对局。多入口只能为仍存活 owner 提供其他连接路径，不是内存容灾，不承诺容量线性增长或增加共享链路带宽。
 
 回退先核对影响和授权，按现用配置 CAS/合并恢复相互匹配的 game、入口 privatecode/data、renderer resources、素材/pin/resolver/profile；精确撤本次 owned 租约和文件，保留其他环境、共享 WG/服务、密钥、镜像、旧素材与私有证据。镜像回滚不能恢复丢失内存局，不能全局 prune/flush。
 

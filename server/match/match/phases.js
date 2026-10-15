@@ -60,6 +60,7 @@ export class MatchPhases {
     this.setDeadline(0);
     this.startDraftTurn();
     this.markPublic();
+    this._checkpoint('band-draft');
   }
 
   /**

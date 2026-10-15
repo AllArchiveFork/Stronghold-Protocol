@@ -95,7 +95,11 @@ export class ClusterDirectory {
     return Math.max(node.committed, node.matches) + node.prepared;
   }
 
-  prepare({ roomCode, sessionIds, build, protocol, mode = 'coop', experimental = EXPERIMENTAL_DEFAULTS, assignmentId = randomBytes(16).toString('hex') }) {
+  /**
+   * Reserve a node for an assignment: the least loaded usable one, or — `nodeId` (a restored match taken over where it
+   * still runs, server/cluster/platform.js restore) — exactly that node when it is usable (NO_NODE otherwise).
+   */
+  prepare({ roomCode, sessionIds, build, protocol, mode = 'coop', experimental = EXPERIMENTAL_DEFAULTS, assignmentId = randomBytes(16).toString('hex'), nodeId = null }) {
     // Explicit coordinator admission: validate the approved room policy, not a
     // caller-supplied bare capacity. Bind that immutable policy to this nonce.
     const options = experimentalOptions(experimental), capacity = roomCapacity(mode, options);
@@ -115,9 +119,10 @@ export class ClusterDirectory {
     if (this.closed.has(assignmentId)) throw new AllocationError('STALE_ASSIGNMENT');
     if (this.rooms.has(roomCode)) throw new AllocationError('ROOM_BUSY');
     if (sessionIds.some(id => this.sessions.has(id))) throw new AllocationError('SESSION_BUSY');
-    const candidates = [...this.nodes.values()].filter(node => this.usable(node, build, protocol, now));
+    const candidates = [...this.nodes.values()].filter(node => this.usable(node, build, protocol, now) && (nodeId === null || node.nodeId === nodeId));
     const loads = new Map(candidates.map(node => [node.nodeId, this.load(node)]));
-    const available = candidates.filter(node => node.capacity === 0 || loads.get(node.nodeId) < node.capacity);
+    // (a match taken over where it runs is already part of that node's load)
+    const available = candidates.filter(node => nodeId !== null || node.capacity === 0 || loads.get(node.nodeId) < node.capacity);
     available.sort((a, b) => loads.get(a.nodeId) - loads.get(b.nodeId) || a.selectedAt - b.selectedAt || a.nodeId.localeCompare(b.nodeId));
     const node = available[0];
     if (!node) throw new AllocationError('NO_NODE');

@@ -25,6 +25,10 @@ const sameSet = (a, b) => a.size === b.size && [...a].every(value => b.has(value
 // start is logged with its step (logStartFailure).
 const RETRYABLE_START = new Set(['TIMEOUT', 'PLAYER_OFFLINE']);
 const startError = error => isErrCode(error?.code) ? error.code : RETRYABLE_START.has(error?.code) ? ERR.START_RETRY : ERR.INTERNAL;
+// A restored match waits this long for a node to take it (the whole stack restarts at once: nodes come up meanwhile),
+// retrying every RESTORE_RETRY_MS on these codes; any other failure closes its room at once.
+const RESTORE_WAIT_MS = 120_000, RESTORE_RETRY_MS = 1000;
+const RESTORE_RETRY = new Set(['NO_NODE', 'NOT_READY', 'TRANSPORT', 'TIMEOUT', 'BAD_REPLY', 'CLOSED', 'NODE_UNAVAILABLE', 'SESSION_BUSY', 'ROOM_BUSY']);
 
 function matchDTO(room, seed, snapshotHz) {
   return {
@@ -144,6 +148,9 @@ class PreparedRemoteMatch {
     return this.lastSkins;
   }
   dispose() {
+    // a coordinator that saved its state stops without releasing its matches: after its restart it takes them over
+    // where they still run (ClusterLobby.restoreRemoteMatch), or their nodes rebuild them from their checkpoints
+    if (this.lobby.closingQuietly) return undefined;
     if (!this.plan.published) return this.plan.abort();
     if (this.ended) return this.lobby.releasePlan(this.plan);
     if (this.plan.room.disposed) {
@@ -172,6 +179,10 @@ export class ClusterLobby extends Lobby {
     this.clusterClosed = false;
     this.inspectStart = false;
     this.queue.asyncAllocate = (sessions, difficulty, context) => this.prepareMatchmadeRoom(sessions, difficulty, context);
+    /** remote matches placed again after a restart (restoreRemoteMatch; /healthz persistence.remote) */
+    this.restoreStats = { pending: 0, adopted: 0, rebuilt: 0, failed: 0 };
+    /** checkpoints are kept (server/persist/persister.js sets it): a lost node's matches are rebuilt (recoverRemote) */
+    this.checkpointsOn = false;
   }
 
   createMatch(opts) {
@@ -596,6 +607,127 @@ export class ClusterLobby extends Lobby {
       return ack;
     });
   }
+  /**
+   * The lobby document's reference of a room's running remote match (server/persist/lobbyState.js; docs/DEPLOY.md
+   * 「断点续玩」): its assignment — node and epochs, to take it over where it still runs — and its assignment DTO, to have
+   * a node rebuild it from its checkpoint. A match still being placed after a restart keeps the reference it came with.
+   */
+  remoteMatchRef(room) {
+    const plan = room.match instanceof PreparedRemoteMatch ? room.match.plan : null;
+    if (!plan || plan.aborted || room.matchCtx !== plan.ctx || plan.proxy.ended) return null;
+    if (plan.restoring && !plan.published) return plan.restoreRef;
+    if (!plan.published || !plan.handle) return null;
+    const info = this.platform.assignmentInfo?.(plan.spec.assignmentId);
+    const { assignmentId, build, protocol, ...dto } = plan.spec;
+    return { kind: 'remote', assignmentId, nodeId: plan.handle.nodeId, nodeGeneration: plan.handle.generation,
+      actorGeneration: info?.actorGeneration ?? null, matchNo: plan.dto.matchNo, spec: structuredClone(dto) };
+  }
+
+  /** What identifies a room's remote match reference (the persister rewrites the room's record when it changes). */
+  remoteMatchKey(room) {
+    const plan = room.match instanceof PreparedRemoteMatch ? room.match.plan : null;
+    return plan ? `${plan.spec.assignmentId}|${plan.handle?.generation ?? ''}|${plan.published}|${plan.aborted}|${plan.proxy.ended}` : null;
+  }
+
+  /**
+   * A remote match back after a coordinator restart (server/persist/persister.js): the room holds it at once (inMatch;
+   * its players' game input waits), and in the background it is taken over where it still runs (adopt — its node did
+   * not restart) or rebuilt by a node from its checkpoint, retried while no node is ready yet (RESTORE_WAIT_MS). Then
+   * every member already back gets its game channel (resume); the others bind as they return. A match that cannot
+   * come back closes its room ('node-restarted'). `departed`: seats that leave it once it is back.
+   * @returns {boolean} accepted (a malformed reference is refused at once)
+   */
+  restoreRemoteMatch(room, ref, departed = []) {
+    if (ref?.kind !== 'remote' || !safeId(ref.assignmentId) || !plain(ref.spec) || !Number.isSafeInteger(ref.spec.matchNo)) return false;
+    const dto = { ...structuredClone(ref.spec), spectators: room.spectators.map(s => s.playerId) };
+    const ctx = { live: true, ended: false, disposed: false, match: null, lastPublic: null, sharedResult: null, results: new Map() };
+    const plan = { room, oldRooms: new Set(), sessions: [], key: room.matchKey, keys: room.matchKeys, dto, controller: new AbortController(),
+      startedAt: this.now(), aborted: false, published: false, remoteCommitted: false, transferred: true, rollbackDone: true,
+      handle: null, remoteCleanup: null, proxy: null, ctx, basePublish: null, release: null, restoring: true, restoreRef: ref,
+      spec: structuredClone({ assignmentId: ref.assignmentId, build: this.platform.build, protocol: this.platform.protocol, ...dto }) };
+    plan.valid = () => !this.clusterClosed && !plan.aborted && this.rooms.get(room.code) === room && room.match === plan.proxy && !room.disposed;
+    plan.detach = () => {};
+    plan.abort = () => {
+      plan.aborted = true;
+      if (!plan.controller.signal.aborted) plan.controller.abort();
+      if (plan.handle && !plan.remoteCleanup) plan.remoteCleanup = quiet(plan.handle.abort());
+      return plan.remoteCleanup || Promise.resolve(false);
+    };
+    plan.proxy = new PreparedRemoteMatch(this, plan, { ...dto, onEnd: summary => this.onMatchEnd(room, ctx, summary) });
+    plan.proxy.started = true;
+    ctx.match = plan.proxy;
+    room.match = plan.proxy;
+    room.matchCtx = ctx;
+    room.matchCount = dto.matchNo;
+    room.revivalLocked = Object.freeze(room.revivalState());
+    room.replay = null;
+    this.restoreStats.pending++;
+    plan.restorePromise = this.placeRestored(plan, ref, departed).finally(() => { this.restoreStats.pending--; });
+    return true;
+  }
+
+  async placeRestored(plan, ref, departed) {
+    const { room } = plan, deadline = this.now() + RESTORE_WAIT_MS;
+    let adopt = safeId(ref.nodeId) && safeId(ref.nodeGeneration) ? { nodeId: ref.nodeId, nodeGeneration: ref.nodeGeneration } : null;
+    let handle = null, failure = null;
+    while (!handle && plan.valid()) {
+      // taken over: the same assignment; rebuilt: a new one from the old one's checkpoint (platform.restore)
+      const spec = { ...structuredClone(plan.spec), assignmentId: adopt ? ref.assignmentId : randomBytes(16).toString('hex') };
+      try {
+        handle = await this.platform.restore(spec, { adopt, checkpointId: ref.assignmentId });
+        plan.spec = spec;
+      } catch (error) {
+        const code = error?.code;
+        // the node that ran it restarted (or the actor is gone): rebuild it from its checkpoint instead
+        if (adopt && ['STALE_ASSIGNMENT', 'NO_NODE', 'NOT_MEMBER', 'WRONG_PHASE'].includes(code)) { adopt = null; continue; }
+        if (!RESTORE_RETRY.has(code) || this.now() >= deadline) { failure = code || 'INTERNAL'; break; }
+        await new Promise(resolve => { const t = setTimeout(resolve, RESTORE_RETRY_MS); t.unref?.(); });
+      }
+    }
+    if (handle && !plan.valid()) { quiet(handle.abort()); handle = null; failure ??= 'GONE'; }
+    if (!handle) {
+      this.restoreStats.failed++;
+      this.log.warn(`[lobby] ${room.code} restored match not placed (${failure || 'gone'})`);
+      if (plan.valid()) this.disposeRoom(room, 'node-restarted');
+      return false;
+    }
+    plan.handle = handle; plan.remoteCommitted = true; plan.published = true;
+    this.assignments.set(plan.spec.assignmentId, plan);
+    this.restoreStats[handle.adopted ? 'adopted' : 'rebuilt']++;
+    this.log.info(`[lobby] ${room.code} match #${room.matchCount} ${handle.adopted ? 'taken over' : 'restored'} on ${handle.nodeId}`);
+    for (const id of departed) if (plan.proxy.members.has(id)) plan.proxy.onLeave(id);
+    if (room.disposed || room.match !== plan.proxy) return true;
+    // the members already back get their game channel now; the others when they return (onReconnect → resume)
+    for (const id of plan.proxy.members) {
+      const session = this.registry.byId(id);
+      if (this.isOnline(session) && session.roomCode === room.code) plan.proxy.onReconnect(id);
+    }
+    this.broadcastState(room);
+    return true;
+  }
+
+  /**
+   * A published match whose node restarted or was lost (RemoteGamePlatform onUnavailable): with checkpoints on, a node
+   * rebuilds it from its last checkpoint instead of the room closing (restoreRemoteMatch, no take-over). @returns
+   * {boolean} it is being placed again (false: the caller closes the room as before)
+   */
+  recoverRemote(room, plan) {
+    if (!this.checkpointsOn || this.clusterClosed || room.disposed || room.match !== plan.proxy || plan.restoring && !plan.published) return false;
+    const ref = this.remoteMatchRef(room);
+    if (!ref) return false;
+    this.assignments.delete(plan.spec.assignmentId);
+    plan.proxy.ended = true; // the old actor is gone: neither a late receipt nor its release touch this room again
+    const old = room.matchCtx;
+    room.match = null; room.matchCtx = null;
+    if (old) this.disposeMatchCtx(old);
+    const departed = room.seats.filter(s => s && !s.isBot && s.left).map(s => s.playerId);
+    if (this.restoreRemoteMatch(room, { ...ref, nodeId: null, nodeGeneration: null }, departed)) {
+      this.log.warn(`[lobby] ${room.code} game node lost: placing match #${room.matchCount} again from its checkpoint`);
+      return true;
+    }
+    return false;
+  }
+
   cancelManual(room) { this.manualPending.get(room?.code)?.abort(); }
   onDisconnect(session) { this.cancelManual(this.roomOf(session)); return super.onDisconnect(session); }
   removeMember(room, playerId) { this.cancelManual(room); return super.removeMember(room, playerId); }

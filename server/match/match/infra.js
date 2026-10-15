@@ -65,6 +65,17 @@ export class MatchInfra {
    */
   get soloUntimed() { return this.isSolo || this.loneHuman; }
 
+  /**
+   * A safe point for a checkpoint (server/match/snapshot.js; docs/DEPLOY.md「断点续玩」): the platform's
+   * opts.onCheckpoint(match, reason), when it has one, may take it now — synchronously, before anything else changes.
+   * Never fails the match.
+   */
+  _checkpoint(reason) {
+    const fn = this.opts?.onCheckpoint;
+    if (typeof fn !== 'function' || this.disposed || this.ended) return;
+    try { fn(this, reason); } catch (e) { this.reportError('checkpoint', e); }
+  }
+
   nextUid() { return ++this.uidSeq; }
 
   alivePlayers() { return this.order.filter((p) => p.alive); }

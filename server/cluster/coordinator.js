@@ -52,10 +52,13 @@ export async function startCoordinator({ nodes, build, protocol = PROTOCOL_VERSI
       onPublished: assignmentId => sink?.flush(assignmentId),
       onUnavailable: info => {
         // Losing the node is not victory/defeat and cannot manufacture a result.
-        // Drop only this assignment's room, leaving all other nodes/rooms intact.
+        // Drop only this assignment's room, leaving all other nodes/rooms intact —
+        // unless checkpoints are kept: then another node rebuilds the match (ClusterLobby.recoverRemote).
         const room = app?.lobby.getRoom(info.roomCode);
         const plan = app?.lobby.assignments.get(info.assignmentId);
-        if (plan && room === plan.room) app.lobby.disposeRoom(room, closeReasonFor(info.reason));
+        if (!plan || room !== plan.room) return;
+        if (['NODE_RESTARTED', 'NODE_LOST'].includes(info.reason) && app.lobby.recoverRemote(room, plan)) return;
+        app.lobby.disposeRoom(room, closeReasonFor(info.reason));
       } });
   } catch (e) { phases.dispose(); throw e; }
   try {
@@ -121,7 +124,8 @@ export async function startCoordinator({ nodes, build, protocol = PROTOCOL_VERSI
     closing = (async () => {
       await app.close();
       await links?.close(); // after the sessions' own close frames are queued on their links
-      await platform.close();
+      // saved state (server/persist/): the matches keep running on their nodes for the restarted coordinator to take over
+      await platform.close({ release: !app.lobby.closingQuietly });
       for (const socket of privateSockets) socket.destroy();
       await new Promise(resolve => privateServer.close(resolve));
       phases.dispose();

@@ -51,7 +51,7 @@ function contentSets(lobby) {
  * @param {boolean} [withTraffic]
  */
 export function healthReport({ startedAt, network, registry, lobby, content = null, browserBuild, combatPool, trialPool, trialStartupFailed, getHealthMetrics,
-  traffic, assetIndex, views, trusted }, withTraffic = false) {
+  traffic, assetIndex, views, trusted, persistence = null }, withTraffic = false) {
   const combat = combatPool ? { backend: 'workers', scope: 'server-streaming', ...combatPool.stats() } : { backend: 'inline', workers: 0 };
   const ok = !combatPool || (combat.status === 'ready' && combat.ready > 0);
   const trial = trialPool ? { backend: 'workers', scope: 'bot-rehearsal', ...trialPool.stats() }
@@ -72,6 +72,8 @@ export function healthReport({ startedAt, network, registry, lobby, content = nu
     net: { ...netCounters, stateDelta: { ...stateDeltaStats } },
   };
   if (trusted && Object.keys(trusted).length) report.plugins = trusted;
+  // checkpoints (SP_REDIS_URL, server/persist/): writes, failures, restores since start — absent when off
+  if (persistence) { try { report.persistence = persistence(); } catch { report.persistence = null; } }
   if (withTraffic && traffic) report.traffic = traffic.snapshot();
   // content-hashed asset URLs (assetIndex.js / assetViews.js): off, building, or ready with how many files and URLs
   if (withTraffic) report.assetHashes = assetIndex ? { ...assetIndex.stats(), views: views ? views.stats() : null } : null;

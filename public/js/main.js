@@ -168,7 +168,7 @@ function backToLobby() {
   const s = store.get();
   if (s.room || s.match.public) closeAllDialogs();
   store.set({ room: null, match: emptyMatch(), ticker: [], emotes: [] });
-  store.patch('ui', { restoring: false });
+  store.patch('ui', { restoring: false, resumed: false });
 }
 
 /** The unofficial plugins a server counts in welcome / /healthz `content.plugins` (absent: none — DESIGN §32 P1a). */
@@ -196,6 +196,9 @@ function onWelcome(msg) {
     installedPlugins: pluginCount(msg.content),
   });
   welcomeAt = Date.now();
+  // The server rebound this tab's session: until its match state (or a room outside a match) arrives, a match screen
+  // still loading is a match being restored after a server restart (ui/gameLoading.js 正在恢复对局…).
+  store.patch('ui', { resumed: msg.resumed === true });
   // A retained ticket is not a fresh population sample from this new socket.
   if (Object.hasOwn(prev.queue || {}, 'waitingCount')) store.set({ queue: { ...prev.queue, waitingCount: undefined } });
 
@@ -240,6 +243,7 @@ function onRoomState(msg) {
   identity.rememberMatch(room.inMatch && seats.some((seat) => seat?.playerId === myId)
     ? { name: store.get().me.name, code: room.code || '' } : null);
   if (room.mode === 'coop' && typeof room.code === 'string') rememberRoom(room.code);
+  if (!room.inMatch && store.get().ui.resumed) store.patch('ui', { resumed: false });
   maybeFinishRestore();
 }
 
@@ -300,7 +304,12 @@ function wireNet() {
     const known = Object.hasOwn(CLOSE_REASON, String(msg.reason)) ? CLOSE_REASON[msg.reason] : null;
     toast(known ? t(known) : typeof msg.reason === 'string' && msg.reason.length < 60 ? t('同盟已关闭：{reason}', { reason: msg.reason }) : t('同盟已关闭'), 'warn');
   });
-  net.on('m.public', (msg) => { matchAt = Date.now(); store.patch('match', { public: payload(msg) }); maybeFinishRestore(); });
+  net.on('m.public', (msg) => {
+    matchAt = Date.now();
+    store.patch('match', { public: payload(msg) });
+    if (store.get().ui.resumed) store.patch('ui', { resumed: false });
+    maybeFinishRestore();
+  });
   net.on('m.private', (msg) => { matchAt = Date.now(); store.patch('match', { private: payload(msg) }); });
   net.on('m.layer', (msg) => {
     const s = store.get();

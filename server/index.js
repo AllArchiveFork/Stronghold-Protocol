@@ -40,6 +40,7 @@ import { resolveWsCompression } from './wsCompression.js';
 import { createOnlineLimit } from './onlineLimit.js';
 import { createOwnerFile } from './ownerFile.js';
 import { parseSnapshotHz } from './match/fields.js';
+import { createPersistence } from './persist/index.js';
 
 export {
   ROOT, WS_MAX_PAYLOAD, DATA_SHIM_JS, MIME, COMPRESSIBLE, BUILD_INPUTS, computeBuildTag, buildTag, resetBuildTag,
@@ -126,7 +127,7 @@ export async function startServer(opts = {}) {
   }
   const scriptMode = process.env.SP_PLUGIN_SCRIPTS;
   let registry, lobby, network, packs, serveStatic, browserBuild, assetIndex = null, views = null;
-  let content = null, visual = null, contents = null, hosts = null, studio = null, trustedRuntime = null;
+  let content = null, visual = null, contents = null, hosts = null, studio = null, trustedRuntime = null, persistence = null;
   const startedAt = Date.now();
   // The online cap and the lobby's room / AI caps (server/onlineLimit.js): a JSON file re-read while the server runs; none = no cap.
   const onlineLimit = createOnlineLimit({ file: opts.onlineLimitFile ?? process.env.SP_ONLINE_LIMIT_FILE ?? null, log });
@@ -170,7 +171,10 @@ export async function startServer(opts = {}) {
     trustedRuntime = await createTrustedRuntime({ registry: packs, log });
     lobby.trustedRuntime = trustedRuntime;
     browserBuild = computeBuildTag(ROOT, publicDir);
+    // checkpoints (SP_REDIS_URL, server/persist/): the saved lobby and its matches come back before the server listens
+    persistence = await createPersistence({ opts, registry, lobby, log });
   } catch (e) {
+    await persistence?.close();
     network?.close();
     lobby?.shutdown('boot-failed');
     try { hosts?.close(); } catch { /* boot already failed */ }
@@ -184,7 +188,8 @@ export async function startServer(opts = {}) {
   }
   const traffic = createTrafficCounter();
   const health = { startedAt, network, registry, lobby, content, browserBuild, combatPool, trialPool, trialStartupFailed,
-    getHealthMetrics: () => healthMetrics, traffic, assetIndex, views, trusted: trustedRuntime?.health };
+    getHealthMetrics: () => healthMetrics, traffic, assetIndex, views, trusted: trustedRuntime?.health,
+    persistence: persistence ? () => persistence.snapshot() : null };
   const server = http.createServer(createRequestHandler({ serveStatic, csp: process.env.SP_CSP === 'off' ? null : siteCsp(publicDir), health, log,
     trustProxy: network.opts.trustProxy, studio, trustedRuntime }));
   server.on('clientError', answerClientError);
@@ -228,6 +233,7 @@ export async function startServer(opts = {}) {
       await trustedRuntime?.close();
     }
   } catch (e) {
+    await persistence?.close();
     network.close();
     lobby.shutdown('boot-failed');
     onlineLimit.close();
@@ -259,6 +265,8 @@ export async function startServer(opts = {}) {
       try { healthMetrics?.dispose(); } catch (e) {
         try { log.warn?.('[health] performance disposal failed', e); } catch { /* diagnostic only */ }
       }
+      // the last checkpoints first: then the rooms close quietly, their players are coming back (server/persist/)
+      try { await persistence?.shutdown(); } catch (e) { log.error('[shutdown] checkpoints', e); }
       try { lobby.shutdown('shutdown'); } catch (e) { log.error('[shutdown] lobby', e); }
       try { hosts.close(); } catch (e) { log.error('[shutdown] match hosts', e); }
       network.close();
@@ -274,11 +282,12 @@ export async function startServer(opts = {}) {
         setTimeout(() => { server.closeAllConnections?.(); }, 500).unref();
       });
       try { wss.close(); } catch { /* ignore */ }
+      await persistence?.close();
     })();
     return closing;
   }
   return { port: actualPort, host: boundHost, url, server, wss, lobby, network, registry, packs, content, visual, contents, hosts, combatPool, trialPool,
-    healthMetrics, traffic, assetIndex, views, studio, close };
+    healthMetrics, traffic, assetIndex, views, studio, persistence, close };
 }
 
 if (isProcessEntry(import.meta.url)) runMain(startServer);

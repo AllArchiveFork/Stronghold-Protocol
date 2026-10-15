@@ -6,6 +6,8 @@ import { experimentalOptions, isExperimental } from '../../shared/experimental.j
 import { SKIN_LIMITS, isSkinChoices } from '../../shared/skins.js';
 import { DIFFICULTIES, ERR, NAME_MAX_LEN, modeIdFor } from '../../shared/constants.js';
 import { roomCapacity } from '../../shared/playerCapacity.js';
+import { restoreMatch } from '../match/snapshot.js';
+import { createRngFromState } from '../sim/rng.js';
 
 const OK = Object.freeze({ ok: true });
 const noopLog = { info() {}, warn() {}, error() {}, debug() {} };
@@ -209,6 +211,12 @@ export class GameHost {
     this.retired = new Map();
     this.sequence = 0;
     this.closed = false;
+    /**
+     * Checkpoints (server/persist/node.js; docs/DEPLOY.md「断点续玩」): `onCheckpoint(ctx, match, reason)` hears a committed
+     * actor's safe points. null: none taken.
+     * @type {((ctx: object, match: any, reason: string) => void) | null}
+     */
+    this.onCheckpoint = null;
   }
 
   time() {
@@ -277,22 +285,72 @@ export class GameHost {
     for (const id of safe.spectators) ctx.members.set(id, { role: 'spectator', left: false, binding: null, engineRegistered: true });
     this.contexts.set(safe.assignmentId, ctx);
     try {
-      const matchSpec = copy(safe);
-      delete matchSpec.assignmentId; delete matchSpec.build; delete matchSpec.protocol;
-      ctx.match = new this.MatchClass({ ...matchSpec, data: this.data, combatPool: this.combatPool, trialPool: this.trialPool,
-        // This host owns server-authoritative games even without SP_COMBAT.
-        clientCombat: false, log: this.log, now: this.now, afkRemoveRounds: this.afkRemoveRounds,
-        send: (id, msg, wire) => this._emit(ctx, 'send', id, msg?.t, msg, wire),
-        sendEncoded: (id, type, data) => this._emit(ctx, 'encoded', id, type, data),
-        broadcast: (msg, wire) => { this._emit(ctx, 'broadcast', null, msg?.t, msg, wire); },
-        onEnd: summary => this._end(ctx, summary),
-        onRemove: (id, removal) => this._removed(ctx, id, removal) });
-      if (typeof ctx.match.start !== 'function' || typeof ctx.match.dispose !== 'function') throw new TypeError('invalid Match interface');
+      ctx.match = this._construct(ctx);
     } catch {
       this._log('construct');
       this._retire(ctx, 'failed');
       throw new GameHostError('INTERNAL');
     }
+    return this._view(ctx);
+  }
+
+  _construct(ctx) {
+    const matchSpec = copy(ctx.spec);
+    delete matchSpec.assignmentId; delete matchSpec.build; delete matchSpec.protocol;
+    const match = new this.MatchClass({ ...matchSpec, data: this.data, combatPool: this.combatPool, trialPool: this.trialPool,
+      // This host owns server-authoritative games even without SP_COMBAT.
+      clientCombat: false, log: this.log, now: this.now, afkRemoveRounds: this.afkRemoveRounds,
+      send: (id, msg, wire) => this._emit(ctx, 'send', id, msg?.t, msg, wire),
+      sendEncoded: (id, type, data) => this._emit(ctx, 'encoded', id, type, data),
+      broadcast: (msg, wire) => { this._emit(ctx, 'broadcast', null, msg?.t, msg, wire); },
+      onEnd: summary => this._end(ctx, summary),
+      onRemove: (id, removal) => this._removed(ctx, id, removal),
+      // a committed actor's safe points (server/persist/node.js)
+      onCheckpoint: (m, reason) => { if (this._live(ctx) && ctx.state === 'committed') this.onCheckpoint?.(ctx, m, reason); } });
+    if (typeof match.start !== 'function' || typeof match.dispose !== 'function') throw new TypeError('invalid Match interface');
+    return match;
+  }
+
+  /**
+   * An actor back from its checkpoint (docs/DEPLOY.md「断点续玩」; game-node `restore`): built like prepare() from the
+   * assignment DTO it was prepared with (every human seat offline), the checkpoint applied (server/match/snapshot.js
+   * restoreMatch) — and committed at once: no start, no channel to wait for; each member binds when its player comes
+   * back (bind → onReconnect, a full resync). `saved.left`: players that had departed. The coordinator publishes it.
+   * @param {object} spec assignment DTO (copyAssignmentSpec), current build / protocol / spectators
+   * @param {{ match: object, left: string[] }} saved
+   */
+  restore(spec, saved) {
+    if (this.closed) throw new GameHostError('HOST_CLOSED');
+    const safe = copyAssignmentSpec(spec);
+    this.sweep();
+    if (this.contexts.has(safe.assignmentId)) throw new GameHostError('ASSIGNMENT_CONFLICT');
+    // a new incarnation: old callbacks compare their context object, never only the id
+    this.retired.delete(safe.assignmentId);
+    const now = this.time(), left = new Set(Array.isArray(saved?.left) ? saved.left : []);
+    const ctx = { spec: safe, key: fingerprint(safe), generation: ++this.sequence, preparedAt: now, expiresAt: now + this.prepareMs,
+      state: 'starting', committedAt: null, endedAt: null, live: true, disposed: false, match: null, buffer: [],
+      pendingEnd: null, lastPublic: null, results: new Map(), receipt: null, members: new Map(), seatIds: new Set(safe.seats.map(s => s.playerId)) };
+    for (const s of safe.seats) if (!s.isBot) ctx.members.set(s.playerId, { role: 'player', left: left.has(s.playerId), binding: null, engineConnected: false });
+    for (const id of safe.spectators) ctx.members.set(id, { role: 'spectator', left: false, binding: null, engineRegistered: false });
+    this.contexts.set(safe.assignmentId, ctx);
+    try {
+      ctx.match = this._construct(ctx);
+      if (!restoreMatch(ctx.match, saved.match, { createRngFromState, log: this.log })) throw new GameHostError('RESTORE_REFUSED');
+    } catch (e) {
+      this._log('restore');
+      this._retire(ctx, 'failed');
+      throw e instanceof GameHostError ? e : new GameHostError('RESTORE_REFUSED');
+    }
+    // nothing is bound yet: what the restore emitted reaches nobody (each member resyncs as it binds)
+    ctx.buffer = null;
+    ctx.state = 'committed';
+    ctx.committedAt = now;
+    for (const [id, member] of ctx.members) {
+      if (member.role === 'spectator') { this._invoke(ctx, 'addSpectator', id); member.engineRegistered = true; }
+    }
+    if (ctx.pendingEnd && this._live(ctx)) this._finish(ctx, ctx.pendingEnd.summary);
+    // its own checkpoint at once: a coordinator that saves its state now already names this new assignment
+    else if (this._live(ctx)) { try { this.onCheckpoint?.(ctx, ctx.match, 'restored'); } catch { this._log('checkpoint'); } }
     return this._view(ctx);
   }
 
