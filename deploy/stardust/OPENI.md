@@ -27,7 +27,7 @@ python3 -I deploy/stardust/tools/openi-assets.py \
 
 工具只在明确 `--upload` 时于本地读取 OpenI 登录文件，不把 Token 写入参数、输出、checkpoint、Git 或部署机。API 使用 Bearer，OBS PUT 使用另一个无账户凭据的 HTTP 客户端。公开下载解析无需 Token，生产解析器没有 Token 配置。
 
-每个源文件验证大小和 SHA-256；PUT 完成检查 MD5 ETag，然后注册，再完整核对远端路径/大小。`upload-ready` 不等于浏览器验收完成，也不声称做过全部远端文件的 SHA-256 重下载。日志/异常只报告安全状态，不记录签名 URL、响应体或凭据。
+每个源文件验证大小和 SHA-256；PUT 完成检查 MD5 ETag，然后注册，再完整核对远端路径/大小。OpenI 不允许超过 10000 个已 PUT 未注册的 SDK 上传（get_upload_url 返回 code 99），所以未注册数达到 5000 时先注册已全部结算的批次；小计划仍在全部 PUT 后一次注册。`upload-ready` 不等于浏览器验收完成，也不声称做过全部远端文件的 SHA-256 重下载。日志/异常只报告安全状态，不记录签名 URL、响应体或凭据。
 
 MP3 远端名映射为 `media/<stem>`，不带扩展名；所有对应的 `/assets/audio/...mp3` 和 `/media/` 别名都指向同一个对象，不复制第二份音频。保留上游避免下载管理器劫持的无扩展名路径。
 
@@ -60,6 +60,6 @@ MP3 远端名映射为 `media/<stem>`，不带扩展名；所有对应的 `/asse
 
 ## 多源与验证边界
 
-公开材料消费者限额为100000 aliases／64MiB输入，OpenI最多四个明确审核、固定且去重的mirror目录（保持旧单／双／三mirror兼容，拒绝第五个）；新增供给为已有两目录之外的固定0.2.3增量目录和0.2.5战场场景增量目录（维护者2026-10-12决定开第四个目录），不授权自动发现或扩容。ModelScope现有上限仍为八个明确批准的prefix。唯一批准的素材例外为 `/assets/skins/char_340_shwaz_snow_1/illustration.png` 的OpenI-only供给；不通过改名重传或旧pin绕过provider限制，也不泛化其他例外。
+公开材料消费者限额为150000 aliases／64MiB输入，OpenI最多五个明确审核、固定且去重的mirror目录（保持旧单／双／三／四mirror兼容，拒绝第六个）；新增供给为已有两目录之外的固定0.2.3增量目录、0.2.5战场场景增量目录（维护者2026-10-12决定开第四个目录）和0.3.0素材增量目录（2026-10-16随0.3.0官方特效/配音/场景开第五个目录，alias上限同时从100000提到150000），不授权自动发现或扩容。ModelScope现有上限仍为八个明确批准的prefix。唯一批准的素材例外为 `/assets/skins/char_340_shwaz_snow_1/illustration.png` 的OpenI-only供给；不通过改名重传或旧pin绕过provider限制，也不泛化其他例外。
 
 不能把ModelScope CDN `auth_key` 的签发时间当OpenI `Expires`，或套用固定TTL。本站只302到稳定、40hex revision-pinned的ModelScope resolve入口，不保存或自行解释临时CDN链接。metadata库存核验、远端正文抽样、完整正文重下载和浏览器验收须分别记录；这些不自动构成密码输入、玩法或容量验收，也不能保证任意下游CDN错误自动回退。

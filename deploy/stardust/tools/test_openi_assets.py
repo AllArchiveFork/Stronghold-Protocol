@@ -712,6 +712,26 @@ class AssetsTest(unittest.TestCase):
         self.assertGreater(first_registration, last_acquire)
         self.assertLessEqual(fake.max_active, 4)
 
+    def test_large_plan_registers_settled_batches_below_the_provider_limit(self):
+        for number in range(198):
+            self.add_file(f"assets/ui/batch-{number}.png", f"image-{number}".encode())
+        self.save_manifest()
+        plan, fake = self.plan(), self.fake()
+        self.assertEqual(tool.REGISTER_THRESHOLD, 5000)
+        state = self.state(plan)
+        tool.upload(plan, fake.remote, state, self.saved, register_threshold=100, progress=lambda _: None)
+        self.assertEqual([len(batch) for batch in fake.registration_batches], [100, 100, 5])
+        last_acquire = max(i for i, r in enumerate(fake.api_requests)
+                           if r.url.path == "/api/v1/upload/direct/get_upload_url")
+        first_registration = min(i for i, r in enumerate(fake.api_requests)
+                                 if r.url.path == "/api/v1/upload/direct/complete_upload")
+        self.assertLess(first_registration, last_acquire)
+        self.assertTrue(all(r["state"] == "registered" for r in state["files"].values()))
+        for bad in (0, 10000, "5"):
+            with self.assertRaisesRegex(tool.ToolError, "invalid-register-threshold"):
+                tool.upload(plan, fake.remote, self.state(plan, resume=True), self.saved, resume=True,
+                            register_threshold=bad, progress=lambda _: None)
+
     def test_unexpected_empty_remote_directory_refused_on_resume(self):
         plan, fake = self.plan(), self.fake()
         fake.directories.add(self.prefix + "/unrelated")

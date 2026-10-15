@@ -140,32 +140,32 @@ test('immutable byte reuse requires an exact bounded explicit mirror allowlist',
   assert.deepEqual(calls, values.map(e => e.fileName));
 });
 
-test('four reviewed mirrors accept the fixed deltas but reject a fifth, undeclared objects and arbitrary hosts/roots', () => {
-  assert.equal(MAX_OPENI_MIRRORS, 4);
+test('five reviewed mirrors accept the fixed deltas but reject a sixth, undeclared objects and arbitrary hosts/roots', () => {
+  assert.equal(MAX_OPENI_MIRRORS, 5);
   assert.deepEqual(validateManifest({ ...manifest(), mirrorReleases: [MIRROR] }).mirrorReleases, [MIRROR]);
-  const mirrors = [MIRROR, 'old-second-fixture', 'v023-delta-fixture', 'v025-delta-fixture'];
+  const mirrors = [MIRROR, 'old-second-fixture', 'v023-delta-fixture', 'v025-delta-fixture', 'v030-delta-fixture'];
   const values = mirrors.map((mirror, i) => entry(`/assets/mirror_${i}.png`, `releases/${mirror}/assets/mirror_${i}.png`));
   const input = { ...manifest(values), mirrorReleases: mirrors };
   assert.deepEqual(validateManifest(input).mirrorReleases, mirrors);
-  const fifth = 'fifth-fixture';
-  assert.throws(() => validateManifest({ ...manifest([...values, entry('/assets/fifth.png', `releases/${fifth}/assets/fifth.png`)]),
-    mirrorReleases: [...mirrors, fifth] }), { message: 'CONFIG' });
+  const sixth = 'sixth-fixture';
+  assert.throws(() => validateManifest({ ...manifest([...values, entry('/assets/sixth.png', `releases/${sixth}/assets/sixth.png`)]),
+    mirrorReleases: [...mirrors, sixth] }), { message: 'CONFIG' });
   for (const invalid of ['../delta', 'https://evil.test/delta', 'releases/delta', '.hidden']) {
     assert.throws(() => validateManifest({ ...input, mirrorReleases: [MIRROR, mirrors[1], mirrors[2], invalid] }), { message: 'CONFIG' });
   }
   for (const fileName of ['releases/unapproved/assets/mirror_2.png', 'other/v023-delta-fixture/assets/mirror_2.png',
     'https://evil.test/releases/v023-delta-fixture/assets/mirror_2.png', 'releases/v023-delta-fixture/data/mirror_2.png']) {
-    assert.throws(() => validateManifest({ ...input, entries: [...values.slice(0, 2), { ...values[2], fileName }, values[3]] }), { message: 'CONFIG' });
+    assert.throws(() => validateManifest({ ...input, entries: [...values.slice(0, 2), { ...values[2], fileName }, ...values.slice(3)] }), { message: 'CONFIG' });
   }
-  assert.throws(() => validateManifest({ ...input, mirrorReleases: [MIRROR, mirrors[1], mirrors[2], mirrors[2]] }), { message: 'CONFIG' });
-  assert.throws(() => validateManifest({ ...input, entries: values.slice(0, 3) }), { message: 'CONFIG' }, 'unused declared mirrors still fail');
+  assert.throws(() => validateManifest({ ...input, mirrorReleases: [MIRROR, mirrors[1], mirrors[2], mirrors[3], mirrors[3]] }), { message: 'CONFIG' });
+  assert.throws(() => validateManifest({ ...input, entries: values.slice(0, 4) }), { message: 'CONFIG' }, 'unused declared mirrors still fail');
 });
 
-test('native mounted four-mirror JSON resolves each exact directory and rejects unknown paths without provider calls', async t => {
-  const mirrors = [MIRROR, 'old-second-fixture', 'v023-delta-fixture', 'v025-delta-fixture'];
+test('native mounted five-mirror JSON resolves each exact directory and rejects unknown paths without provider calls', async t => {
+  const mirrors = [MIRROR, 'old-second-fixture', 'v023-delta-fixture', 'v025-delta-fixture', 'v030-delta-fixture'];
   const values = mirrors.map((mirror, i) => entry(`/assets/mirror_${i}.png`, `releases/${mirror}/assets/mirror_${i}.png`));
   const config = { ...manifest(values), mirrorReleases: mirrors };
-  const directory = await mkdtemp(join(tmpdir(), 'openi-four-mirror-test-'));
+  const directory = await mkdtemp(join(tmpdir(), 'openi-five-mirror-test-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const manifestPath = join(directory, 'manifest.json');
   await writeFile(manifestPath, JSON.stringify(config));
@@ -184,10 +184,10 @@ test('native mounted four-mirror JSON resolves each exact directory and rejects 
     assert.equal(decodeURIComponent(new URL(result.headers.location).pathname), config.ossPathPrefix + value.fileName);
   }
   assert.deepEqual(calls, values.map(value => value.fileName));
-  for (const path of ['/assets/unlisted.png', '/releases/fifth-fixture/assets/mirror_2.png', '/data/assets.json']) {
+  for (const path of ['/assets/unlisted.png', '/releases/sixth-fixture/assets/mirror_2.png', '/data/assets.json']) {
     assert.equal((await rawRequest(base, path)).status, 404);
   }
-  assert.equal(calls.length, 4, 'unknown roots/paths must not select new mirrors or contact the provider');
+  assert.equal(calls.length, 5, 'unknown roots/paths must not select new mirrors or contact the provider');
 });
 
 test('a cached exact capability is reused, with no client query or headers in the public API call', async t => {

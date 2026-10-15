@@ -478,7 +478,7 @@ location / {{ return 404; }}
                     self.assertFalse((root / ('rejected-' + str(index))).exists())
 
     def test_entry_count_remains_bounded_at_next_release_limit(self):
-        self.assertEqual(TOOL.MAX_ENTRIES, 100000)
+        self.assertEqual(TOOL.MAX_ENTRIES, 150000)
         for count in (0, TOOL.MAX_ENTRIES + 1):
             with self.subTest(count=count):
                 openi, models = fixture()
@@ -570,14 +570,17 @@ location / {{ return 404; }}
                          TOOL.MODEL_BASE + 'assets/other/pixel.png')
         self.assertIn(b'["old-mirror"] = true', files['header.lua'])
 
-    def test_four_reviewed_mirrors_keep_exact_targets_and_reject_five(self):
-        self.assertEqual(TOOL.MAX_OPENI_MIRRORS, 4)
+    def test_five_reviewed_mirrors_keep_exact_targets_and_reject_six(self):
+        self.assertEqual(TOOL.MAX_OPENI_MIRRORS, 5)
         openi, models = fixture()
         scene = {'requestPath': '/assets/test/scene.bin', 'fileName': 'releases/' + TOOL.RELEASE + '/assets/test/scene.bin',
                  'bytes': 9, 'sha256': 'd' * 64, 'mime': 'application/octet-stream'}
-        openi['entries'].append(scene)
-        models['entries'].append({**scene, 'fileName': TOOL.MODEL_PREFIX + '/assets/test/scene.bin'})
-        mirrors = [TOOL.RELEASE, 'old-second-fixture', 'v023-delta-fixture', 'v025-delta-fixture']
+        fx = {'requestPath': '/assets/local/fx/prefabs/test.json', 'fileName': 'releases/' + TOOL.RELEASE + '/assets/local/fx/prefabs/test.json',
+              'bytes': 2, 'sha256': 'e' * 64, 'mime': 'application/json'}
+        for row in (scene, fx):
+            openi['entries'].append(row)
+            models['entries'].append({**row, 'fileName': TOOL.MODEL_PREFIX + '/' + row['fileName'].split('/', 2)[2]})
+        mirrors = [TOOL.RELEASE, 'old-second-fixture', 'v023-delta-fixture', 'v025-delta-fixture', 'v030-delta-fixture']
         openi['mirrorReleases'] = mirrors
         for mirror, row in zip(mirrors, openi['entries']):
             row['fileName'] = 'releases/' + mirror + '/' + row['fileName'].split('/', 2)[2]
@@ -588,8 +591,8 @@ location / {{ return 404; }}
         for mirror, row in zip(mirrors, openi['entries']):
             self.assertEqual(headers['entries'][row['requestPath']]['fileName'], row['fileName'])
             self.assertIn(('[' + json.dumps(mirror) + '] = true').encode(), files['header.lua'])
-        self.assertNotIn(b'fifth-fixture', files['header.lua'])
-        openi['mirrorReleases'] = mirrors + ['fifth-fixture']
+        self.assertNotIn(b'sixth-fixture', files['header.lua'])
+        openi['mirrorReleases'] = mirrors + ['sixth-fixture']
         with self.assertRaises(ValueError): TOOL.render(openi, models, CONTAINER)
 
     def test_three_mirror_validation_does_not_allow_arbitrary_hosts_roots_or_objects(self):

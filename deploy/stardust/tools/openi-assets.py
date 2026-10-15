@@ -418,8 +418,15 @@ class OpenI:
                   json={"file_name_list": names})
 
 
-def upload(plan, remote, state, checkpoint_path, *, resume=False, workers=4, progress=print):
+# OpenI refuses get_upload_url once 10000 SDK uploads await complete_upload ("cannot exceed 10000", 2026-10-16),
+# so a large plan registers its settled PUTs whenever this many are still unregistered.
+REGISTER_THRESHOLD = 5000
+
+
+def upload(plan, remote, state, checkpoint_path, *, resume=False, workers=4, progress=print,
+           register_threshold=REGISTER_THRESHOLD):
     require(type(workers) is int and 1 <= workers <= 4, "invalid-worker-count")
+    require(type(register_threshold) is int and 1 <= register_threshold < 10000, "invalid-register-threshold")
     dataset_id = remote.dataset_id()
     expected = {f.file_name: f.bytes for f in plan.files}
     present, inventory = remote.inventory(plan.prefix, expected)
@@ -433,6 +440,17 @@ def upload(plan, remote, state, checkpoint_path, *, resume=False, workers=4, pro
     atomic_json(checkpoint_path, state)  # Claim a clean prefix before uploading any bytes.
     pending = [f for f in plan.files if records[f.file_name]["state"] == "pending"]
     completed = sum(r["state"] != "pending" for r in records.values())
+
+    def register_uploaded():
+        names = sorted(name for name, record in records.items() if record["state"] == "uploaded")
+        for start in range(0, len(names), 100):
+            batch = names[start:start + 100]
+            remote.register(batch, dataset_id)
+            for name in batch:
+                records[name]["state"] = "registered"
+            atomic_json(checkpoint_path, state)
+            progress(f"registered={sum(r['state'] == 'registered' for r in records.values())}/{len(plan.files)}")
+
     with ThreadPoolExecutor(max_workers=workers) as pool:
         for start in range(0, len(pending), 100):
             futures = {pool.submit(remote.put, plan, asset, dataset_id): asset
@@ -449,14 +467,10 @@ def upload(plan, remote, state, checkpoint_path, *, resume=False, workers=4, pro
             atomic_json(checkpoint_path, state)  # Every submitted PUT has now settled.
             progress(f"put_verified={completed}/{len(plan.files)}")
             require(not failed, "put-batch-failed-resume-checkpoint")
-    names = sorted(name for name, record in records.items() if record["state"] == "uploaded")
-    for start in range(0, len(names), 100):
-        batch = names[start:start + 100]
-        remote.register(batch, dataset_id)
-        for name in batch:
-            records[name]["state"] = "registered"
-        atomic_json(checkpoint_path, state)
-        progress(f"registered={sum(r['state'] == 'registered' for r in records.values())}/{len(plan.files)}")
+            # Only settled, ETag-verified batches; small plans still register once, after every PUT.
+            if sum(r["state"] == "uploaded" for r in records.values()) >= register_threshold:
+                register_uploaded()
+    register_uploaded()
     present, inventory = remote.inventory(plan.prefix, expected)
     require(present and inventory == expected, "final-remote-inventory-mismatch")
     return len(inventory)
