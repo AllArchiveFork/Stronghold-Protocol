@@ -77,9 +77,12 @@ class LocalStackTests(unittest.TestCase):
             env = service.get('environment', {})
             if name == 'coordinator' or name.startswith('game-'):
                 self.assertEqual(env['SP_REDIS_URL'], 'redis://172.30.245.5:6379/0')
-                self.assertEqual(env['SP_REDIS_PASSWORD_FILE'], '/run/secrets/valkey.pass')
+                self.assertEqual(env['SP_REDIS_PASSWORD_FILE'], '/run/store/valkey.pass')
                 self.assertEqual(env['SP_REDIS_PREFIX'], 'formal:')
-                self.assertIn(str(self.root / 'store/valkey.pass') + ':/run/secrets/valkey.pass:ro', service['volumes'])
+                self.assertIn(str(self.root / 'store/valkey.pass') + ':/run/store/valkey.pass:ro', service['volumes'])
+                # no mount point inside another bind of the same container (a read-only directory cannot take one)
+                targets = [v.split(':')[1] for v in service['volumes']]
+                self.assertFalse([(x, y) for x in targets for y in targets if x != y and x.startswith(y.rstrip('/') + '/')], name)
                 self.assertEqual(service['depends_on'], ['valkey'])
             elif name != 'valkey':
                 self.assertNotIn('SP_REDIS_URL', env)

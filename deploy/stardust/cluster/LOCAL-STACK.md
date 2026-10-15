@@ -62,7 +62,7 @@ python3 -I /opt/ark-cluster-formal/tools/cluster-local-stack.py --profile formal
 
 - 新增一个 `valkey` 服务：镜像 `valkey/valkey:9.1.2-alpine3.24` 按摘要固定（`VALKEY_IMAGE`，`pull_policy: never`，部署前须先在宿主机 `docker pull`/`load` 并核对摘要），地址 `core_ip(5)`（Formal `172.30.245.5`），**不发布任何端口**，只在 bridge 上；以镜像自带用户 `999:1000` 运行，只读根文件系统、`cap_drop: ALL`、`no-new-privileges`。
 - 数据在 Compose 命名卷 `valkey-data`（AOF 每秒落盘，`maxmemory` 默认 2048 MB，`volatile-ttl`）。同一 project 名的新组合栈沿用这个卷；只要 `valkey` 服务定义不变，`docker compose up -d` 换栈时它不会被重建，存档在内存里一直可用。
-- 只在新组合栈目录生成一个新的随机密码：`valkey/valkey.conf`（含 `requirepass`，只挂进 `valkey`）和 `valkey.pass`（root:1000 0440，只读挂进 coordinator 与全部 game 的 `/run/secrets/valkey.pass`）；密码不进 compose.json、环境变量、argv 或 summary。
+- 只在新组合栈目录生成一个新的随机密码：`valkey/valkey.conf`（含 `requirepass`，只挂进 `valkey`）和 `valkey.pass`（root:1000 0440，只读挂进 coordinator 与全部 game 的 `/run/store/valkey.pass`；不放在 `/run/secrets` 下，因为 coordinator 把整个 keys 目录只读挂在那里，嵌套挂载点建不出来，rel17 首次切换因此失败）；密码不进 compose.json、环境变量、argv 或 summary。
 - coordinator 与每个 game 增加 `SP_REDIS_URL=redis://<core_ip(5)>:6379/0`、`SP_REDIS_PASSWORD_FILE`、`SP_REDIS_PREFIX=<profile>:` 和 `depends_on: [valkey]`（停止时先停角色、让它们写完最后一次存档，启动时先起存储）；ingress 不连存储。`stack-summary.json` 增加 `checkpointStore`（服务、镜像、地址、内存上限、前缀，无秘密），容器数加 1。
 - 不加该选项时输出逐字节不变。主线程优先级工具（`main-thread-priority.py --profile local`）按固定目标清单核对，开启前要确认它不把多出的 `valkey` 容器当作未知目标拒绝（它不是 Node 角色，不调优先级）。
 

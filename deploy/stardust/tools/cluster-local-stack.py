@@ -63,7 +63,9 @@ OWNER_FILE = ONLINE_LIMIT_MOUNT + '/owner.json'
 # own user (uid 999, gid 1000 — the group every project secret file already has) at core_ip(5), which no role uses.
 VALKEY_IMAGE = 'valkey/valkey:9.1.2-alpine3.24@sha256:48332870af354a799964c0012ae1194a0bf2bf894eb508f945810596dc2d8d11'
 VALKEY_SUFFIX = 5
-VALKEY_PASSWORD_MOUNT = '/run/secrets/valkey.pass'
+# Not under /run/secrets: the coordinator mounts its whole keys directory read-only there, and runc cannot create a
+# nested mount point inside a read-only bind (rel17 2026-10-16: the coordinator did not start).
+VALKEY_PASSWORD_MOUNT = '/run/store/valkey.pass'
 VALKEY_MAXMEMORY_MB = 2048
 
 
