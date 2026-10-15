@@ -152,9 +152,6 @@ export function shopBlockReason(kind, { priv, editable, slot } = {}) {
   const shop = priv.shop || {};
   if (kind === 'buy' || kind === 'reward') {
     if (!isObj(slot) || slot.sold) return kind === 'reward' ? t('已选择') : t('已售出');
-    // the team's shared stock this card draws from is used up — others' or the player's own copies (m.private
-    // slot.soldOut; displays reserve no copies). Named for the team so it does not read as a fault of this purchase.
-    if (slot.soldOut) return t('全队库存已用完');
     if ((Number(slot.price) || 0) > funds) return t('资金不足');
     // a full hand refuses every purchase / pick, a merge-completing one too (PRTS 卫戍协议/帮助 §手牌区, GitHub #82)
     if (handFull(priv)) return t('整备区已满');

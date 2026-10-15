@@ -41,6 +41,12 @@ export class MatchPrep {
    * layout, temp, Ready). The step generators run the same actions in the same order as the one-shot routine (same
    * rng draws, same decisions); in virtual time (botSliceMs unbounded) each stage runs at once. The prep ending first
    * (deadline) or a newer schedule for the seat drops the job (a step never leaves a transient board behind).
+   * A rehearsal offered to the host's browser (botRehearsalDelegate, DESIGN §14 — AI teammates only) is not stepped
+   * here: the job stays `pending` until MatchRehearsal accepts the host's pick (`done`, the layout ready to apply) or
+   * takes it over, and only a takeover runs `job.run` — the server's slices, never a second simulation of what the host
+   * already ran; a pick accepted before this driver subscribed to the job is applied just the same (`job.done`). Either
+   * outcome is applied once the generator that offered the task has finished — it still places the default layout after
+   * the delegation — which is why the continuation is installed here and not with the frame.
    */
   scheduleBotPrep(ps, i = 0) {
     this._cancelBotPrep(ps);
@@ -101,7 +107,7 @@ export class MatchPrep {
       work.gen = gen;
       if (work.verify) this._workerBotPrepOwner = ps;
       try {
-        do r = gen.next(); while (!r.done && !(bounded && now() - t0 >= this.botSliceMs));
+        do r = gen.next(); while (!r.done && !(bounded && now() - t0 >= this.botSliceMs)); // loop-cap: generator and the bot time slice
       } catch (e) { failure = e; }
       finally { this._workerBotPrepOwner = owner; }
       if (!valid()) { work.cancel(); return; }
@@ -127,7 +133,7 @@ export class MatchPrep {
       drive(gen, '', ready);
     };
     defer(this.scaled(DELAYS.BOT_ACTION + i * DELAYS.BOT_STAGGER), () => {
-      drive(botPrepBeginSteps(this, ps), '', (job) => {
+      drive(botPrepBeginSteps(this, ps, { delegate: this.botRehearsalDelegate }), '', (job) => {
         if (!job) { end(null); return; }
         work.job = job;
         const complete = () => { if (bounded || job.remote) defer(0, () => end(job)); else end(job); };
@@ -179,6 +185,20 @@ export class MatchPrep {
           try { done = job.run(this.botSliceMs); } catch (e) { this.reportError(`bot ${ps.playerId} rehearsal`, e); }
           if (done) complete(); else defer(0, slice);
         };
+        // A rehearsal offered to the host's browser (SP_BOT_REHEARSAL=host, DESIGN §14): the host's pick may already be in
+        // (`done`: applied, never simulated again); still waiting, MatchRehearsal calls back once it is in or once the
+        // server took the job over, whose own slices follow. The continuation is installed here, after the generator
+        // placed the default layout, so an answer applied earlier cannot drop those steps.
+        if (job.done) { complete(); return; }
+        if (job.pending) {
+          job.onSettled = () => this.guard(() => {
+            if (!valid()) { work.cancel(); return; }
+            if (!fresh()) { stale(); return; }
+            if (job.done) complete();
+            else { job.takeOver(); defer(0, slice); }
+          });
+          return;
+        }
         if (bounded || job.remote) defer(0, slice); else slice();
       });
     });
@@ -223,6 +243,9 @@ export class MatchPrep {
     // 掉线由 AI 接管: a seat offline for OFFLINE_TAKEOVER_ROUNDS prep ends is the AI's from the next phase on
     this._checkOffline();
     for (const ps of this.order) this._cancelBotPrep(ps);
+    // rehearsals still waiting for a host's answer die with the prep: their bots place the default layout, a late answer
+    // is ignored (Match._takeOverRehearsal / MatchRehearsal) and nothing of them runs after the phase ended
+    this._cancelRehearsal();
     this.setDeadline(0);
     const alive = this.alivePlayers();
     for (const ps of alive) this.dispatch(ps, 'onPrepEnd', { round: this.round });

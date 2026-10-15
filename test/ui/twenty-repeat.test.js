@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeDraft, normalizeSp } from '../../public/js/ui/gameLogic/draft.js';
-import { teammateBands, draftSelection, autoPickBand } from '../../public/js/screens/bandDraft.js';
-import { cardPickable, pickBusy, ChoiceView, spTap } from '../../public/js/ui/choiceOverlay.js';
+import { normalizeDraft, normalizeSp, draftMyTurn } from '../../public/js/ui/gameLogic/draft.js';
+import { teammateBands, draftSelection, autoPickBand, draftTip } from '../../public/js/screens/bandDraft.js';
+import { cardPickable, pickBusy, ChoiceView, spTap, turnPopupDue, spMarks } from '../../public/js/ui/choiceOverlay.js';
 
 const players = Array.from({ length: 20 }, (_, seat) => ({ seat, playerId: `p${seat}`, name: `Doctor${seat}` }));
 const cards = () => Array.from({ length: 6 }, (_, idx) => ({ id: `choice${idx}`, name: `Choice${idx}`, desc: `Effect${idx}` }));
@@ -88,4 +88,27 @@ test('absent or non-boolean repeat flags still enforce exclusivity, even for leg
     const sp = normalizeSp({ cards: cards(), picks: { p0: 0 }, turn: 'p1', allowRepeat: value }, players);
     assert.equal(cardPickable(sp, sp.cards[0], { myId: 'p1', solo: false }), false);
   }
+});
+
+// Expanded rooms draft concurrently (server MatchPhases.concurrentDraft): no turn — every seat still deciding may pick.
+test('concurrent drafts: every seat still deciding may pick, without a turn, skip or another seat', () => {
+  const roster = players.slice(0, 8), order = roster.map(p => p.playerId);
+  const draft = normalizeDraft({ order, turn: null, picks: { p0: 'band_a' }, allowRepeat: true, concurrent: true }, roster);
+  assert.equal(draft.concurrent, true); assert.equal(draft.turnPid, null);
+  assert.equal(draftMyTurn(draft, 'p5'), true); assert.equal(draftMyTurn(draft, 'p0'), false, 'one pick each');
+  assert.equal(draftMyTurn(draft, 'observer'), false, 'a seat outside the order never picks');
+  assert.equal(draftMyTurn(normalizeDraft({ order, turn: 'p1', picks: {} }, roster), 'p5'), false, 'turn-based drafts keep their turn');
+  for (const value of [undefined, false, 1, 'true']) assert.equal(Object.hasOwn(normalizeDraft({ order, concurrent: value }, roster), 'concurrent'), false);
+  assert.match(draftTip({ timed: true, turnSeconds: 50, autoName: 'B', selected: true, concurrent: true }), /所有博士同时选择/);
+  assert.doesNotMatch(draftTip({ timed: true, turnSeconds: 50, concurrent: true }), /跳过/);
+
+  const raw = { family: 'bounty', cards: cards(), order, turn: null, picks: { p0: 0 }, taken: { 0: 'p0' }, allowRepeat: true, concurrent: true };
+  const sp = normalizeSp(raw, roster, [1]);
+  assert.equal(sp.concurrent, true); assert.equal(sp.turnPid, null);
+  assert.equal(cardPickable(sp, sp.cards[0], { myId: 'p7', solo: false }), true);
+  assert.equal(cardPickable(sp, sp.cards[1], { myId: 'p7', solo: false }), false, "m.private spBlocked: sold out for this seat's stock");
+  assert.equal(cardPickable(sp, sp.cards[0], { myId: 'p0', solo: false }), false);
+  assert.equal(turnPopupDue(sp, { myId: 'p7', solo: false }), true); assert.equal(turnPopupDue(sp, { myId: 'p0', solo: false }), false);
+  const marks = spMarks(sp, { solo: false });
+  assert.equal(marks.get('p0'), 'done'); assert.ok(order.slice(1).every(pid => marks.get(pid) === 'turn'));
 });

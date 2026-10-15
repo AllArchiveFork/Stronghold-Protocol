@@ -8,7 +8,7 @@ import { VOICE_LANGS, sanitizeSettings } from '../../public/js/ui/gameLogic/sett
 test('one canonical CN/JP/EN preference survives volume changes and mirrors the compatible settings field', () => {
   const before = settingsStore.get(), previous = voiceLanguageStore.get().language;
   try {
-    assert.deepEqual(VOICE_LANGS, ['cn', 'jp', 'en']);
+    assert.deepEqual(VOICE_LANGS, ['cn', 'jp', 'en', 'kr']); // 0.3.0: + the Korean dub
     for (const language of VOICE_LANGS) {
       setVoiceLanguage(language);
       assert.equal(voiceLanguageStore.get().language, language);

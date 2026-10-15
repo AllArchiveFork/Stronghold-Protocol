@@ -9,7 +9,9 @@
 // scheduler runs battles synchronously; default true), timerScale, battleContent, botRehearsal (default 0),
 // botSliceMs (bot rehearsal slice budget; default: unbounded in virtual time), aiPicksLast (the room option
 // AI 队友最后选择: the drafts order every human seat before every AI seat), afkRemoveRounds (the AFK rule; default 0
-// here — the suites script humans that only confirm and ready — production default 2: test/match/afk.test.js).
+// here — the suites script humans that only confirm and ready — production default 2: test/match/afk.test.js),
+// hostId / botRehearsalDelegate / botRehearsalDelegateMs (the delegated bot rehearsal, DESIGN §14:
+// test/match/rehearsal-delegate.test.js), cs / vs / requireCs (a gameplay-plugin room: host rehearsal stays off).
 // Combat mode: clientCombat (default false here: the legacy server-run mode most suites were written for; production
 // defaults to client-side combat, DESIGN §14). With clientCombat: true every human gets a scripted browser
 // (test/match/simClient.js SimClient: h.clients) unless clients: false; pace 'instant' | 'paced', perPlayer
@@ -84,6 +86,15 @@ export function makeMatch(o = {}) {
     // the AFK rule (Match opts.afkRemoveRounds) is off unless a test asks for it: the suites' scripted humans only
     // confirm and ready, which the rule would count as idle (test/match/afk.test.js covers it)
     afkRemoveRounds: o.afkRemoveRounds ?? 0,
+    // a bot prep's layout rehearsal delegated to the room's host (DESIGN §14; test/match/rehearsal-delegate.test.js):
+    // `hostId` is the executor a task is sent to, `botRehearsalDelegateMs` its answer window
+    hostId: o.hostId,
+    botRehearsalDelegate: o.botRehearsalDelegate,
+    botRehearsalDelegateMs: o.botRehearsalDelegateMs,
+    // a gameplay-plugin room (DESIGN §32.6): host rehearsal stays off there (match/rehearsal.js requireCs)
+    cs: o.cs,
+    vs: o.vs,
+    requireCs: o.requireCs,
   });
   const m = h.m;
   if (m.clientCombat && o.clients !== false) {
@@ -123,9 +134,11 @@ export function makeMatch(o = {}) {
       for (const ps of m.players.values()) {
         if (ps.isBot || ps.left) continue;
         if (m.phase === 'INFO_CHECK' && !ps.infoReady) m.handle(ps.playerId, { t: 'g.infoReady' });
-        if (m.phase === 'BAND_DRAFT' && m.draftTurn() === ps.playerId) m.handle(ps.playerId, { t: 'g.band', bandId: band });
-        if (m.phase === 'SP_DRAFT' && m.spTurn() === ps.playerId) {
-          const idx = m.sp.cards.find((c) => m.spCardAvailable(c))?.idx;
+        // (an expanded room's drafts are concurrent: every seat still deciding picks — Match concurrentDraft)
+        const bandDue = m.draft?.concurrent ? m.draft.order.includes(ps.playerId) && !m.draft.picks[ps.playerId] : m.draftTurn() === ps.playerId;
+        if (m.phase === 'BAND_DRAFT' && bandDue) m.handle(ps.playerId, { t: 'g.band', bandId: band });
+        if (m.phase === 'SP_DRAFT' && (m.sp?.concurrent ? m.spPending(ps) : m.spTurn() === ps.playerId)) {
+          const idx = m.sp.cards.find((c) => m.spCardAvailable(c, ps))?.idx;
           if (idx != null) m.handle(ps.playerId, { t: 'g.choice', idx });
         }
         if (ready && m.phase === 'PREP' && ps.alive && !ps.ready) {
@@ -171,7 +184,7 @@ function legacyInvariants(m) {
     assert.ok(Number.isInteger(ps.funds) && ps.funds >= 0, `${ps.playerId} funds ${ps.funds}`);
     assert.ok(Number.isInteger(ps.pendingFunds) && ps.pendingFunds >= 0, `${ps.playerId} pending ${ps.pendingFunds}`);
     assert.equal(ps.hand.length, GEO.HAND_SIZE);
-    assert.equal(ps.temp.length, GEO.TEMP_SIZE);
+    assert.ok(ps.temp.length >= GEO.TEMP_SIZE, 'temp retains five visible slots and may have queued overflow');
     assert.ok(ps.shop.level >= 1 && ps.shop.level <= m.gd.maxShopLevel);
     assert.ok(ps.shop.upgradePrice >= 0);
     assert.ok(ps.shop.freeRefreshes >= 0);

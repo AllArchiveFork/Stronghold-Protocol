@@ -395,7 +395,7 @@ export class CombatWorkerPool {
     signal?.addEventListener('abort', abort, { once: true });
     try {
       let out = await handle.ready;
-      while (!out.done) {
+      while (!out.done) { // loop-cap: one Worker slice per turn until the session is done, cancelled or aborted
         out = await handle.advance(); // each real reply admits just one low-priority slice
         if (onProgress) await onProgress(out);
         if (signal?.aborted) throw error('trial session cancelled', 'SESSION_CLOSED');

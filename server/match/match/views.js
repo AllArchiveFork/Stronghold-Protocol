@@ -42,10 +42,10 @@ export class MatchViews {
       case PHASE.INFO_CHECK: return ps.infoReady ? 'ready' : 'deciding';
       case PHASE.BAND_DRAFT:
         if (this.draft && this.draft.picks[ps.playerId]) return 'ready';
-        return this.draft && this.draftTurn() === ps.playerId ? 'deciding' : 'acting';
+        return this.draft && (this.draft.concurrent || this.draftTurn() === ps.playerId) ? 'deciding' : 'acting';
       case PHASE.SP_DRAFT:
         if (this.sp && this.sp.picks[ps.playerId] != null) return 'ready';
-        return this.sp && this.spTurn() === ps.playerId ? 'deciding' : 'acting';
+        return this.sp && (this.sp.concurrent ? this.spPending(ps) : this.spTurn() === ps.playerId) ? 'deciding' : 'acting';
       case PHASE.PREP: return ps.ready ? 'ready' : 'acting';
       case PHASE.COMBAT: case PHASE.FINAL_ASSAULT: case PHASE.HIDDEN_CORE: {
         const f = this.fields.find((x) => x.players.includes(ps.playerId));
@@ -161,6 +161,8 @@ export class MatchViews {
         order: d.order.slice(), turn: this.draftTurn(), picks: { ...d.picks }, skipsLeft: { ...d.skipsLeft }, turnDeadline: d.turnDeadline || 0,
         turnSeconds: d.untimed ? 0 : this.bandTurnMs() / 1000, untimed: !!d.untimed,
         ...(this.capacityExperiment ? { allowRepeat: true } : {}),
+        // every seat picks at once (MatchPhases.concurrentDraft): `turn` is null, the countdown is the step's
+        ...(d.concurrent ? { concurrent: true } : {}),
         // room.setBotBand: the designated strategies still held for their AI seats (bandId → playerId; present only
         // when the match has a designation and repeats are not allowed)
         ...(this.botBands?.size && !this.capacityExperiment ? { reserved: this.reservedBands() } : {}),
@@ -170,10 +172,12 @@ export class MatchViews {
       const s = this.sp;
       v.sp = {
         family: s.family, name: s.name, desc: s.desc, eventId: s.eventId,
-        // an item card's stock is the picking seat's (its chess-pool group's: Match itemPoolFor)
+        // an item card's stock is the picking seat's (its chess-pool group's: Match itemPoolFor); a concurrent draft has
+        // no picking seat: soldOut = no alive seat's stock holds it (each seat's own: m.private spBlocked)
         cards: s.cards.map(c => ({ ...cardView(c), soldOut: c.kind === 'item' && !this.spItemAvailable(c.id, this.spTurn()) })), order: s.order.slice(),
         turn: this.spTurn(), picks: { ...s.picks }, taken: { ...s.taken }, untimed: !!s.untimed,
         ...(this.capacityExperiment ? { allowRepeat: true } : {}),
+        ...(s.concurrent ? { concurrent: true } : {}),
       };
     }
     if (this.phase === PHASE.UNITE && this.unitePlan) {
@@ -410,7 +414,7 @@ export class MatchViews {
     for (let i = 0; i < ps.hand.length; i++) {
       if (ps.hand[i]) benchUnit(ps.hand[i], i, GEO.HAND_ROW, 'hand');
     }
-    for (let i = 0; i < ps.temp.length; i++) {
+    for (let i = 0; i < Math.min(ps.temp.length, GEO.TEMP_SIZE); i++) {
       if (ps.temp[i]) benchUnit(ps.temp[i], GEO.TEMP_C0 + i, GEO.TEMP_ROW, 'temp');
     }
     // `nextEnemies`: the scouted player's coming enemies — their preview pen shows on the scouting board too (research 09

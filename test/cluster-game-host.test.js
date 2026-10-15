@@ -162,7 +162,8 @@ test('real 0.2.0 Match consumes ownership and DIY from a prepared cluster actor'
   assert.deepEqual(player.standIns, [notOwned]);
   assert.deepEqual(player.diy, diy);
   assert.equal(player.gd.chess('chess_char_5_diy1_a').charId, 'char_112_siege');
-  assert.equal(player.diyStock.cap('chess_char_5_diy1_a'), 8);
+  // 0.3.0 (GitHub #650): a co-op 自选 stock doubles like the shared pool — tier 5: 8 × 2
+  assert.equal(player.diyStock.cap('chess_char_5_diy1_a'), 16);
   assert.ok(transport.sent.some(frame => frame.t === 'm.private' && frame.standIns.includes(notOwned)));
 });
 

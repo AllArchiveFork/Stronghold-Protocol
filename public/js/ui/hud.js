@@ -39,6 +39,7 @@ import { reducedMotion } from './device.js';
 import { PixBot } from './pixbots.js';
 import { t, tParts, N_ } from '../../../shared/i18n.js';
 import { uniteRelayRound } from '../battle/observe.js';
+import { UnofficialMark } from './pluginTag.js';
 
 const cx = (...p) => p.flat().filter(Boolean).join(' ');
 
@@ -447,13 +448,14 @@ export function UniteBudgetNote({ pub }) {
  *   live?: { pending: number, unite: boolean, left?: number|null } | null,
  *   spectators?: any[]|null, myId?: any, isHost?: boolean, onRemoveSpectator?: ((playerId: any) => any)|null }} props
  *   spectators: the room's spectator seats (room.state) — the 观战席 capsule beside the latency (SpectatorPill; the host removes)
+ *   room: room.state — a match with gameplay plugins shows the small MOD mark beside the difficulty (DESIGN §32.6)
  *   frozenAt: the server time every clock shows while the solo match is paused (null = live)
  *   live: the own battle's pending LP loss (liveLp): the tower keeps the settled lp and adds a red −N tick, 联防中 during 联防;
  *     `left` (a leaker in 联防): its enemies still standing — the capsule's ×N tag
  */
 export function TopBar({ pub, priv, conn, hud, total, drawer, onExit, onDrawer, onReady, readyBusy, readyCount, playerCount, pen = false, penAvail = false, onPen = () => {},
   config = null, frozenAt = null, pause = null, live = null, spectator = false,
-  spectators = null, myId = null, isHost = false, onRemoveSpectator = null }) {
+  spectators = null, myId = null, isHost = false, onRemoveSpectator = null, room = null }) {
   const [loadOpen, setLoadOpen] = useState(false);
   const phase = pub?.phase;
   const boss = isBossPhase(phase);
@@ -489,6 +491,7 @@ export function TopBar({ pub, priv, conn, hud, total, drawer, onExit, onDrawer, 
         <${ServerStatusModal} open=${loadOpen} online=${conn?.status === 'online'} state=${conn?.loadState}
           details=${conn?.loadDetails} clusterLoad=${conn?.clusterLoad} scope="game" onClose=${() => setLoadOpen(false)} />
         ${pub?.difficulty ? html`<${DifficultyTag} difficulty=${pub.difficulty} size="sm" />` : null}
+        <${UnofficialMark} room=${room} compact=${true} class="gtop__mod" />
       </div>
     </div>
 

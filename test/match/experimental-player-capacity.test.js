@@ -160,16 +160,19 @@ for (const [capacity, count] of [[8, 2], [8, 5], [8, 6], [8, 7], [8, 8], [12, 9]
     m.enterSpDraft(); const s = m.sp;
     assert.equal(s.family, family); assert.equal(s.cards.length, cardCount);
     assert.equal(new Set(s.cards).size, cardCount, 'every legal option is a detached object');
-    while (m.spTurn()) {
-      const ps = m.players.get(m.spTurn());
-      const preferred = s.idx % 6;
-      if (!m.spCardAvailable(s.cards[preferred])) {
+    // every player picks at once (no turn; Match concurrentDraft) — here in draft order
+    assert.equal(m.spTurn(), null);
+    for (const [i, pid] of s.order.entries()) {
+      const ps = m.players.get(pid);
+      if (!m.spPending(ps)) continue;
+      const preferred = i % 6;
+      if (!m.spCardAvailable(s.cards[preferred], ps)) {
         assert.equal(s.cards[preferred].kind, 'item');
         assert.equal(ps.itemPool.canGain(s.cards[preferred].id), false);
         assert.equal(m.pickCard(ps, preferred).error, 'SOLD_OUT');
         assert.equal(s.picks[ps.playerId], undefined, 'an exhausted attempt never consumes the player confirmation');
       }
-      const idx = m.spCardAvailable(s.cards[preferred]) ? preferred : s.cards.find(c => m.spCardAvailable(c))?.idx;
+      const idx = m.spCardAvailable(s.cards[preferred], ps) ? preferred : s.cards.find(c => m.spCardAvailable(c, ps))?.idx;
       assert.notEqual(idx, undefined, 'this seeded fixture has enough different legal equipment for all players');
       assert.deepEqual(m.pickCard(ps, idx), { ok: true });
       assert.equal(s.picks[ps.playerId], idx);

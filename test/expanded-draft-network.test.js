@@ -41,19 +41,21 @@ for (const family of ['bounty', 'supply', 'shop', 'tactic']) test(`actual twenty
   const publicFrame = await clients[0].waitFor('m.public', m => m.phase === 'SP_DRAFT', 6000);
   assert.equal(publicFrame.sp.cards.length, 6); assert.equal(publicFrame.sp.allowRepeat, true);
   assert.equal(publicFrame.sp.family, family); assert.equal(publicFrame.sp.order.length, 20);
+  // every human picks at once (no turn): here in order, each without waiting for a turn
+  assert.equal(publicFrame.sp.concurrent, true); assert.equal(publicFrame.sp.turn, null);
   const match = srv.lobby.roomOf(srv.registry.byId(clients[0].welcome.playerId)).match, draft = match.sp;
   const byId = new Map(clients.map(c => [c.welcome.playerId, c]));
   const picks = [];
   for (const [i, playerId] of publicFrame.sp.order.entries()) {
-    assert.equal(match.spTurn(), playerId);
-    const preferred = i % 6, client = byId.get(playerId);
-    if (!match.spCardAvailable(draft.cards[preferred])) {
+    assert.equal(match.spTurn(), null);
+    const preferred = i % 6, client = byId.get(playerId), ps = match.players.get(playerId);
+    if (!match.spCardAvailable(draft.cards[preferred], ps)) {
       assert.equal(draft.cards[preferred].kind, 'item');
       assert.equal(match.itemPoolFor(playerId).canGain(draft.cards[preferred].id), false);
       assert.equal((await client.request({ t: 'g.choice', idx: preferred })).code, ERR.SOLD_OUT);
       assert.equal(draft.picks[playerId], undefined, 'an exhausted request consumes no manual pick');
     }
-    const idx = match.spCardAvailable(draft.cards[preferred]) ? preferred : draft.cards.find(c => match.spCardAvailable(c))?.idx;
+    const idx = match.spCardAvailable(draft.cards[preferred], ps) ? preferred : draft.cards.find(c => match.spCardAvailable(c, ps))?.idx;
     assert.notEqual(idx, undefined, 'the seeded six-card fixture holds enough different legal stock for all twenty humans');
     assert.equal((await client.request({ t: 'g.choice', idx })).t, 'ok');
     assert.equal(draft.picks[playerId], idx); picks.push(idx);

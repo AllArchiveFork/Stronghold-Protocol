@@ -217,6 +217,7 @@ function createStreamedRehearsal(pool, { playerId, chosen, plans, candidates, ca
       if (cancelled || released || !local) throw new Error('rehearsal cancelled');
       const start = performance.now();
       let done;
+      // loop-cap: budgetMs of wall time per turn
       do { done = local.advanceSlice(); } while (!done && performance.now() - start < budgetMs);
       const p = local.state();
       validate(p); job.progress = p;

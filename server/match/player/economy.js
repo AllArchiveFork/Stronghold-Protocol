@@ -113,7 +113,7 @@ export class PlayerEconomy {
     if (nChess <= layout.chess && nItem <= layout.item) return;
     const chess = old.slice(0, layout.chess);
     const items = old.slice(layout.chess);
-    while (chess.length < nChess) chess.push(null);
+    while (chess.length < nChess) chess.push(null); // loop-cap: shopSlots chess max 8
     while (items.length < nItem) items.push(null);
     this.shop.slots = [...chess, ...items];
     this.shop.layout = { chess: chess.length, item: items.length };
@@ -154,11 +154,12 @@ export class PlayerEconomy {
       piece = this.acquireChess(slot.id, { source: 'buy' });
     } else {
       if (!this.gd.item(slot.id)) return fail(ERR.BAD_TARGET);
-      if (this.outOfStock(slot)) return fail(ERR.SOLD_OUT);
+      // Already displayed equipment stays purchasable after stock runs out (#624, maintainer 2026-10-14).
+      // acquireItem records the debt. Future rolls still exclude empty stock. SOLD_OUT is only this slot, already sold.
       if (handFull) return fail(ERR.HAND_FULL);
       this.spend(price);
       slot.sold = true;
-      piece = this.acquireItem(slot.id, { source: 'buy' });
+      piece = this.acquireItem(slot.id, { source: 'buy', displayed: true });
     }
     this.stats.buys++;
     this.round.buys++;
@@ -168,26 +169,6 @@ export class PlayerEconomy {
     return OK;
   }
 
-  /**
-   * Whether the equipment stock can no longer supply an unsold item slot of the shop / an offer. Displays reserve no
-   * copies (pool.js header), so another player can take the last ones after the roll; buy and pickReward refuse such a
-   * slot (SOLD_OUT) and m.private marks it `soldOut` so the card says so before the tap. An operator slot never is: an
-   * operator already shown stays purchasable and overdraws its pool (#498, 0.2.5).
-   */
-  outOfStock(slot) {
-    if (!slot || slot.sold || slot.kind !== 'item') return false;
-    return !!this.gd.item(slot.id) && !this.itemPool.canGain(slot.id);
-  }
-
-  /** The out-of-stock flags m.private last carried, as one string (Match.flush re-sends m.private when they move). */
-  stockSig() {
-    let sig = '';
-    for (const s of this.shop.slots) sig += this.outOfStock(s) ? '1' : '0';
-    const offer = this.offers[0];
-    if (offer) { sig += '|'; for (const s of offer.slots) sig += this.outOfStock(s) ? '1' : '0'; }
-    return sig;
-  }
-
   refresh() {
     const g = this._gate(); if (g) return g;
     const free = this.shop.freeRefreshes > 0;
@@ -195,6 +176,9 @@ export class PlayerEconomy {
     if (!free && this.funds < price) return fail(ERR.NO_FUNDS);
     if (free) this.shop.freeRefreshes--;
     else this.spend(price);
+    // A manual refresh cancels the freeze: the new cards are not frozen (official, the owner's play of 2026-10-14;
+    // GitHub #584, DESIGN §32.14.7). A refresh that fails (funds, phase) returns above and leaves the freeze on.
+    this.shop.frozen = false;
     this.rollShop({ keepFrozen: false });
     this.stats.refreshes++;
     this.round.refreshes++;
@@ -234,16 +218,10 @@ export class PlayerEconomy {
     if (!loc) return fail(ERR.BAD_TARGET);
     if (loc.piece.kind !== 'chess') return fail(ERR.BAD_TARGET, loc.piece.kind === 'item' ? 'items cannot be sold' : 'tokens cannot be sold');
     const piece = loc.piece;
-    // its equipment returns to the hand (overflow temp): refuse rather than destroy it when there is no room
-    // Removing the owner's summon stacks frees one slot per stack, regardless of its summon count.
-    const freed = (x) => x == null || (x.kind === 'token' && x.ownerUid === piece.uid);
-    const room = this.hand.filter(freed).length + this.temp.filter(freed).length + (loc.area === 'hand' || loc.area === 'temp' ? 1 : 0);
-    if ((piece.items || []).length > room) return fail(ERR.HAND_FULL, 'no room for the equipment');
+    // Returned equipment can always wait in the overflow queue, even when all fifteen visible slots are occupied.
     this._detach(loc);
     this.removeTokensOf(piece.uid);
-    for (const it of piece.items || []) {
-      if (!this.stow(it, { allowTemp: true })) this.m.log.warn?.(`[match ${this.m.roomCode}] ${this.playerId}: item ${it.id} lost on sell (no space)`);
-    }
+    for (const it of piece.items || []) this.stow(it, { allowTemp: true });
     piece.items = [];
     this.returnCopies(piece);
     const ev = { piece, gain: this.gd.sellPrice(piece.id) };

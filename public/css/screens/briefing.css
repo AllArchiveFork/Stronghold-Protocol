@@ -57,6 +57,9 @@
 .brief-h::before { content: ''; width: .06rem; height: .2rem; background: var(--mint-500); align-self: center; }
 
 /* ---- the shared match-info blocks (briefing + the draft's 本局信息 dialog) ---- */
+/* a match with gameplay plugins (DESIGN §32.6): the unofficial mark under the step header */
+.brief__modmark { position: relative; z-index: 2; align-self: flex-start; margin: .06rem .5rem 0; }
+
 .brief-bonds { padding: .16rem .2rem .2rem; background: rgba(12, 15, 14, .8); border: 1px solid var(--line); }
 .brief-bonds__row { display: flex; flex-wrap: wrap; gap: .16rem .1rem; }
 .brief-bond { position: relative; min-width: 1rem; width: max-content; max-width: 100%; display: flex; justify-content: center; }

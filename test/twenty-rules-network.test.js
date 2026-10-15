@@ -53,9 +53,21 @@ for (const capacity of [4, 8, 12, 16, 20]) for (const family of capacity === 4 ?
     for (const c of members) assert.equal((await c.request({ t: 'g.infoReady' })).t, 'ok');
     const band = await members[0].waitFor('m.public', m => m.phase === 'BAND_DRAFT'); assert.equal(band.draft.allowRepeat === true, repeat);
     const byId = new Map(members.map(c => [c.welcome.playerId, c])); let selections = 0;
-    assert.equal((await byId.get(match.draft.order[1]).request({ t: 'g.band', bandId: 'band_bldsk' })).code, ERR.NOT_YOUR_TURN);
-    while (match.draftTurn()) {
-      const pid = match.draftTurn(), c = byId.get(pid);
+    // expanded rooms: every seat picks at once (no turn) — the last of the order first, then the rest in parallel
+    assert.equal(band.draft.concurrent === true, repeat);
+    if (!repeat) assert.equal((await byId.get(match.draft.order[1]).request({ t: 'g.band', bandId: 'band_bldsk' })).code, ERR.NOT_YOUR_TURN);
+    const nextBand = () => (repeat ? match.draft.order.findLast(pid => !match.draft.picks[pid]) : match.draftTurn());
+    if (repeat) {
+      const pid = nextBand(), c = byId.get(pid);
+      assert.equal((await c.request({ t: 'g.band', bandId: 'invalid-band' })).code, ERR.BAD_TARGET);
+      assert.equal((await c.request({ t: 'g.band', bandId: 'band_bldsk' })).t, 'ok');
+      assert.equal((await c.request({ t: 'g.band', bandId: 'band_bldsk' })).code, ERR.ALREADY);
+      const rest = match.draft.order.filter(id => !match.draft.picks[id]);
+      const replies = await Promise.all(rest.map(id => byId.get(id).request({ t: 'g.band', bandId: 'band_bldsk' })));
+      assert.ok(replies.every(r => r.t === 'ok')); selections = 1 + rest.length;
+    }
+    while (nextBand()) {
+      const pid = nextBand(), c = byId.get(pid);
       assert.equal((await c.request({ t: 'g.band', bandId: 'invalid-band' })).code, ERR.BAD_TARGET);
       if (!repeat && selections > 0) assert.equal((await c.request({ t: 'g.band', bandId: 'band_bldsk' })).code, ERR.BAD_TARGET);
       const bandId = repeat ? 'band_bldsk' : match.gd.bandIds().find(id => !match.bandTaken(id, pid));
@@ -70,20 +82,22 @@ for (const capacity of [4, 8, 12, 16, 20]) for (const family of capacity === 4 ?
     // equipment stock is per chess-pool group (Match itemPoolFor): each group's seats take card 0 up to its own stock
     const firstPicks = [...Map.groupBy(match.order, ps => ps.itemPool)].reduce((n, [stock, seats]) => n + Math.min(seats.length,
       firstCard.kind === 'item' ? Math.floor(stock.left(firstCard.id) / stock.need(firstCard.id)) : Infinity), 0);
-    assert.equal((await byId.get(draft.order[1]).request({ t: 'g.choice', idx: 0 })).code, ERR.NOT_YOUR_TURN);
-    const first = byId.get(match.spTurn());
+    assert.equal(sp.sp.concurrent === true, repeat);
+    if (!repeat) assert.equal((await byId.get(draft.order[1]).request({ t: 'g.choice', idx: 0 })).code, ERR.NOT_YOUR_TURN);
+    const nextSp = () => (repeat ? draft.order.find(pid => match.spPending(match.players.get(pid))) : match.spTurn());
+    const first = byId.get(nextSp());
     assert.equal((await first.request({ t: 'g.choice', idx: 6 })).code, ERR.BAD_TARGET);
     assert.equal((await first.request({ t: 'g.choice', idx: '0' })).code, ERR.BAD_MSG);
     const replies = await Promise.all([first.request({ t: 'g.choice', idx: 0 }), first.request({ t: 'g.choice', idx: 0 })]);
     assert.deepEqual(replies.map(r => r.t === 'ok' ? 'ok' : r.code), ['ok', ERR.ALREADY]);
     const select = async () => {
-      const pid = match.spTurn(), c = byId.get(pid);
-      if (!match.spCardAvailable(firstCard)) {
+      const pid = nextSp(), c = byId.get(pid), ps = match.players.get(pid);
+      if (!match.spCardAvailable(firstCard, ps)) {
         if (repeat) { assert.equal(firstCard.kind, 'item'); assert.equal(match.itemPoolFor(pid).canGain(firstCard.id), false); }
         assert.equal((await c.request({ t: 'g.choice', idx: 0 })).code, ERR.SOLD_OUT);
         assert.equal(draft.picks[pid], undefined, 'a failed stock/taken check never consumes the confirmation');
       }
-      const card = draft.cards.find(card => match.spCardAvailable(card));
+      const card = draft.cards.find(card => match.spCardAvailable(card, ps));
       assert.ok(card, 'the seeded fixture has enough legal card stock for every human');
       assert.equal((await c.request({ t: 'g.choice', idx: card.idx })).t, 'ok');
       assert.equal(draft.picks[pid], card.idx);
@@ -96,7 +110,7 @@ for (const capacity of [4, 8, 12, 16, 20]) for (const family of capacity === 4 ?
     const recovered = await resumed.waitFor('m.public', m => m.phase === 'SP_DRAFT');
     assert.equal(recovered.sp.allowRepeat === true, repeat); assert.equal(recovered.sp.cards.length, 6);
     assert.deepEqual(recovered.sp.picks, draft.picks); assert.equal(Object.keys(draft.picks).length, beforeResume);
-    while (match.spTurn()) await select();
+    while (nextSp()) await select();
     await members[0].waitFor('m.public', m => m.phase === 'PREP');
     assert.equal(Object.keys(draft.picks).length, capacity);
     if (repeat) {

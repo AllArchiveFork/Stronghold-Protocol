@@ -119,7 +119,8 @@ export function mergeReleaseValues(base, fork, official) {
   const stats = { ...countStats(assets, totals.bytes, totals.files), skins: Object.keys(assets.skins).length };
   for (const snapshot of [base.assets, fork.assets, official.assets]) {
     const calculated = countStats(snapshot, snapshot.stats.bytes, snapshot.stats.files);
-    if (Object.entries(calculated).some(([key, value]) => snapshot.stats[key] !== value)) throw new Error('snapshot producer counters disagree');
+    // (a counter the producer added later — 0.3.0's voiceEn/Kr/NativeChars — is 0 in a manifest of an older schema)
+    if (Object.entries(calculated).some(([key, value]) => (Object.hasOwn(snapshot.stats, key) ? snapshot.stats[key] : 0) !== value)) throw new Error('snapshot producer counters disagree');
   }
   const { version, ...assetBody } = assets;
   delete assetBody.generator;

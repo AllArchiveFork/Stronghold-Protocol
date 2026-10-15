@@ -3,9 +3,7 @@ import { useEffect, useRef, useState } from '../../vendor/hooks.module.js';
 import { html, Button } from './components.js';
 import { Img } from './gameComponents.js';
 import { ensurePixi } from '../render/app/pixi.js';
-import { assets } from '../assets.js';
 import { t } from '../../../shared/i18n.js';
-import { releaseGl } from '../render/app/host.js';
 
 export function DynamicIllustration({ entry, staticSrc }) {
   const host = useRef(null), appRef = useRef(null);
@@ -17,7 +15,9 @@ export function DynamicIllustration({ entry, staticSrc }) {
   const actorRef = useRef(null);
   const clips = Object.keys(entry?.animations || {});
   useEffect(() => {
-    let disposed = false, acquired = false, app = null, actor = null, resize = null, watcher = null;
+    // the asset store (../assets.js, also behind render/app/host.js) loads with the first opened illustration, not with
+    // the lobby (a vanilla page loads it only when needed — test/ui/plugins-client.test.js)
+    let disposed = false, acquired = false, assets = null, releaseGl = null, app = null, actor = null, resize = null, watcher = null;
     const stop = () => { if (app) app.stop(); };
     const visibility = () => { if (globalThis.document?.hidden) stop(); else if (playingRef.current) app?.start(); };
     const initialise = async () => {
@@ -28,6 +28,8 @@ export function DynamicIllustration({ entry, staticSrc }) {
         app = new P.Application({ width: 1, height: 1, backgroundAlpha: 0, antialias: true, autoStart: false, resolution: Math.min(globalThis.devicePixelRatio || 1, 1.5), autoDensity: true });
         appRef.current = app;
         host.current.appendChild(app.view);
+        [{ assets }, { releaseGl }] = await Promise.all([import('../assets.js'), import('../render/app/host.js')]);
+        if (disposed) return;
         acquired = true;
         const data = await assets.spine.acquire(entry);
         if (disposed) return;
@@ -73,8 +75,8 @@ export function DynamicIllustration({ entry, staticSrc }) {
     return () => {
       disposed = true; watcher?.disconnect(); globalThis.document?.removeEventListener('visibilitychange', visibility);
       appRef.current = null; actorRef.current = null;
-      try { if (app?.renderer) releaseGl(app.renderer); app?.destroy(true, { children: true, texture: false, baseTexture: false }); } catch { /* a lost context is already gone */ }
-      if (acquired) assets.spine.release(entry);
+      try { if (app?.renderer) releaseGl?.(app.renderer); app?.destroy(true, { children: true, texture: false, baseTexture: false }); } catch { /* a lost context is already gone */ }
+      if (acquired) assets?.spine.release(entry);
     };
   }, [entry]);
   useEffect(() => {

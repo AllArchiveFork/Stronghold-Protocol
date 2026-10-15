@@ -264,7 +264,8 @@ export function phaseTotalSeconds(pub, config, myId = null) {
     case PHASE.BATTLE_CHECK: return num(timers.battleCheck) ?? 3;
     case PHASE.SP_DRAFT: {
       const sp = normalizeSp(pub.sp, pub.players);
-      const first = !sp || sp.pickedCount === 0;
+      // a concurrent draft (everybody at once) has one countdown, spFirst long
+      const first = !sp || sp.pickedCount === 0 || sp.concurrent === true;
       return first ? (num(timers.spFirst) ?? 30) : (num(timers.spTurn) ?? 16);
     }
     case PHASE.PREP: return num(mode?.rounds?.[String(pub.round)]?.prepTime);

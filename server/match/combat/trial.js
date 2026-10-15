@@ -125,7 +125,7 @@ export class TrialEngine {
     this.sliceCount++;
     const start = performance.now();
     let n = 0;
-    while (!this.done) {
+    while (!this.done) { // loop-cap: the slice budget below (ticks / wall time), then the candidates run out
       if (!this.battle) {
         // Lazy construction bounds initialization too: never build all candidates in one wire turn.
         this.candidateError = null;
@@ -140,7 +140,7 @@ export class TrialEngine {
       }
       let beaten = false, failed = false;
       try {
-        while (this.ticks < this.input.cap && !this.battle.finished) {
+        while (this.ticks < this.input.cap && !this.battle.finished) { // loop-cap: input.cap ticks
           this.battle.step();
           this.ticks++;
           this.totalTicks++;

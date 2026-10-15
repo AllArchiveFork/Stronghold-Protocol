@@ -33,10 +33,10 @@ for (const capacity of [8, 12, 16, 20]) for (const family of ['bounty', 'supply'
     const match = host.contexts.get(spec.assignmentId).match;
     for (const seat of spec.seats) assert.deepEqual(host.handle(spec.assignmentId, seat.playerId, { t: 'g.infoReady' }, channels.get(seat.playerId)), { ok: true });
     await until(() => match.phase === 'BAND_DRAFT');
-    assert.equal(match.publicView().draft.allowRepeat, true);
-    assert.equal(host.handle(spec.assignmentId, match.draft.order[1], { t: 'g.band', bandId: 'band_bldsk' }, channels.get(match.draft.order[1])).error, ERR.NOT_YOUR_TURN);
-    while (match.draftTurn()) {
-      const id = match.draftTurn(); assert.deepEqual(host.handle(spec.assignmentId, id, { t: 'g.band', bandId: 'band_bldsk' }, channels.get(id)), { ok: true });
+    assert.equal(match.publicView().draft.allowRepeat, true); assert.equal(match.publicView().draft.concurrent, true);
+    // every seat picks at once (no turn): the last of the order first
+    for (const id of [...match.draft.order].reverse()) {
+      assert.deepEqual(host.handle(spec.assignmentId, id, { t: 'g.band', bandId: 'band_bldsk' }, channels.get(id)), { ok: true });
       assert.equal(host.handle(spec.assignmentId, id, { t: 'g.band', bandId: 'band_bldsk' }, channels.get(id)).error, ERR.ALREADY);
     }
     await until(() => match.phase === 'BATTLE_CHECK');
@@ -47,14 +47,15 @@ for (const capacity of [8, 12, 16, 20]) for (const family of ['bounty', 'supply'
     // equipment stock is per chess-pool group (Match itemPoolFor): each group's seats take card 0 up to its own stock
     const firstPicks = [...Map.groupBy(match.order, ps => ps.itemPool)].reduce((n, [stock, seats]) => n + Math.min(seats.length,
       firstCard.kind === 'item' ? Math.floor(stock.left(firstCard.id) / stock.need(firstCard.id)) : Infinity), 0);
+    const nextSp = () => draft.order.find(pid => match.spPending(match.players.get(pid)));
     const select = () => {
-      const id = match.spTurn();
-      if (!match.spCardAvailable(firstCard)) {
+      const id = nextSp(), ps = match.players.get(id);
+      if (!match.spCardAvailable(firstCard, ps)) {
         assert.equal(firstCard.kind, 'item'); assert.equal(match.itemPoolFor(id).canGain(firstCard.id), false);
         assert.equal(host.handle(spec.assignmentId, id, { t: 'g.choice', idx: 0 }, channels.get(id)).error, ERR.SOLD_OUT);
         assert.equal(draft.picks[id], undefined, 'exhausted equipment cannot consume an actor confirmation');
       }
-      const card = draft.cards.find(c => match.spCardAvailable(c));
+      const card = draft.cards.find(c => match.spCardAvailable(c, ps));
       assert.ok(card, 'the seeded actor fixture has enough different legal stock for every member');
       assert.deepEqual(host.handle(spec.assignmentId, id, { t: 'g.choice', idx: card.idx }, channels.get(id)), { ok: true });
       assert.equal(draft.picks[id], card.idx);
@@ -65,7 +66,7 @@ for (const capacity of [8, 12, 16, 20]) for (const family of ['bounty', 'supply'
     assert.equal(host.handle(spec.assignmentId, high, { t: 'g.choice', idx: 0 }, old).error, ERR.NOT_IN_ROOM);
     const snapshot = replacement.messages.findLast(m => m.t === 'm.public');
     assert.equal(snapshot.sp.allowRepeat, true); assert.equal(snapshot.sp.cards.length, 6); assert.deepEqual(snapshot.sp.picks, draft.picks);
-    while (match.spTurn()) select();
+    while (nextSp()) select();
     await until(() => match.phase === 'PREP');
     assert.equal(Object.keys(draft.picks).length, capacity);
     assert.equal(draft.picks[draft.order[0]], 0); assert.equal(draft.picks[draft.order[1]], 0, 'same index remains legal within its real stock');
@@ -109,8 +110,11 @@ for (const [capacity, count] of [[4, 4], [8, 2], [8, 5], [12, 5], [16, 5], [20, 
     for (const seat of spec.seats) assert.equal((await f.channels.get(seat.playerId).request({ t: 'g.infoReady' })).t, 'ok');
     const observer = f.channels.get('observer');
     const band = await observer.waitFor('m.public', m => m.phase === 'BAND_DRAFT'); assert.equal(band.draft.allowRepeat === true, repeat);
-    while (match.draftTurn()) {
-      const id = match.draftTurn(), c = f.channels.get(id);
+    // expanded rooms pick at once (no turn): the next seat still deciding
+    assert.equal(band.draft.concurrent === true, repeat);
+    const nextBand = () => (repeat ? match.draft.order.find(pid => !match.draft.picks[pid]) : match.draftTurn());
+    while (nextBand()) {
+      const id = nextBand(), c = f.channels.get(id);
       if (!repeat && Object.keys(match.draft.picks).length) assert.equal((await c.request({ t: 'g.band', bandId: 'band_bldsk' })).code, ERR.BAD_TARGET);
       const bandId = repeat ? 'band_bldsk' : match.gd.bandIds().find(b => !match.bandTaken(b, id));
       assert.equal((await c.request({ t: 'g.band', bandId })).t, 'ok');
@@ -122,7 +126,8 @@ for (const [capacity, count] of [[4, 4], [8, 2], [8, 5], [12, 5], [16, 5], [20, 
     const firstPicks = [...Map.groupBy(match.order, ps => ps.itemPool)].reduce((n, [stock, seats]) => n + Math.min(seats.length,
       firstCard.kind === 'item' ? Math.floor(stock.left(firstCard.id) / stock.need(firstCard.id)) : Infinity), 0);
     assert.equal(draft.cards.length, 6); assert.equal(match.publicView().sp.allowRepeat === true, repeat);
-    const first = f.channels.get(match.spTurn()); assert.equal((await first.request({ t: 'g.choice', idx: 0 })).t, 'ok');
+    const nextSp = () => (repeat ? draft.order.find(pid => match.spPending(match.players.get(pid))) : match.spTurn());
+    const first = f.channels.get(nextSp()); assert.equal((await first.request({ t: 'g.choice', idx: 0 })).t, 'ok');
     assert.equal((await first.request({ t: 'g.choice', idx: 0 })).code, ERR.ALREADY);
     const high = `p${count - 1}`, old = f.channels.get(high);
     assert.equal(f.platform.resume(handle.assignmentId, high), true); await until(() => f.channels.get(high) !== old);
@@ -130,14 +135,14 @@ for (const [capacity, count] of [[4, 4], [8, 2], [8, 5], [12, 5], [16, 5], [20, 
     const recovered = await resumed.waitFor('m.public', m => m.phase === 'SP_DRAFT');
     assert.equal(recovered.sp.cards.length, 6); assert.equal(recovered.sp.allowRepeat === true, repeat); assert.deepEqual(recovered.sp.picks, draft.picks);
     await old.closed;
-    while (match.spTurn()) {
-      const id = match.spTurn(), c = f.channels.get(id);
-      if (!match.spCardAvailable(firstCard)) {
+    while (nextSp()) {
+      const id = nextSp(), c = f.channels.get(id), ps = match.players.get(id);
+      if (!match.spCardAvailable(firstCard, ps)) {
         if (repeat) { assert.equal(firstCard.kind, 'item'); assert.equal(match.itemPoolFor(id).canGain(firstCard.id), false); }
         assert.equal((await c.request({ t: 'g.choice', idx: 0 })).code, ERR.SOLD_OUT);
         assert.equal(draft.picks[id], undefined, 'exhausted stock leaves the resumed owner confirmation available');
       }
-      const card = draft.cards.find(card => match.spCardAvailable(card));
+      const card = draft.cards.find(card => match.spCardAvailable(card, ps));
       assert.ok(card, 'this real-RPC fixture has enough different legal stock for all members');
       assert.equal((await c.request({ t: 'g.choice', idx: card.idx })).t, 'ok');
       assert.equal(draft.picks[id], card.idx);

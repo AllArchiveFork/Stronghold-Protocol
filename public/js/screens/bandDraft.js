@@ -43,7 +43,7 @@ import { cardOperators, seatPortrait } from '../ui/seatArt.js';
 import { useMyCard } from '../ui/playerCard.js';
 import { aggregateStats, peekStatsRecords } from '../ui/stats.js';
 import { actions, act } from '../ui/gameActions.js';
-import { normalizeDraft, sortedPlayers } from '../ui/gameLogic.js';
+import { normalizeDraft, sortedPlayers, draftMyTurn } from '../ui/gameLogic.js';
 import { useStore } from '../store.js';
 import { data } from '../data.js';
 import { audio } from '../audio.js';
@@ -160,13 +160,15 @@ export function autoPickBand(sel, { bands, taken, myPick = null, defaultId = DEF
 /**
  * The tip under the co-op draft order: the one skip, the turn clock and what a turn that runs out assigns me (the
  * highlighted band while free — autoPickBand). Untimed drafts (a single human) name no clock.
- * @param {{ timed: boolean, turnSeconds?: number|null, autoName?: string|null, selected?: boolean }} o
- *   selected: the auto pick is the highlighted band (not the default standing in for a band a teammate holds)
+ * @param {{ timed: boolean, turnSeconds?: number|null, autoName?: string|null, selected?: boolean, concurrent?: boolean }} o
+ *   selected: the auto pick is the highlighted band (not the default standing in for a band a teammate holds);
+ *   concurrent: every seat picks at once (m.public draft.concurrent) — no skip, `turnSeconds` is the step's
  */
-export function draftTip({ timed, turnSeconds = null, autoName = null, selected = true }) {
-  const skip = t('联合模拟在选择策略时可以进行一次跳过');
+export function draftTip({ timed, turnSeconds = null, autoName = null, selected = true, concurrent = false }) {
+  // a concurrent draft (everybody at once, expanded rooms): no skip, one clock for the step
+  const skip = concurrent ? t('所有博士同时选择') : t('联合模拟在选择策略时可以进行一次跳过');
   if (!timed) return t('{skip}；本局不限时', { skip });
-  const clock = Number(turnSeconds) > 0 ? t('每位博士有 {n} 秒', { n: Math.round(turnSeconds) }) : t('每位博士限时决策');
+  const clock = Number(turnSeconds) > 0 ? t(concurrent ? '限时 {n} 秒' : '每位博士有 {n} 秒', { n: Math.round(turnSeconds) }) : t('每位博士限时决策');
   if (!autoName) return t('{skip}；{clock}', { skip, clock });
   return selected ? t('{skip}；{clock}，超时将自动选择当前选中的「{autoName}」', { skip, clock, autoName })
     : t('{skip}；{clock}，超时将自动选择「{autoName}」', { skip, clock, autoName });
@@ -274,11 +276,13 @@ export function BandDraftScreen() {
   const bands = useMemo(() => allowedBands(gd.list('bands'), mode?.type || (solo ? 'SINGLE' : 'MULTI'), disableDuckLord), [gd.ready, mode?.type, solo, disableDuckLord, data.locale()]);
   const players = sortedPlayers(pub);
   const draft = normalizeDraft(pub?.draft, players);
+  // an expanded room's draft: every seat picks at once (server MatchPhases.concurrentDraft) — no turn, no skip
+  const concurrent = !solo && draft.concurrent === true;
   const myPick = draft.picks.get(myId) || priv?.bandId || null;
-  const myTurn = !myPick && (solo || draft.turnPid === myId);
+  const myTurn = !myPick && draftMyTurn(draft, myId, solo);
   const inOrder = solo || draft.order.includes(myId);
   const skipsLeft = draft.skipsLeft.has(myId) ? draft.skipsLeft.get(myId) : (skipped ? 0 : 1);
-  const canSkip = !solo && myTurn && skipsLeft > 0 && draft.order.filter((pid) => !draft.picks.has(pid)).length > 1;
+  const canSkip = !solo && !concurrent && myTurn && skipsLeft > 0 && draft.order.filter((pid) => !draft.picks.has(pid)).length > 1;
   const taken = solo ? new Map() : teammateBands(draft.picks, myId, draft.allowRepeat);
   const reserved = solo ? new Map() : reservedBands(pub?.draft, draft.picks, myId);
   for (const [bid, pid] of reserved) if (!taken.has(bid)) taken.set(bid, [pid]);
@@ -385,12 +389,13 @@ export function BandDraftScreen() {
     : myTurn ? html`<div class="dturn is-turn">
         <span class="dturn__go"><${Sprite} k="bandChoose/youturn_finger" class="dturn__finger" fallback=${html`<${Icon} name="chevronLeft" class="dturn__finger" />`} />
           <b>${t('请选择策略')}</b></span>
-        ${!solo ? html`<button type="button" class="draft-skip" data-testid="draft-skip" disabled=${!canSkip || !!busy} aria-busy=${busy === 'skip' ? 'true' : undefined} onClick=${skip}
+        ${!solo && !concurrent ? html`<button type="button" class="draft-skip" data-testid="draft-skip" disabled=${!canSkip || !!busy} aria-busy=${busy === 'skip' ? 'true' : undefined} onClick=${skip}
             title=${skipsLeft > 0 ? t('跳过本轮，稍后再选') : t('跳过次数已用完')}>
           <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 19v-5a7 7 0 0 1 7-7h7V3.5L22.5 9 17 14.5V11h-7a3 3 0 0 0-3 3v5z" /></svg>
           <span>${skipsLeft > 0 ? t('跳过选择') : t('无法跳过')}</span></button>` : null}
       </div>`
     : turnName ? html`<div class="dturn"><span class="dturn__txt"><b>${turnName}</b><span>${t('正在选择策略…')}</span></span><${Icon} name="hourglass" class="dturn__glass" /></div>`
+    : concurrent ? html`<div class="dturn"><span class="dturn__txt"><b>${t('所有博士同时选择')}</b><span>${t('等待其他博士…')}</span></span><${Icon} name="hourglass" class="dturn__glass" /></div>`
     : null;
 
   return html`<div class=${cx('screen draft', `draft--${view}`)} data-allow-repeat=${draft.allowRepeat === true ? 'true' : undefined}>
@@ -406,14 +411,14 @@ export function BandDraftScreen() {
         <div class="draft-order__rows">
           ${rows.map((p, i) => {
             const picked = draft.picks.get(p.playerId) || (p.playerId === myId ? myPick : p.bandId) || null;
-            const cur = !picked && !allPicked && (solo || draft.turnPid === p.playerId);
+            const cur = !picked && !allPicked && (solo || concurrent || draft.turnPid === p.playerId);
             return html`<${OrderRow} key=${p.playerId} p=${p} i=${i} picked=${picked} cur=${cur} self=${p.playerId === myId} solo=${solo}
               art=${artOf(p)} card=${cardOf(p)} gd=${gd} onPeek=${peekBand} />`;
           })}
         </div>
         ${canPlan ? html`<${Button} variant="secondary" icon="users" block=${true} class="draft-order__plan" data-testid="bond-plan-open"
           aria-haspopup="dialog" onClick=${() => setPlanOpen(true)}>${myPlan ? t('预选盟约：{name}', { name: gd.bond(myPlan)?.name || myPlan }) : t('预选盟约')}<//>` : null}
-        ${!solo ? html`<p class="draft-order__tip" data-testid="draft-tip">${draftTip({ timed, turnSeconds: turnLen, autoName: myPick ? null : autoName, selected: open && autoId === sel })}</p>` : null}
+        ${!solo ? html`<p class="draft-order__tip" data-testid="draft-tip">${draftTip({ timed, turnSeconds: turnLen, autoName: myPick ? null : autoName, selected: open && autoId === sel, concurrent })}</p>` : null}
         ${draft.allowRepeat === true ? html`<p class="draft-order__tip draft-order__tip--repeat" data-testid="draft-repeat">${t('可重复选择，每人只能选择一次')}</p>` : null}
       </aside>
       <i class="draft__link" aria-hidden="true"></i>

@@ -33,8 +33,11 @@
 //   onHello(session, { resumed, repeat })  after `welcome` was sent (`session.owner`: this hello carried the 服主 key,
 //                                          server/ownerFile.js — decided again on every hello)
 //   welcomeInfo() → object (optional)      extra fields of every `welcome` (never one of its own keys): the lobby's
-//                                          `diyKitted` (0.2.0 自选编队 — which operators a DIY slot may field)
-//   onMessage(session, msg) → { ok: true } | { error: ERR code, detail?: string } | undefined
+//                                          `diyKitted` (0.2.0 自选编队 — which operators a DIY slot may field) and
+//                                          `content` ({ vanilla: <cs> }, the server's content hash — DESIGN §32)
+//   onMessage(session, msg) → { ok: true } | { error: ERR code, detail?: string } | undefined — or a Promise of one
+//                                          (a room whose match runs in a match host worker, DESIGN §32.6: the reply
+//                                          goes out when it settles; a rejection is INTERNAL)
 //   routeGame(session, msg) → same (optional): client-side combat reports `b.progress` / `b.result` (DESIGN §14) go
 //                                          straight to the running match through it; without it they reach onMessage
 //   onDisconnect(session)                  the session's socket closed (session kept for the reconnect window)
@@ -81,16 +84,17 @@ export const NET_DEFAULTS = Object.freeze({
   heavyPerSec: 2,               // refill of the bucket for resend-heavy intents (HEAVY_TYPES)
   heavyBurst: 6,
   trustProxy: 'auto',           // forwarding headers: 'auto' = from loopback/private peers only, true = always, false = never
-  allowAsyncHandlers: false,    // explicit coordinator opt-in; ordinary lobby dispatch remains synchronous
+  allowAsyncHandlers: false,    // explicit opt-in (the coordinator; a server with match hosts — http/websocket.js)
 });
 
 /**
  * Intents that also draw from the per-connection heavy bucket: g.watch (its reply is a large state resend, m.field),
  * room.loadout (a ≤ 160-entry map and ≤ 256 operator settings validated against the game data; the client debounces its
- * edits), room.ownership (a ≤ 160-id list), room.diy (≤ 8 自选 picks), room.skins (whitelisted display choices) and room.spectate
- * (taking a spectator seat in a running match resends its state like a watcher's g.watch — server/lobby.js spectate).
+ * edits), room.ownership (a ≤ 160-id list), room.diy (≤ 8 自选 picks), room.skins (whitelisted display choices), room.spectate
+ * (taking a spectator seat in a running match resends its state like a watcher's g.watch — server/lobby.js spectate) and
+ * room.setPlugins (a new visual set: every member downloads its art manifest — server/plugins/visualSet.js).
  */
-export const HEAVY_TYPES = new Set(['g.watch', 'room.loadout', 'room.ownership', 'room.diy', 'room.skins', 'queue.join', 'room.spectate']);
+export const HEAVY_TYPES = new Set(['g.watch', 'room.loadout', 'room.ownership', 'room.diy', 'room.skins', 'queue.join', 'room.spectate', 'room.setPlugins']);
 
 /** Close codes (see header). */
 export const CLOSE = Object.freeze({ REPLACED: 4001, HELLO_TIMEOUT: 4002, POLICY: 1008, SHUTDOWN: 1001 });
@@ -797,13 +801,16 @@ export class Network {
       res = { error: ERR.INTERNAL };
     }
     if (res && typeof res.then === 'function') {
+      // an answer that has to wait — the cluster coordinator's remote starts, and (DESIGN §32.6) a room whose match runs
+      // in a match host, which answers once the host has (server/lobby.js keeps each such room's messages in order):
+      // sent when it settles; a rejection is INTERNAL
       if (!this.opts.allowAsyncHandlers) {
         Promise.resolve(res).catch(() => {});
         respond({ error: ERR.INTERNAL });
         return;
       }
       conn.pendingHandlers++;
-      Promise.resolve(res).then(respond, () => respond({ error: ERR.INTERNAL }))
+      Promise.resolve(res).then(respond, (e) => { this.log.error(`[net] handler failed on ${msg.t}`, e); respond({ error: ERR.INTERNAL }); })
         .catch(() => {}).finally(() => { conn.pendingHandlers--; });
     } else respond(res);
     this.metrics.end(messagePhase(msg.t), t0); // the synchronous part only

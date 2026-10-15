@@ -161,13 +161,14 @@ for (const capacity of [8, 12, 16, 20]) test(`capacity${capacity} sparse draft f
   assert.equal(m.gd.band(duck), DATA.bands[duck]); assert.equal(m.gd.effect(DATA.bands[duck].effectId), DATA.effects[DATA.bands[duck].effectId]);
   assert.equal(DATA.bands[duck].name, '鸭爵'); assert.equal(m.gd.defaultBandId, 'band_bldsk');
   assert.equal(m.gd.bandDraft.timeoutBandId, 'band_bldsk');
-  const player = m.players.get(m.draftTurn());
+  // the expanded draft is concurrent (no turn): any seat still deciding
+  const player = m.players.get(m.draft.order[0]);
   assert.equal(m.bandFocus(player, duck).error, ERR.BAD_TARGET); assert.equal(m.pickBand(player, duck).error, ERR.BAD_TARGET);
   m.draft.focus.set(player.playerId, duck); assert.equal(m.timeoutBand(player.playerId), 'band_bldsk');
   m.defaultBand(player.playerId); m._applyBand(player, duck); assert.equal(player.bandId, 'band_bldsk');
   for (let i = 0; i < 128; i++) assert.notEqual(botPickBand(m, m.order[1]), duck);
-  const departure = m.players.get(m.draftTurn()); m.onLeave(departure.playerId); assert.notEqual(departure.bandId, duck);
-  const timed = m.players.get(m.draftTurn()); m.draft.focus.set(timed.playerId, duck);
+  const departure = m.players.get(m.draft.order[1]); m.onLeave(departure.playerId); assert.notEqual(departure.bandId, duck);
+  const timed = m.players.get(m.draft.order[2]); m.draft.focus.set(timed.playerId, duck);
   h.sched.advance(m.bandTurnMs()); assert.notEqual(timed.bandId, duck);
   m.finishBandDraft(true); assert.ok(m.order.every(p => p.bandId && p.bandId !== duck));
   assert.deepEqual(m.publicView().experimental, rules(capacity));

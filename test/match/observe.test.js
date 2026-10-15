@@ -4,7 +4,7 @@
 // a reloaded screen that watched a teammate's battle takes the watch back (resumedWatch).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { observeTarget, teammateProgress, cameraLayers, layerCamera, avatarLayer, isClientCombat, resumedWatch } from '../../public/js/battle/observe.js';
+import { observeTarget, teammateProgress, cameraLayers, layerCamera, avatarLayer, loneHalf, isClientCombat, resumedWatch } from '../../public/js/battle/observe.js';
 
 const P = (id, seat, extra = {}) => ({ playerId: id, seat, name: id.toUpperCase(), alive: true, ...extra });
 const pubOf = (phase, fields, players) => ({ phase, combatMode: 'client', fields, players });
@@ -48,6 +48,13 @@ test('cameraLayers: ‹ LEFT / 全景 / RIGHT › with "你自己" / name / "无
   assert.deepEqual(cameraLayers({ kind: 'boss', players: ['a'], sides: { a: 'L' } }, pub, 'a'), [], 'a solo boss field has no halves');
   assert.deepEqual(layerCamera(unite, 'R', 'R'), { rect: unite.rect, side: 'R', half: true });
   assert.deepEqual(layerCamera(unite, 'ALL', 'R'), { rect: unite.rect, side: 'R' });
+  // a lone helper's 联防 starts on its half; 全景 stays the whole field (GitHub #635, PR #637)
+  assert.equal(loneHalf(single), 'L');
+  assert.equal(loneHalf({ ...unite, players: ['b'], sides: { b: 'R' } }), 'R');
+  assert.equal(loneHalf(unite), null, 'two helpers start on 全景');
+  assert.equal(loneHalf({ kind: 'boss', players: ['a'], sides: { a: 'L' } }), null, 'boss fields keep their own rule');
+  assert.equal(loneHalf(null), null);
+  assert.deepEqual(layerCamera(single, 'ALL', 'L'), { rect: unite.rect, side: 'L' });
 });
 
 test('avatarLayer: the avatar of a player on a half frames that half, the one on screen goes back to 全景 (owner, 2026-10-14)', () => {

@@ -1,6 +1,7 @@
 // public/js/render/app/pixi.js — load PIXI and pixi-spine once (one module-level promise).
 
 import { installPixiMaterialFallback } from '../materialLoader.js';
+import { installPixiNoEval } from './pixiNoEval.js';
 
 const VENDOR = { pixi: '/vendor/pixi.min.js', spine: '/vendor/pixi-spine.js' };
 
@@ -20,12 +21,14 @@ function loadScript(src) {
 /** Make sure PIXI and PIXI.spine exist (classic scripts; loaded once). */
 export function ensurePixi() {
   if (globalThis.PIXI && globalThis.PIXI.spine) {
+    installPixiNoEval(globalThis.PIXI);
     installPixiMaterialFallback(globalThis.PIXI);
     return Promise.resolve(globalThis.PIXI);
   }
   if (!pixiPromise) {
     pixiPromise = (async () => {
       if (!globalThis.PIXI) await loadScript(VENDOR.pixi);
+      installPixiNoEval(globalThis.PIXI);
       if (!globalThis.PIXI?.spine) await loadScript(VENDOR.spine);
       if (!globalThis.PIXI || !globalThis.PIXI.spine) throw new Error('PIXI / pixi-spine unavailable');
       installPixiMaterialFallback(globalThis.PIXI);

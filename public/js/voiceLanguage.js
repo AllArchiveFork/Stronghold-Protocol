@@ -1,5 +1,8 @@
 // Voice language belongs to the listener, not the room, operator appearance or interface language.
-export const VOICE_LANGUAGES = Object.freeze(['cn', 'jp', 'en']);
+import { VOICE_LANGS } from './voicePrefs.js';
+
+/** The listener's global dubs (voicePrefs.js VOICE_LANGS: 中文, 日本語, English, 한국어). */
+export const VOICE_LANGUAGES = VOICE_LANGS;
 export const normalizeVoiceLanguage = value => VOICE_LANGUAGES.includes(value) ? value : 'cn';
 
 /** One selected-language line, then the ordinary Chinese line of the same battle slot. */

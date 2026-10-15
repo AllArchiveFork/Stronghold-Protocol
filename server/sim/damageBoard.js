@@ -8,7 +8,7 @@ export const operatorDamageKey = (playerId, uid, fallback = null) => JSON.string
 function rootOperator(source, operators) {
   const seen = new Set();
   let root = source;
-  while (root?.ownerUnit) {
+  while (root?.ownerUnit) { // loop-cap: the owner chain, each unit once (`seen`)
     if (seen.has(root)) return null;
     seen.add(root);
     root = root.ownerUnit;

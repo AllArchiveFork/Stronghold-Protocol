@@ -26,5 +26,6 @@ test('render/app.js enterBattle: the same scouted board sent again keeps the unc
 test('screens/game.js: a scouted board sent again keeps the camera', () => {
   const game = read('public/js/screens/game.js');
   assert.match(game, /const rescout = !!field\.prep && !!enteredFieldRef\.current\?\.prep && enteredFieldRef\.current\.fieldId === field\.fieldId;\s*enteredFieldRef\.current = field;/);
-  assert.match(game, /if \(!rescout\) \{\s*setLayer\('ALL'\);/);
+  // (0.3.0: a lone 联防 helper starts on its own half — helperHalf — instead of 全景)
+  assert.match(game, /if \(!rescout\) \{[^}]*?setLayer\(helperHalf \|\| 'ALL'\);/);
 });

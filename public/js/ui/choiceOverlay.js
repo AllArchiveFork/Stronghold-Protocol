@@ -24,7 +24,7 @@ import { SP_POPUP_MS, LEAVE_MS } from './matchPopups.js';
 import { Img, RichText, PlayerAvatar, GIcon } from './gameComponents.js';
 import { itemIconUrl, enemyIconUrl, uiUrl } from './assetUrls.js';
 import { richTextPlain } from './richText.js';
-import { sortedPlayers } from './gameLogic.js';
+import { sortedPlayers, draftMyTurn } from './gameLogic.js';
 import { data } from '../data.js';
 import { t, tc, tName } from '../../../shared/i18n.js';
 import { sentText } from './lang.js';
@@ -100,7 +100,7 @@ export function pickBusy(busyIdx, card, mine, allowRepeat = false) {
  */
 export function cardPickable(sp, card, { myId, solo, busyIdx = null }) {
   if (!sp || !card) return false;
-  const myTurn = solo || sp.turnPid === myId;
+  const myTurn = draftMyTurn(sp, myId, solo);
   return myTurn && sp.pickOf.get(myId) == null && (sp.allowRepeat === true || !card.takenBy) && !card.soldOut && busyIdx == null;
 }
 
@@ -182,7 +182,7 @@ export function ChoiceOverlay(props) {
  * @param {any} sp normalizeSp(...) @param {{ myId: string, solo: boolean, personal?: boolean }} o
  */
 export function turnPopupDue(sp, { myId, solo, personal = false }) {
-  return !!sp && !solo && !personal && sp.turnPid === myId && sp.pickOf.get(myId) == null;
+  return !!sp && !solo && !personal && draftMyTurn(sp, myId) && sp.pickOf.get(myId) == null;
 }
 
 /**
@@ -196,7 +196,7 @@ export function spMarks(sp, { solo }) {
   if (!sp || solo || !Array.isArray(sp.order)) return out;
   for (const pid of sp.order) {
     if (sp.pickOf.has(pid)) out.set(pid, 'done');
-    else if (sp.turnPid === pid) out.set(pid, 'turn');
+    else if (sp.concurrent === true || sp.turnPid === pid) out.set(pid, 'turn');
   }
   return out;
 }
@@ -211,7 +211,7 @@ export function ChoiceView({ pub, sp, myId, solo, personal = false, busyIdx = nu
   const fam = data.get('choices')?.families?.[sp.family] || null;
   const rawFam = data.getRaw('choices')?.families?.[sp.family] || null;
   const players = new Map(sortedPlayers(pub).map((p) => [p.playerId, p]));
-  const myTurn = solo || sp.turnPid === myId;
+  const myTurn = draftMyTurn(sp, myId, solo);
   const mine = sp.pickOf.get(myId);
   const turnName = players.get(sp.turnPid)?.name || t('队友');
   const special = /_s$/.test(String(sp.family || ''));
@@ -238,12 +238,13 @@ export function ChoiceView({ pub, sp, myId, solo, personal = false, busyIdx = nu
           <i class="spov__deco" aria-hidden="true"></i>
           <h2 class=${cx('spov__title', special && 'is-special')}><span class="spov__name">${sentText(sp.name, rawFam?.name, fam?.name) || fam?.name || t('机变')}</span><span class="spov__bar">|</span><span class="spov__desc"><${RichText} text=${sentText(sp.desc, rawFam?.desc, fam?.desc) || fam?.desc || t('选择一项')} /></span></h2>
           <p class="spov__sub">${timed ? (personal ? t('休整期结束时未选择将自动选定') : t('倒计时结束后仍未选定将自动分配')) : t('选择一项（无时间限制）')}${mine == null && myTurn ? t(' · 点击卡牌选中，再次点击确认') : ''}</p>
-          ${sp.allowRepeat === true ? html`<p class="spov__repeat" data-testid="sp-repeat">${t('可重复选择，每人只能选择一次')}</p>` : null}
+          ${sp.allowRepeat === true ? html`<p class="spov__repeat" data-testid="sp-repeat">${sp.concurrent === true ? t('所有博士同时选择，可重复选择，每人只能选择一次') : t('可重复选择，每人只能选择一次')}</p>` : null}
         </div>
         <div class="spov__turn">
           ${personal ? html`<span class="spov__turntxt is-mine">${t('从候选中选择一项战术特训')}</span>`
             : mine != null ? html`<span class="spov__turntxt is-done"><${Icon} name="check" />${t('已完成选择')}</span>`
-            : myTurn ? html`<span class="spov__turntxt is-mine">${t('当前轮到你决策')}</span>`
+            : myTurn ? html`<span class="spov__turntxt is-mine">${sp.concurrent === true ? t('选择一项') : t('当前轮到你决策')}</span>`
+            : sp.concurrent === true ? html`<span class="spov__turntxt is-other"><span class="spov__tw"><small>${t('其他博士正在决策…')}</small></span><${Icon} name="hourglass" /></span>`
             : html`<span class="spov__turntxt is-other"><span class="spov__tw"><b>${turnName}</b><small>${t('正在决策…')}</small></span><${Icon} name="hourglass" /></span>`}
           ${armed != null ? html`<${Button} variant="primary" size="lg" icon="check" class="spov__confirm" data-testid="sp-confirm"
               title=${armedName ? t('确认选择「{armedName}」（再次点击卡牌亦可）', { armedName }) : t('确认选择')} onClick=${onConfirm}>${t('确认选择')}<//>` : null}
@@ -256,7 +257,7 @@ export function ChoiceView({ pub, sp, myId, solo, personal = false, busyIdx = nu
           const pick = sp.cards.find((c) => c.idx === sp.pickOf.get(pid));
           const picked = !!pick;
           const pickName = pick ? resolveSpCard(pick, sp.family).name : null;
-          const cur = sp.turnPid === pid && !picked;
+          const cur = (sp.concurrent === true || sp.turnPid === pid) && !picked;
           const left = p?.status === 'left';
           return html`<div key=${pid} class=${cx('spov__who', cur && 'is-cur', picked && 'is-done', pid === myId && 'is-self')}>
             <span class="spov__idx num">${i + 1}</span>

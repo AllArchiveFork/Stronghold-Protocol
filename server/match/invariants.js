@@ -64,7 +64,8 @@ export function collectViolations(m, { limit = 25 } = {}) {
     if (!Number.isFinite(ps.lp)) fail(`${id}: lp ${ps.lp}`);
     if (ps.alive && m.phase !== PHASE.SETTLE && ps.lp <= 0 && m.teamLp == null && m.round > 0 && ps.bandId) fail(`${id}: alive with lp ${ps.lp}`);
     if (ps.hand.length !== gd.benchSize) fail(`${id}: hand has ${ps.hand.length} slots`);
-    if (ps.temp.length !== gd.tempSize) fail(`${id}: temp has ${ps.temp.length} slots`);
+    if (ps.temp.length < gd.tempSize) fail(`${id}: temp has fewer than ${gd.tempSize} visible slots`);
+    if (ps.temp.length > gd.tempSize && ps.temp.some((x) => x == null)) fail(`${id}: overflow queue has an unfilled slot`);
     // 临时整备区 = overflow only (PRTS 卫戍协议/帮助 §手牌区 "常规手牌区出现空位时自动移入", GitHub #82)
     if (ps.temp.some(Boolean) && ps.hand.some((x) => x == null)) fail(`${id}: a temp piece waits while a hand slot is free`);
     if (!(ps.shop.level >= 1 && ps.shop.level <= gd.maxShopLevel)) fail(`${id}: shop level ${ps.shop.level}`);
@@ -212,9 +213,10 @@ export function collectViolations(m, { limit = 25 } = {}) {
     for (const [base, n] of held) if (!pool.has(base) && n !== 0) fail(`non-pool chess ${base} holds ${n} copies`);
   }
 
-  // Fixed operator gifts may overdraw equipment stock; ownership still counts and keeps shop availability at zero.
-  // Other item families retain their cap. The chess pool above also permits explicit overdraw (Mimic). Equipment
-  // stock is per chess-pool group (Match itemPoolFor).
+  // Displayed shop cards and item rewards may overdraw; each stock's debt is that overage (#624). Fixed gift families
+  // may overdraw without a debt entry. debt > over is always a missed repay or a debt recorded for a piece not kept.
+  // The chess pool above also permits explicit overdraw (Mimic, displayed operator cards). Equipment stock is per
+  // chess-pool group (Match itemPoolFor).
   const itemPools = new Set(m.playerItemPools ? m.playerItemPools.values() : m.itemPool ? [m.itemPool] : []);
   if (gd.raw.items) {
     for (const stock of itemPools) {
@@ -223,7 +225,10 @@ export function collectViolations(m, { limit = 25 } = {}) {
         const cap = stock.cap(id);
         if (!Number.isInteger(cap)) continue;
         const h = stock.held(id);
-        if (h > cap && !gd.isUnlimitedGiftItem(id)) fail(`item ${id}: held ${h} > cap ${cap}`);
+        const over = Math.max(0, h - cap);
+        const debt = stock.debtOf(id);
+        if (debt > over) fail(`item ${id}: debt ${debt} > overage ${over} (held ${h}, cap ${cap})`);
+        if (!gd.isUnlimitedGiftItem(id) && over > debt) fail(`item ${id}: held ${h} > cap ${cap} without debt ${debt}`);
       }
     }
   }

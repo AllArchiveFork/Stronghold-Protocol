@@ -4,7 +4,7 @@
 
 《明日方舟》季节性自走棋塔防玩法「卫戍协议：盟约」的**非官方同人复刻**：浏览器即开即玩，单人、1–4 人合作，或在好友房里扩展到最多 20 人。
 
-![version](https://img.shields.io/badge/version-0.2.6-2ea44f)
+![version](https://img.shields.io/badge/version-0.3.0-2ea44f)
 ![license](https://img.shields.io/badge/code%20license-GPL--3.0--or--later-blue)
 ![node](https://img.shields.io/badge/node-24-339933)
 
@@ -30,7 +30,7 @@ English summary: [below](#english).
 
 - [声明](#声明) · [简介](#简介) · [与上游的区别](#与上游的区别) · [功能一览](#功能一览)
 - [快速开始](#快速开始)：[从源码运行](#从源码运行) · [上游整合包](#上游整合包) · [系统要求](#系统要求) · [端口与配置](#端口与配置) · [局域网联机](#和朋友一起玩局域网)
-- [联机方式](#联机方式) · [操作](#操作) · [文档](#文档) · [开发与测试](#开发与测试) · [项目结构](#项目结构)
+- [插件](#插件) · [联机方式](#联机方式) · [操作](#操作) · [文档](#文档) · [开发与测试](#开发与测试) · [项目结构](#项目结构)
 - [许可证](#许可证) · [致谢与数据来源](#致谢与数据来源) · [贡献](#贡献)
 
 ## 简介
@@ -41,7 +41,7 @@ English summary: [below](#english).
 - **两种运行方式**：
   - **单进程**：和上游一样，一个 Node.js 进程同时提供页面和 WebSocket，战斗默认在各玩家的浏览器里模拟，一台低功耗小主机就能开服。
   - **集群**：一个 coordinator 负责大厅、房间与匹配，多个 game 节点用固定的 Worker 池在服务器上模拟战斗，多个 ingress 转发玩家连接。浏览器在本地演算自己看到的战场，由服务器定期校验，胜负以服务器为准。见 [deploy/stardust/cluster/](deploy/stardust/cluster/README.md)。
-- **版本**：玩法与数据同步到上游 0.2.6（上游的版本记录见 [CHANGELOG.md](CHANGELOG.md)）。本 fork 的改动见下一节和提交记录。仍有少数规则按推断实现，与官方不一致的地方欢迎在 Issue 里反馈。
+- **版本**：玩法与数据同步到上游 0.3.0（包括插件系统，见[插件](#插件)；上游的版本记录见 [CHANGELOG.md](CHANGELOG.md)）。本 fork 的改动见下一节和提交记录。仍有少数规则按推断实现，与官方不一致的地方欢迎在 Issue 里反馈。
 
 ## 与上游的区别
 
@@ -50,7 +50,7 @@ English summary: [below](#english).
 ### 联机与房间
 
 - **公开匹配**：在大厅按难度凑齐 4 名真人，集齐后 30 秒内各自确认，全部确认后直接开局；不自动补 AI，最多等待 10 分钟。好友小队可以从房间整队匹配，不会被拆散。
-- **扩展人数的好友房**（实验性，默认关闭）：人数上限可选 4 / 8 / 12 / 16 / 20（真人与 AI 合计），可以与相同人数模式和难度的其他小队整队匹配。扩展后可多人选择同一策略，机变等选卡统一为六个可重复的选项，至少 8 人存活时联防可以有第二轮接力，装备库存按卡池分组。房主还可以勾选「禁用鸭爵策略」。详见 [docs/EXPERIMENTAL-MULTIPLAYER.md](docs/EXPERIMENTAL-MULTIPLAYER.md)。
+- **扩展人数的好友房**（实验性，默认关闭）：人数上限可选 4 / 8 / 12 / 16 / 20（真人与 AI 合计），可以与相同人数模式和难度的其他小队整队匹配。扩展后可多人选择同一策略，机变等选卡统一为六个可重复的选项，策略和机变改为所有人同时选择，至少 8 人存活时联防可以有第二轮接力，装备库存按卡池分组。房主还可以勾选「禁用鸭爵策略」。详见 [docs/EXPERIMENTAL-MULTIPLAYER.md](docs/EXPERIMENTAL-MULTIPLAYER.md)。
 - **房间规则选项**：「复活」（本轮未漏怪且参与了联防、生命值至少 11 的队友可以支付 10 点生命抵消一次死亡，被救者回到 1 点生命，每人每局最多获救一次）和「禁用共享卡池」（每位博士使用独立卡池），都默认关闭，开局后不能更改。
 - **观战**：观战席不限人数；同盟开局后仍可以用原同盟密钥进入观战。
 - **AI 队友与挂机**：房主可以指定某个 AI 队友开局时选择的策略；在线但连续 2 回合没有任何操作的玩家会被移出对局，前一回合会先提醒；掉线不算挂机：掉线超过 2 回合由 AI 托管座位，重新连接后收回。
@@ -113,14 +113,14 @@ English summary: [below](#english).
 git clone https://github.com/Stardust-minus/Stronghold-Protocol.git
 cd Stronghold-Protocol
 npm ci             # 按 lockfile 安装依赖（postinstall 会把 pixi / preact / three 复制到 public/vendor）
-npm run setup      # 检查环境，并从公开镜像下载约 550 MB 美术 / 音频（可中断，再次运行会续传）
+npm run setup      # 检查环境，并从公开镜像下载约 720 MB 美术 / 音频（可中断，再次运行会续传）
 npm start          # 启动服务器：http://localhost:3000
 ```
 
 也可以直接运行启动脚本（Windows `scripts\start-windows.bat`，macOS / Linux `scripts/start.sh`）：首次会自动安装依赖、下载素材，然后启动服务器并打开浏览器。
 
 - 这样启动的是单进程服务器，战斗在浏览器里模拟。想让服务器模拟战斗，设置 `SP_COMBAT=server` 和 `SP_COMBAT_WORKERS`（见[端口与配置](#端口与配置)）；集群部署见 [deploy/stardust/cluster/](deploy/stardust/cluster/README.md)。
-- **本地客户端素材（可选）**：官方 3D 棋盘、部分官方界面图标（交流按钮与表情面板的边框、模组类型图标等）、灼热 / 炽焰源石虫和 39 个召唤物（多数自选召唤物）的官方模型需要从本机的《明日方舟》PC 客户端提取（Windows 原生客户端、macOS 的 CrossOver 或 PlayCover）。`npm run setup` 检测到客户端时会询问是否提取（需要 Python 3.8+，依赖装在项目内的 `.venv-extract`，不影响系统）；之后可以用 `node tools/setup.mjs --local` 重新提取，或用 `--game "<…/StreamingAssets/AB/Windows>"` 指定路径；各战场的官方场景可以用 `node tools/setup.mjs --scenes` 下载并提取。没有客户端时游戏照常运行，这几样换成替代样式：2D 棋盘、样式相近的图标、染色的普通源石虫、召唤物头像。表情和「玩法说明」的教程图随上面的素材一起从公开镜像下载，不需要客户端。
+- **本地客户端素材（可选）**：官方 3D 棋盘、官方战斗特效（0.3.0「官方特效」）、部分官方界面图标（交流按钮与表情面板的边框、模组类型图标等）、灼热 / 炽焰源石虫和 39 个召唤物（多数自选召唤物）的官方模型需要从本机的《明日方舟》PC 客户端提取（Windows 原生客户端、macOS 的 CrossOver 或 PlayCover）。`npm run setup` 检测到客户端时会询问是否提取（需要 Python 3.8+，依赖装在项目内的 `.venv-extract`，不影响系统）；之后可以用 `node tools/setup.mjs --local` 重新提取，或用 `--game "<…/StreamingAssets/AB/Windows>"` 指定路径；各战场的官方场景可以用 `node tools/setup.mjs --scenes` 下载并提取。没有客户端时游戏照常运行，这几样换成替代样式：2D 棋盘、样式相近的图标、染色的普通源石虫、召唤物头像。表情和「玩法说明」的教程图随上面的素材一起从公开镜像下载，不需要客户端。
 - 素材下载优先使用 GitHub，失败时自动改用 jsDelivr 镜像。
 - `npm run doctor`（即 `node tools/doctor.mjs`）可以随时诊断：Node 版本、素材是否完整、端口占用、局域网地址和防火墙。
 
@@ -132,9 +132,9 @@ npm start          # 启动服务器：http://localhost:3000
 
 | 项目 | 要求 |
 |---|---|
-| 开服的电脑 | Windows / macOS / Linux，Node.js 24（LTS，只支持这一版本）；磁盘约 700–850 MB（素材、依赖与本地提取贴图）；单进程模式内存空闲约 100 MB，每局再加几 MB；服务器模拟战斗时，CPU 和内存随 Worker 数与同时进行的对局数增加 |
+| 开服的电脑 | Windows / macOS / Linux，Node.js 24（LTS，只支持这一版本）；磁盘约 1.2–1.4 GB（素材、依赖与本地提取的贴图、场景和特效）；单进程模式内存空闲约 100 MB，每局再加几 MB；服务器模拟战斗时，CPU 和内存随 Worker 数与同时进行的对局数增加 |
 | 玩家 | 支持 WebGL 的现代浏览器（Chrome / Edge / Firefox / Safari 最新版），电脑、手机或平板（横屏） |
-| 网络 | 首次进入游戏时，每位玩家要从开服的电脑下载几十 MB 素材（之后走浏览器缓存）；对局中流量很小，服务器推流战斗时会多一些 |
+| 网络 | 首次进入游戏时，每位玩家要从开服的电脑下载几十 MB 素材（之后走浏览器缓存）；对局中流量很小，服务器推流战斗时会多一些。上游 0.3.0 里已有素材的玩家可以在标题画面点「导入素材包」（「下载完整素材」旁边），从素材包 zip、完整包 zip 或自己的 `public/assets` 文件夹导入，这部分美术不再从开服的电脑下载；需要 HTTPS 或 localhost（[docs/DEPLOY.md](docs/DEPLOY.md) 2.5 节）。0.3.0 的素材包 `Stronghold-Protocol-v0.3.0-assets.zip` 由上游维护者另行提供下载，不在 Releases 附件里。本 fork 打开页面直接进入大厅，没有标题画面，不显示这两个按钮 |
 
 显卡较弱时可以在「设置」里调低画质，或在网址后加 `?board=2d`（强制 2D 棋盘）/ `?render=fallback`（不用 WebGL 的简化画面）。
 
@@ -155,6 +155,7 @@ npm start          # 启动服务器：http://localhost:3000
 | `SP_ONLINE_LIMIT_FILE` | 空 | 在线人数上限文件（JSON，如 `{"limit": 3000}`），运行中修改后几秒内生效；不设或文件不存在时不限。`"maintenance": 1` 打开维护开关：暂停创建房间、开始模拟和匹配，进行中的对局不受影响 |
 | `SP_OWNER_FILE` | 空 | 服主文件（JSON：`{"names": ["保留昵称"], "keySha256": "<服主密钥的 SHA-256>"}`）：带对的密钥进入的玩家显示服主标记，保留昵称只有服主能用；运行中修改后几秒内生效；不设、文件不存在或格式不对时关闭 |
 | `SP_VERIFY` | `off` | 服务器复算客户端上报的战斗结果：`off` / `sample`（约 1/8 抽查）/ `all`（全部复算，更耗 CPU） |
+| `SP_BOT_REHEARSAL` | 不设（服务器试算） | 仅 `host` 让房主浏览器帮 AI 队友试算布阵（同源 Worker，只回候选序号）；不设或 `server` 仍由服务器试算。房主无法完成时服务器用同一批候选接手。玩法插件房间始终由服务器试算。真人「AI 托管」和正式战斗不受影响 |
 | `TRUST_PROXY` | `auto` | 是否信任 `X-Forwarded-For` 等转发头：`auto` 只信任来自本机 / 内网的代理；`1` 总是；`0` 从不 |
 | `DEBUG` | 空 | 设为任意值输出详细日志 |
 | `SP_NO_BROWSER` | 空 | 设为 `1` 时启动脚本不自动打开浏览器 |
@@ -171,6 +172,17 @@ npm start          # 启动服务器：http://localhost:3000
 4. 同一 Wi-Fi / 路由器下的朋友打开启动窗口里列出的地址（形如 `http://192.168.x.x:3000`）即可。打不开时多半是防火墙：Windows 首次启动时在弹窗中允许「专用网络」，或运行 `npm run doctor` 查看具体命令；访客 Wi-Fi 常开启「AP 隔离」，也会导致连不上。
 
 刷新页面或断线后，同盟模拟在对局结束前（所有博士都掉线时为 10 分钟内）、独立模拟 24 小时内重新打开即可回到原座位。服务器把房间和对局都保存在内存里，**重启服务器（集群中的 coordinator 或 game 节点）会结束相关对局**。
+
+## 插件
+
+0.3.0 开发版已支持插件；不开插件时按原版游玩。
+
+- **服主安装**：将插件文件夹放进服务器的 `plugins/`，或用 `node tools/plugin.mjs install <zip路径或HTTPS地址>` 安装；远程地址需带 `--sha256`。工作台也支持从社区目录安装和导入 Forge 工坊包。服主可在 `plugins/config.json` 限定可用插件。
+- **房主开启**：在房间顶部的「原版 / 插件 ×N」面板里选外观或玩法插件、修改插件设置、选择插件模式。玩法插件的内容会由所有玩家下载并校验，房间标为「非官方」，统计总览默认不计入。
+- **玩家个人设置**：「设置 → 外观插件 / 界面插件」只影响自己的浏览器；个人不能另装玩法插件改变房间规则。外观插件只换画面与声音，界面插件只读允许的对局信息。
+- **自己制作**：打开启动窗口 `Studio:` 行的地址，使用 `/studio/` 插件工作台选模板、按官方名称选目标、拖放素材、实时预览、试一场并回放，最后打包分享。工作台限本机和局域网，修改需要钥匙。
+
+脚本执行默认关闭。服主可以用 `SP_PLUGIN_SCRIPTS=sandbox` 开启沙箱脚本（或启动时加 `--scripts sandbox`；Windows 双击 `scripts\start-windows-sandbox.bat`）；原生受信任模式还需审查、固定锁文件哈希和玩家同意，公网部署需 `trusted-force`。开服设置见 [部署指南](docs/DEPLOY.md)，作者从[插件新手指南](docs/PLUGIN-GUIDE.md)开始，格式与限制见[插件参考](docs/PLUGINS.md)，接口列表见[插件 API 表](docs/PLUGIN-API.md)。
 
 ## 联机方式
 
@@ -199,7 +211,7 @@ npm start          # 启动服务器：http://localhost:3000
 | 出售 / 撤退 / 销毁装备 | 点击单位所在的格子 → 底部按钮「出售 +1」「撤退」；也可以把棋盘上的干员拖回整备区撤退。整备区里的装备与法术只能「销毁」，已配发的装备锁定在干员身上（干员出售或合成精锐时退回整备区） |
 | 装备 | 把装备拖到干员所在的格子上（每人 2 件；满了会弹出替换窗口，被替换的一件会被销毁）；法术拖到地块上并选方向 |
 | 查看详情 | 右键或长按单位 / 卡牌（属性为实时数值，高于基础值为绿色、低于为红色） |
-| 快捷键 | `R` 刷新 · `F` 冻结 · `D` 升级 · `Q` 撤退 / `X` 出售选中的干员 · `Space` 准备就绪 · `Esc` 取消 / 关闭；除 `Esc` 外都可以在「设置 → 快捷键」里改成别的键（[玩法指南 §11](docs/PLAYING.md#11-快捷键)） |
+| 快捷键 | `W` 购买鼠标指向的商品（无需点击） · `R` 刷新 · `F` 冻结 · `D` 升级 · `Q` 撤退 / `X` 出售鼠标指向的干员（无需点击） · `Space` 准备就绪 · `Esc` 取消 / 关闭；除 `Esc` 外都可以在「设置 → 快捷键」里改成别的键（[玩法指南 §11](docs/PLAYING.md#11-快捷键)） |
 | 方向轮盘键盘操作 | 方向键预览 · `Enter` 确认 · `Esc` 取消 |
 | 暂停（独立模拟） | 作战中（含最终攻势 / 隐秘核心）点顶栏的「暂停」或按 `Space`，再点「继续作战」（或 `Space`）继续；同盟模拟的作战不能暂停 |
 | 表情 | 左下角「交流」，左右滑动（或方向键）换主题，冷却 1 秒；手机上和人数较多时以弹幕显示 |
@@ -232,6 +244,7 @@ npm start          # 启动服务器：http://localhost:3000
 |---|---|
 | [CHANGELOG.md](CHANGELOG.md) | 上游各版本的更新记录：每个版本修复了什么、哪些反馈经核实不是问题 |
 | [docs/PLAYING.md](docs/PLAYING.md) | 玩法指南：流程、经济、招募与晋升、摆阵、联防、盟约、最终攻势、结算称号 |
+| [docs/PLUGINS.md](docs/PLUGINS.md) · [docs/PLUGIN-GUIDE.md](docs/PLUGIN-GUIDE.md) | 插件格式、安装与服主策略；中文工作台入门、DSL 和对战试验 |
 | [docs/DEPLOY.md](docs/DEPLOY.md) | 部署指南：Windows 开服与开机自启、防火墙、组网 / 隧道、反向代理与 HTTPS、Docker、systemd、排错 |
 | [docs/WINDOWS.md](docs/WINDOWS.md) | Windows 便携包：怎么打一份「零安装」包（`scripts/make-windows-bundle.mjs`）、包里放了什么、授权注意事项 |
 | [docs/DESIGN.md](docs/DESIGN.md) | 架构与契约（英文）：索引，按章节号找到文件；现行规则在 `docs/design/`（范围与目录分工、坐标与时间、战斗引擎、对局、网络协议、渲染与 UI），各次试玩和各版本的规则修订与依据在 `docs/history/` |
@@ -320,7 +333,7 @@ A fork of [sganggs/Stronghold-Protocol](https://github.com/sganggs/Stronghold-Pr
 
 - **What this fork adds:** public 4-player matchmaking with whole-party queueing; opt-in friend rooms of 8 / 12 / 16 / 20 players (repeatable drafts, a second relay defense round, grouped stock, optional rescue and independent pools — [docs/EXPERIMENTAL-MULTIPLAYER.md](docs/EXPERIMENTAL-MULTIPLAYER.md)); unlimited spectators, also after the match has started; AI teammate strategies, bond plans and AFK removal; display-only operator skins, cn / jp / en operator voices, full operator presets, per-view damage boards and an interface scale setting.
 - **Server side:** optional server-run combat on a fixed Worker pool (`SP_COMBAT_WORKERS`) with the player's own, boss and watched fields run as browser-side replicas checked by server digests; snapshot rate, WebSocket compression and an online cap that can change at run time; a cluster of one coordinator, game nodes and ingresses ([deploy/stardust/cluster/](deploy/stardust/cluster/README.md)); a password gate with ALTCHA proof of work, Nginx templates with per-IP WebSocket caps and an optional mainland-China allowlist, and multi-source material delivery ([deploy/stardust/](deploy/stardust/README.md)).
-- **Run:** this fork publishes no bundles. From source: `npm ci && npm run setup && npm start` (setup downloads ~550 MB of art from public mirrors), then open <http://localhost:3000>. The bundles on upstream's [Releases](https://github.com/sganggs/Stronghold-Protocol/releases/latest) are upstream versions without this fork's changes.
+- **Run:** this fork publishes no bundles. From source: `npm ci && npm run setup && npm start` (setup downloads ~720 MB of art from public mirrors), then open <http://localhost:3000>. The bundles on upstream's [Releases](https://github.com/sganggs/Stronghold-Protocol/releases/latest) are upstream versions without this fork's changes.
 - **Languages:** Chinese (the default), English, 日本語, 한국어 and 繁體中文 — switch in Settings (the lobby's ⚙, or the match's). Game texts come from the official clients; the Japanese, Korean and Traditional Chinese interface strings are machine translations (corrections welcome: [docs/I18N.md](docs/I18N.md)).
 - **Play with friends:** create a co-op room and share the 4-letter key or the `?room=KEY` link, or queue for public matchmaking. On a LAN, use the address printed at start; otherwise use a virtual-LAN tool, a tunnel or a VPS — see [docs/DEPLOY.md](docs/DEPLOY.md).
 - **Disclaimer:** not affiliated with or endorsed by Hypergryph or Yostar. All Arknights names, art, audio, text and data are © their respective owners and are **not** covered by this project's GPL licence. For study and personal non-commercial use only — no selling, paid distribution, paid servers or monetisation of any kind. Content will be removed on request of the rights holders. Provided "as is", without warranty.

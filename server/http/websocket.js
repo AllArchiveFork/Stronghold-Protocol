@@ -19,13 +19,21 @@ export const WS_MAX_PAYLOAD = 64 * 1024;
 /**
  * The session stack of one server.
  * @param {{ MatchClass?: Function, seedFn?: () => number, [option: string]: any }} opts startServer() options
- * @param {{ data: object, log: object }} deps the game data the lobby's matches use, the logger
+ * @param {{ data: object, log: object, content?: { cs: string } | null,
+ *   plugins?: ReturnType<typeof import('../plugins/roomSets.js').createRoomSets> | null,
+ *   hosts?: ReturnType<typeof import('../match/host/index.js').createMatchHosts> | null }} deps the game data the lobby's
+ *   matches use, the logger, the vanilla content (server/plugins/identity.js: welcome / room.state content, BattleSpec
+ *   cs), the room sets a room's host chooses from (room.setPlugins: visual and content sets), the match hosts a room with
+ *   gameplay plugins plays in (DESIGN §32.6)
  * @returns {{ registry: SessionRegistry, lobby: Lobby, network: Network }}
  */
-export function createSessionStack(opts, { data, log, combatPool = null, trialPool = null, getLoadState, getLoadDetails, onlineLimit = null, ownerFile = null }) {
+export function createSessionStack(opts, { data, log, combatPool = null, trialPool = null, getLoadState, getLoadDetails, onlineLimit = null, ownerFile = null,
+  content = null, plugins = null, hosts = null }) {
   if (opts.lobbyFactory != null && typeof opts.lobbyFactory !== 'function') throw new TypeError('invalid lobby factory');
   if (opts.getClusterLoad != null && typeof opts.getClusterLoad !== 'function') throw new TypeError('invalid cluster load provider');
   const netOptions = netOptionsFrom(opts);
+  // a room whose match runs in a match host (DESIGN §32.6) answers once the host has: promise answers (≤ 64 per socket)
+  if (hosts && netOptions.allowAsyncHandlers === undefined) netOptions.allowAsyncHandlers = true;
   const registry = new SessionRegistry({ reconnectWindowMs: netOptions.reconnectWindowMs ?? NET_DEFAULTS.reconnectWindowMs });
   const lobbyOptions = lobbyOptionsFrom(opts);
   const createLobby = opts.lobbyFactory || (params => new Lobby(params));
@@ -33,7 +41,7 @@ export function createSessionStack(opts, { data, log, combatPool = null, trialPo
   const metrics = opts.phaseMetrics ? { metrics: opts.phaseMetrics } : {};
   // The limits file (server/onlineLimit.js) also carries the lobby's hot-reloadable room / AI caps (Lobby.cap).
   const lobby = createLobby({ registry, log, MatchClass: opts.MatchClass, getData: () => data, seedFn: opts.seedFn, combatPool, trialPool, options: lobbyOptions,
-    limits: onlineLimit, ...metrics });
+    limits: onlineLimit, content, plugins, hosts, ...metrics });
   // The owner file (server/ownerFile.js): the 服主 key every hello may carry and the owner's reserved names.
   const network = new Network({ registry, handler: lobby, log, options: netOptions, getLoadState, getLoadDetails, getClusterLoad: opts.getClusterLoad, onlineLimit, ownerFile, ...metrics });
   return { registry, lobby, network };

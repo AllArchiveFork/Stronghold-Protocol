@@ -12,7 +12,8 @@ const manifest = { audio: { voice: chinese, voiceByLang: {
 } } };
 
 test('only supported voice language codes are admitted, independent of interface-language codes', () => {
-  assert.deepEqual(VOICE_LANGUAGES, ['cn', 'jp', 'en']);
+  // 0.3.0 adds the Korean dub (voiceKr); 'ko' stays an interface-language code
+  assert.deepEqual(VOICE_LANGUAGES, ['cn', 'jp', 'en', 'kr']);
   for (const code of VOICE_LANGUAGES) assert.equal(normalizeVoiceLanguage(code), code);
   for (const value of [null, {}, [], 'ja', 'zh', 'ko', '__proto__', 'https://example.com/']) assert.equal(normalizeVoiceLanguage(value), 'cn');
 });

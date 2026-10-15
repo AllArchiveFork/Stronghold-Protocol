@@ -1,8 +1,9 @@
-// GitHub #488: a fixed operator gift (「<获得时>获得N件X」 特质; the same item from a strategy's fixed round or 画卷's copy)
-// is not refused by the shared shop-equipment stock — as in 0.2.2, and like an operator granted beyond stock (拟态物质).
+// GitHub #488: a fixed operator gift (「<获得时>获得N件X」 特质; the same item from a strategy's fixed round) is not
+// refused by the shared shop-equipment stock — 画卷's copy of a worn item takes stock (0.3.0, test/match/r40a-scroll-morph) — as in 0.2.2, and like an operator granted beyond stock (拟态物质).
 // 0.2.5 narrows the exemption to those item families (gamedata isUnlimitedGiftItem; other requirePool:false grants such
-// as 商业包装方案 keep the cap). Its copies still occupy stock: the shop, reward offers and default grants keep the check,
-// and ownership leaving never returns stock above the cap. Real registry and dispatcher (server/sim/content/garrisons/meta.js,
+// as 商业包装方案 keep the cap). Its copies still occupy stock: reward offers and default grants keep the check — an item
+// already shown in the shop is sold beyond the stock as debt (#624, 0.3.0) — and ownership leaving never returns stock
+// above the cap. Real registry and dispatcher (server/sim/content/garrisons/meta.js,
 // bands/meta.js).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -77,19 +78,19 @@ test('#488 缪尔赛思 with 投资人 ×2: 2, 4, 8, 10, 12', () => {
   assert.ok(!warns.includes(STOCK_WARN));
 });
 
-test('#488 the shop and default grants still respect the stock while free-granted copies hold it', () => {
+test('#488 default grants still respect the stock while free-granted copies hold it; a shown shop item is sold as debt (#624)', () => {
   const { m, ps, warns, buyItem, owned } = muelsyseRun({ invest: false });
   ps.funds = 20;
-  const funds = ps.funds;
-  assert.equal(buyItem(ISO).error, 'SOLD_OUT', 'a purchase is refused');
-  assert.equal(ps.funds, funds, 'nothing charged');
   assert.equal(ps.acquireItem(ISO, { source: 'reward' }), null, 'a reward / choice grant (requirePool default) is refused');
   assert.ok(warns.includes(STOCK_WARN));
   assert.equal(ps.pushItemOffer([ISO]), null, 'no offer of an exhausted item');
-  // ownership leaving: stock reappears only below the cap and never exceeds it
+  assert.deepEqual(buyItem(ISO), OK, 'an item already in the shop is sold beyond the stock (#624)');
+  assert.equal(m.itemPool.debtOf(ISO), 1, 'recorded as debt');
+  checkInvariants(m);
+  // ownership leaving: the debt first, then stock reappears only below the cap and never exceeds it
   const left = [];
   for (const p of owned(ISO)) { assert.deepEqual(ps.destroy(p.uid), OK); left.push(m.itemPool.left(ISO)); checkInvariants(m); }
-  assert.deepEqual(left, [0, 0, 0, 1, 2, 3]);
+  assert.deepEqual(left, [0, 0, 0, 0, 1, 2, 3]); assert.equal(m.itemPool.debtOf(ISO), 0);
   assert.deepEqual(buyItem(ISO), OK, 'buyable again once a copy is free');
   checkInvariants(m);
 });
@@ -97,8 +98,7 @@ test('#488 the shop and default grants still respect the stock while free-grante
 test('#488 变形者集群: the round 5 / 10 / 15 变形同构体 arrive with the stock already exhausted', () => {
   const { m, ps, warns, roundStart, buyItem, owned } = setup({ seed: 5, band: 'band_damaztic' });
   for (let k = 0; k < 3; k++) assert.deepEqual(buyItem(ISO), OK, `purchase ${k + 1}`);
-  assert.equal(m.itemPool.left(ISO), 0);
-  assert.equal(buyItem(ISO).error, 'SOLD_OUT');
+  assert.equal(m.itemPool.left(ISO), 0); assert.equal(m.itemPool.canGain(ISO), false);
   const got = [];
   for (let r = 1; r <= 15; r++) { roundStart(r); if (owned(ISO).length > 3 + got.length) got.push(r); }
   assert.deepEqual(got, [5, 10, 15]);
@@ -109,7 +109,7 @@ test('#488 变形者集群: the round 5 / 10 / 15 变形同构体 arrive with th
   assert.equal(ps.bandId, 'band_damaztic');
 });
 
-test('#488 画卷 copies the equipment of its target beyond the stock, like the operator', () => {
+test('画卷 copies the equipment of its target only while stock is left (0.3.0; the operator copy still overdraws)', () => {
   const { m, ps, warns } = setup({ seed: 8 });
   const cid = Object.values(DATA.chess).find((c) => c.visible && !c.isGolden && c.tier === 2
     && (c.garrisonIds || []).every((g) => DATA.garrisons[g].eventType === 'IN_BATTLE')).chessId;
@@ -121,9 +121,9 @@ test('#488 画卷 copies the equipment of its target beyond the stock, like the 
   assert.equal(m.itemPool.left(ISO), 0);
   const art = giveItem(m, ps, 'chess_item_6_02_m');
   assert.deepEqual(m.handle('p_0', { t: 'g.art', itemUid: art.uid, row: at[0], col: at[1] }), OK);
-  assert.equal([...ps.hand, ...ps.temp].filter((p) => p && p.id === ISO).length, 3, 'the copied 变形同构体 is in the hand');
-  assert.equal(m.itemPool.held(ISO), 4);
-  assert.ok(!warns.includes(STOCK_WARN));
+  assert.equal([...ps.hand, ...ps.temp].filter((p) => p && p.id === ISO).length, 2, 'no fourth 变形同构体');
+  assert.equal(m.itemPool.held(ISO), 3);
+  assert.ok(warns.includes(STOCK_WARN));
   checkInvariants(m);
 });
 
