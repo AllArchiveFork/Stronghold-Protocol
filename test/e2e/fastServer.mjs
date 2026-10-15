@@ -196,7 +196,8 @@ if (!process.env.NODE_TEST_CONTEXT) {
     }
   }
 
-  const srv = await startServer({ port: Number(process.env.PORT) || 0, host: process.env.HOST || '127.0.0.1', quiet: true, MatchClass: FastMatch,
+  // SP_FAST_VERBOSE=1: the server's info lines too (a test reading them, e.g. coop.e2e.mjs's server takeover)
+  const srv = await startServer({ port: Number(process.env.PORT) || 0, host: process.env.HOST || '127.0.0.1', quiet: process.env.SP_FAST_VERBOSE !== '1', MatchClass: FastMatch,
     ...(process.env.SP_PLUGINS_DIR ? { pluginsDir: process.env.SP_PLUGINS_DIR } : {}) });
   console.log(`fast server on ${srv.url} (timers ×${timerScale}, combat ${combatSpeed}×${startAt ? `, first round ${startAt}` : ''})`);
   const stop = () => { srv.close().finally(() => process.exit(0)); };

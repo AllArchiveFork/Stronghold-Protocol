@@ -157,6 +157,7 @@ export async function startRealServer(opts = {}) {
   if (opts.fast) {
     env.SP_TIMER_SCALE = String(opts.fast.timerScale ?? 1);
     env.SP_COMBAT_SPEED = String(opts.fast.combatSpeed ?? 2);
+    if (opts.fast.verbose) env.SP_FAST_VERBOSE = '1';
     // test hook of fastServer.mjs: the first round of every match (e.g. 'boss') + a starter kit of operators
     if (opts.fast.startRound != null) env.SP_START_ROUND = String(opts.fast.startRound);
     if (opts.fast.kit != null) env.SP_START_KIT = String(opts.fast.kit);
@@ -351,6 +352,17 @@ export class Client {
   }
 
   async exists(sel) { return !!(await this.page.$(sel)); }
+
+  /**
+   * Wait until `sel`'s own entrance animations ran (bounded): e.g. the briefing's 准备就绪 (.brief-go) is clipped away
+   * for its first ~0.8 s, and a click then falls through it — a player cannot press a button not yet drawn.
+   */
+  async settled(sel, timeout = 5000) {
+    await this.page.waitForFunction((sel) => {
+      const el = document.querySelector(sel);
+      return !!el && el.getAnimations().every((a) => a.playState === 'finished' || a.effect?.getComputedTiming().iterations === Infinity);
+    }, { timeout, polling: 100 }, sel);
+  }
 
   async visible(sel) {
     return this.page.evaluate((sel) => {
