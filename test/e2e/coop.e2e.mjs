@@ -1018,11 +1018,8 @@ describe('browser E2E against the real server', { skip: !ENABLED && 'needs Chrom
       reward: 0, sp: 0, unite: false, combatRounds: new Set(), takeover: false, lpChanged: false, settledBy: new Set(), facingTurned: 0 };
     const lps = new Map();
     try {
-      // ---- title, 玩法说明, lobby, room --------------------------------------------------------------------------
+      // ---- lobby (no title screen since 2026-10-15), 玩法说明, room ------------------------------------------------
       await host.open();
-      await sleep(900);
-      await host.shot('title');
-      await openGuide(host, '.title-guide', 'guide-title');
       await host.enter('凯尔希');
       await sleep(400);
       await host.shot('lobby');
@@ -1031,7 +1028,7 @@ describe('browser E2E against the real server', { skip: !ENABLED && 'needs Chrom
       const room = (await host.waitFor((s) => !!s.room?.code, 'room created')).room;
       await host.click('button', '添加 AI 队友');
       await guest.open(`?room=${room.code}`);
-      await guest.shot('title');
+      await guest.shot('invite');
       await guest.enter('阿米娅');
       await guest.waitFor((s) => s.room?.code === room.code, 'guest joined via the invite link');
       await guest.roomReady();

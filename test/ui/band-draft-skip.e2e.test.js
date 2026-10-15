@@ -75,10 +75,9 @@ describe('strategy skip eligibility (real server, normal browser operations)', {
     cdp.on('Network.webSocketFrameReceived', ({ response }) => {
       try { const m = JSON.parse(response.payloadData); if (m.t === 'error') frames.push({ direction: 'received', message: m }); } catch { /* non-JSON */ }
     });
+    // no title screen (2026-10-15): boot connects with the remembered callsign
+    await page.evaluateOnNewDocument((n) => { try { localStorage.setItem('sp.name', n); } catch { /* none */ } }, name);
     await page.goto(base + '/' + suffix, { waitUntil: 'domcontentloaded' });
-    await page.waitForSelector('.title-login input');
-    await page.type('.title-login input', name);
-    await click(page, '.title-login button', '开始');
     await page.waitForFunction(() => globalThis.__SP__?.store.get().connection.status === 'online');
     return { context, page, errors, frames };
   }

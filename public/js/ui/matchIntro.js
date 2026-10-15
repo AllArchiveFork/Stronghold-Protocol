@@ -83,9 +83,14 @@ export function bootBoard(seed = 319) {
   return out;
 }
 
+/** The band the card rows keep to on the 1600×900 stage: under the header mark, above 协议启动！ (css: top 66.4 %). */
+export const BOOT_BAND = Object.freeze([280, 592]);
+
 /**
  * Where the doctors' cards sit on the 1600×900 stage: two columns (01 left, 02 right, 03 left …) around the core, or one
  * card centred for a solo run. Each: the card box, the side, and its line from the card's inner edge to a core node.
+ * The rows close up with the room's size and never leave BOOT_BAND — a 20-seat room's ten rows included (the owner's
+ * report of 2026-10-15: they ran over 协议启动！).
  * @param {number} n
  * @returns {Array<{ left: number, top: number, w: number, h: number, side: 'l'|'r'|'c', from: [number, number], to: [number, number] }>}
  */
@@ -93,16 +98,18 @@ export function bootLayout(n) {
   const W = 428, H = 107;
   if (n <= 1) return [{ left: 586, top: 452, w: W, h: H, side: 'c', from: [800, 452], to: [800, 452] }];
   const rows = Math.ceil(n / 2);
-  const step = Math.min(138, 360 / rows); // the rows stay between the header art and 协议启动！
+  const step = Math.min(138, 360 / rows, (BOOT_BAND[1] - BOOT_BAND[0]) / (rows - 0.22));
   const h = Math.min(H, step * 0.78);
-  const top0 = 468 - ((rows - 1) * step) / 2 - h / 2;
+  const span = (rows - 1) * step + h;
+  const top0 = Math.min(468 - span / 2, BOOT_BAND[1] - span);
+  const nodeGap = Math.min(44, 300 / rows);
   return Array.from({ length: n }, (_, i) => {
     const row = Math.floor(i / 2);
     const right = i % 2 === 1;
     const top = top0 + row * step;
     const mid = top + h / 2;
     const left = right ? 1027 : 1600 - 1027 - W;
-    const nodeY = 435 + (row - (rows - 1) / 2) * 44 + (right ? 16 : 0);
+    const nodeY = 435 + (row - (rows - 1) / 2) * nodeGap + (right ? 16 : 0);
     const nodeX = right ? 838 - row * 18 : 782 - row * 24;
     return { left, top, w: W, h, side: right ? 'r' : 'l', from: [right ? left - 6 : left + W + 6, mid], to: [nodeX, nodeY] };
   });
@@ -118,7 +125,9 @@ export function ProtocolBoot({ players, myId, leaving = false }) {
   const board = useMemo(() => bootBoard(), []);
   const list = Array.isArray(players) ? players : [];
   const spots = bootLayout(list.length);
-  return html`<div class=${cx('pboot', leaving && 'is-leaving')} role="status" aria-live="polite" aria-label=${t('协议启动！')}>
+  // more than three rows a side: one line per card (number, COMPLETE, ✓) sized by the card's height (css --ch)
+  const dense = list.length > 6;
+  return html`<div class=${cx('pboot', dense && 'pboot--dense', leaving && 'is-leaving')} role="status" aria-live="polite" aria-label=${t('协议启动！')}>
     <div class="pboot__stage">
       <svg class="pboot__bg" viewBox="0 0 1600 900" aria-hidden="true">
         <circle cx="800" cy="430" r="330" class="pboot__orbit" />
@@ -145,7 +154,7 @@ export function ProtocolBoot({ players, myId, leaving = false }) {
       ${list.map((p, i) => {
         const s = spots[i];
         return html`<div key=${p.playerId} class=${cx('pcardx', `pcardx--${s.side}`, p.playerId === myId && 'is-self')}
-            style=${`left:${pct(s.left, 1600)};top:${pct(s.top, 900)};width:${pct(s.w, 1600)};height:${pct(s.h, 900)};--i:${i}`}>
+            style=${`left:${pct(s.left, 1600)};top:${pct(s.top, 900)};width:${pct(s.w, 1600)};height:${pct(s.h, 900)};--i:${i};--ch:${(s.h / 16).toFixed(3)}`}>
           <span class="pcardx__mark"><svg viewBox="0 0 32 32"><path d="M3 4h4v2H5v20h2v2H3zM29 4h-4v2h2v20h-2v2h4z" /><path d="M10 8h3v2h2V8h2v2h2V8h3v5l-2 2v6l2 2v2H10v-2l2-2v-6l-2-2z" /></svg></span>
           <span class="pcardx__txt"><b class="num">${String(i + 1).padStart(2, '0')}</b><span>COMPLETE</span><i><${Icon} name="check" /></i></span>
           <span class="pcardx__face"><${PlayerAvatar} player=${p} self=${p.playerId === myId} prefer="avatar" /></span>

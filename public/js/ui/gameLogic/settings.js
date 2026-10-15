@@ -1,6 +1,7 @@
 // ui/gameLogic/settings.js — settings defaults and sanitising. Re-exported from ../gameLogic.js.
 
 import { VOICE_LANGS, sanitizeVoiceOverrides } from '../../voicePrefs.js';
+import { sanitizeBgmChoice } from '../../bgmChoice.js';
 export { VOICE_LANGS } from '../../voicePrefs.js';
 
 import { clamp, isObj } from './shared.js';
@@ -43,15 +44,16 @@ export function uiScaleStep(uiScale, phone) {
  *  textSize: TEXT_SIZES (css/theme.css `--t`, applied by ui/settings.js applyTextSize). uiScale: UI_SCALES (`--ui`,
  *  applied by ui/settings.js applyUiScale). ammoCount: 设置「弹药数量」 — the rounds left / the magazine under an ammo
  *  skill's bar (render/units.js; PR #552), off by default: the official HUD has no such number (the maintainer's
- *  decision of 2026-10-13). */
-export const DEFAULT_SETTINGS = Object.freeze({ bgm: 0.6, sfx: 0.8, voice: 0.8, voiceLang: 'cn', voiceOverrides: Object.freeze({}), muted: false, damageNumbers: true, officialDamageNumbers: false, ammoCount: false, quality: 'high', textSize: 'sm', uiScale: 'auto', keys: DEFAULT_HOTKEYS });
+ *  decision of 2026-10-13). bgmPrep / bgmCombat: the 休整期 / 作战 BGM picked in the lobby's ♫ panel (bgmChoice.js;
+ *  'official' = the mode's own music). */
+export const DEFAULT_SETTINGS = Object.freeze({ bgm: 0.6, sfx: 0.8, voice: 0.8, voiceLang: 'cn', voiceOverrides: Object.freeze({}), muted: false, damageNumbers: true, officialDamageNumbers: false, ammoCount: false, quality: 'high', textSize: 'sm', uiScale: 'auto', keys: DEFAULT_HOTKEYS, bgmPrep: 'official', bgmCombat: 'official' });
 const QUALITIES = ['high', 'medium', 'low'];
 
 /**
  * Sanitize persisted settings.
  * @param {any} raw
  * @returns {{ bgm: number, sfx: number, voice: number, voiceLang: 'cn'|'jp'|'en', voiceOverrides: Record<string, string>, muted: boolean, damageNumbers: boolean, officialDamageNumbers: boolean, ammoCount: boolean, quality: 'high'|'medium'|'low',
- *   textSize: 'sm'|'md'|'lg'|'xl', uiScale: string, keys: Record<'refresh'|'freeze'|'levelUp'|'retreat'|'sell'|'ready', string> }}
+ *   textSize: 'sm'|'md'|'lg'|'xl', uiScale: string, keys: Record<'refresh'|'freeze'|'levelUp'|'retreat'|'sell'|'ready', string>, bgmPrep: string, bgmCombat: string }}
  */
 export function sanitizeSettings(raw) {
   const r = isObj(raw) ? raw : {};
@@ -70,5 +72,7 @@ export function sanitizeSettings(raw) {
     textSize: TEXT_SIZES.includes(r.textSize) ? r.textSize : DEFAULT_SETTINGS.textSize,
     uiScale: UI_SCALES.includes(String(r.uiScale)) ? String(r.uiScale) : DEFAULT_SETTINGS.uiScale,
     keys: sanitizeHotkeys(r.keys),
+    bgmPrep: sanitizeBgmChoice(r.bgmPrep),
+    bgmCombat: sanitizeBgmChoice(r.bgmCombat),
   };
 }

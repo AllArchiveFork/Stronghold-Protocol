@@ -6,10 +6,10 @@
 // "前往查看" button under the row (when that teammate can be observed now; otherwise the reason is toasted through
 // onWatch); while observing, the own row shows a "返回战场" button. Without `observe` (server-run combat) a click
 // watches that player's field at once, and a click while that field is already on screen does not ask again.
-// 联防 / 最终攻势 (`observe.half`, battle/observe.js avatarLayer; the owner's request, 2026-10-14): the avatar of a player
-// on a half of the field on screen — the own one included — goes to that half at once, without 前往查看 (an observer's
-// tap picks that player the way 前往查看 does: screens/game.js); the avatar of the player whose half is on screen goes
-// back to 全景.
+// 联防 / 最终攻势 (`halves`, battle/observe.js avatarLayer; the owner's request, 2026-10-14 — both combat modes since
+// 2026-10-15): the avatar of a player on a half of the field on screen — the own one included — goes to that half at
+// once, without 前往查看 (an observer's tap picks that player the way 前往查看 does: screens/game.js); the avatar of the
+// player whose half is on screen goes back to 全景.
 // In PHASE.PREP a double-click on a teammate's avatar opens their field (GitHub #131, the 「前往查看」 shortcut).
 // It does not open a field the teammate does not have, and it does not open one the click already opened.
 // Boss-prep phases (最终攻势 / 隐秘核心) are not PHASE.PREP, so they still use 「前往查看」.
@@ -164,7 +164,7 @@ function useEmoteBubbles(ttl, on) {
  * double-click); client combat toggles 「前往查看」 under the row (`openPid`), the own row goes back to the own battle; in
  * PHASE.PREP a double-click opens the teammate's field.
  */
-function useAvatarClicks({ pub, watching, onWatch, observe }) {
+function useAvatarClicks({ pub, watching, onWatch, observe, halves }) {
   const [openPid, setOpenPid] = useState(null);
   // the playerId whose avatar just called onWatch, so the other click of a double-click does not open the view again
   const askedAt = useRef(/** @type {{ id: string|null, at: number }} */ ({ id: null, at: 0 }));
@@ -173,6 +173,8 @@ function useAvatarClicks({ pub, watching, onWatch, observe }) {
   const askedRecently = (p) => askedAt.current.id === p?.playerId && Date.now() - askedAt.current.at < AVATAR_CLICK_GAP_MS;
   const noteAsked = (p) => { askedAt.current = { id: p.playerId, at: Date.now() }; };
   const click = (p, self) => {
+    const half = halves?.half?.(p) || null;
+    if (half) { setOpenPid(null); halves.onHalf(half, p); return; }
     if (!observe) {
       // your own row still goes home; a teammate already on screen (or just opened by this double-click) does not
       if (self || teammateClickWatches({ watching, player: p, askedRecently: askedRecently(p) })) {
@@ -181,8 +183,6 @@ function useAvatarClicks({ pub, watching, onWatch, observe }) {
       }
       return;
     }
-    const half = observe.half?.(p) || null;
-    if (half) { setOpenPid(null); observe.onHalf(half, p); return; }
     if (self) { if (observe.observing) observe.onBack(); setOpenPid(null); return; }
     const view = observe.canObserve(p) || {};
     if (!view.fieldId) {
@@ -215,12 +215,12 @@ function RowStatus({ status, meta, offline }) {
 }
 
 /** One seat. `bubble`: its emote beside the row (classic roster), else null. */
-function TeamRow({ p, pub, myId, watching, onWatch, observe, clicks, selfLive, cap, uniteLocal, team, frameArt, list, bubble, spMark = null }) {
+function TeamRow({ p, pub, myId, watching, onWatch, observe, halves, clicks, selfLive, cap, uniteLocal, team, frameArt, list, bubble, spMark = null }) {
   const self = p.playerId === myId;
   const status = p.pendingDeath ? 'rescue' : p.alive === false ? 'dead' : p.status;
   const meta = p.pendingDeath ? { ...STATUS_META.deciding, text: t('等待救援') } : STATUS_META[status] || STATUS_META.acting;
   // a player on a half of the 联防 / 最终攻势 field on screen: the tap switches the camera ('ALL': their half is shown)
-  const half = observe?.half?.(p) || null;
+  const half = halves?.half?.(p) || null;
   const watched = teammateFieldShown(watching, p);
   const offline = p.connected === false && !p.isBot;
   const open = !!observe && clicks.openPid === p.playerId && !self;
@@ -273,18 +273,18 @@ function PoolHead({ pool }) {
  * @param {{ pub:any, myId:string, watching:string|null, onWatch:(p:any)=>void, roster: ReturnType<typeof useRoster>,
  *   emoteTtl?: number, teamLp?: number|null, self?: { lp?: number|null, pending: number, unite: boolean, left?: number|null } | null,
  *   cap?: number, uniteLocal?: Record<string, number> | null,
- *   observe?: null | { canObserve: (p:any) => { fieldId?: string, reason?: string|null, back?: boolean }, observing: boolean, onBack: () => void,
- *     half?: (p:any) => 'L'|'ALL'|'R'|null, onHalf?: (layer: string, p: any) => void } }} props
- *   half: the ‹ › layer a tap on that player's avatar switches to (battle/observe.js avatarLayer), null = the usual flow
+ *   observe?: null | { canObserve: (p:any) => { fieldId?: string, reason?: string|null, back?: boolean }, observing: boolean, onBack: () => void },
+ *   halves?: null | { half: (p:any) => 'L'|'ALL'|'R'|null, onHalf: (layer: string, p: any) => void } }} props
+ *   halves.half: the ‹ › layer a tap on that player's avatar switches to (battle/observe.js avatarLayer), null = the usual flow
  *   spMarks: the shared 机变 draft's pick order on the portraits (ui/choiceOverlay.js spMarks: ✓ picked, ••• deciding)
  *   uniteLocal: the local 联防 replica's per-leaker counts while it is on screen (battle runner state().uniteLeft), else null
  */
-export function TeamPanel({ pub, myId, watching, onWatch, roster, emoteTtl = 3000, observe = null, self: selfLive = null, cap = 10, uniteLocal = null, spMarks = null }) {
+export function TeamPanel({ pub, myId, watching, onWatch, roster, emoteTtl = 3000, observe = null, halves = null, self: selfLive = null, cap = 10, uniteLocal = null, spMarks = null }) {
   const players = sortedPlayers(pub);
   const { density, open: rosterOpen, setOpen: setRosterOpen, phone } = roster;
   const list = density === 'list';
   const bubbles = useEmoteBubbles(emoteTtl, roster.emotes === 'bubble');
-  const clicks = useAvatarClicks({ pub, watching, onWatch, observe });
+  const clicks = useAvatarClicks({ pub, watching, onWatch, observe, halves });
   const pools = list ? rosterPools(pub, players, myId) : null;
   const panelRef = useRef(null);
   const noticeRef = useRef(null);
@@ -321,7 +321,7 @@ export function TeamPanel({ pub, myId, watching, onWatch, roster, emoteTtl = 300
   const frameArt = team.size ? localAsset('ui/battle', 'bg_team_border') : null;
   const columns = measured ? layout.columns : 1;
   const style = list ? `--team-columns:${columns};--team-rows:${Math.ceil(players.length / columns)}` : undefined;
-  const row = (p) => html`<${TeamRow} key=${p.playerId} p=${p} pub=${pub} myId=${myId} watching=${watching} onWatch=${onWatch} observe=${observe} clicks=${clicks} spMark=${spMarks?.get(p.playerId) || null}
+  const row = (p) => html`<${TeamRow} key=${p.playerId} p=${p} pub=${pub} myId=${myId} watching=${watching} onWatch=${onWatch} observe=${observe} halves=${halves} clicks=${clicks} spMark=${spMarks?.get(p.playerId) || null}
     selfLive=${selfLive} cap=${cap} uniteLocal=${uniteLocal} team=${team} frameArt=${frameArt} list=${list} bubble=${bubbles?.get(p.playerId) || null} />`;
   return html`<aside ref=${panelRef} class=${cx('team', `team--${density}`, list && columns > 1 && 'team--wide', pools && 'team--pools', !rosterOpen && 'is-folded', rosterOpen && 'is-open')} style=${style} aria-label=${t('同盟成员')}>
     <div ref=${headerRef} class="team__header">

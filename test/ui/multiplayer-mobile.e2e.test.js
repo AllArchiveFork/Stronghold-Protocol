@@ -55,8 +55,9 @@ test('mobile lobby, same-pool count and every expanded roster seat remain operab
     const request = (type, fields = {}) => page.evaluate((type, fields) => globalThis.__SP__.net.request(type, fields).then(() => true), type, fields);
     const shot = name => page.screenshot({ path: out + '/' + name + '.png' });
     await viewport(640, 360);
+    // no title screen (2026-10-15): boot connects with the remembered callsign
+    await page.evaluateOnNewDocument(() => { try { localStorage.setItem('sp.name', 'MobileProof'); } catch { /* none */ } });
     await page.goto(srv.url, { waitUntil: 'domcontentloaded' });
-    await page.waitForSelector('.title-login input'); await page.type('.title-login input', 'MobileProof'); await tap('.title-login button');
     await page.waitForSelector('.lobby-screen'); await pause(500);
     if (await page.$('.announcement-board')) await tap('.announcement-board button', '关闭公告');
     assert.equal(await page.$('.lobby-language'), null);

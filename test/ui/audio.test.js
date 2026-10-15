@@ -8,6 +8,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { bgmKeyFor, resolveBgm, SfxLimiter, AudioManager, normalAttackSfx, installAudio, audio, combatTrackFor, COMBAT_TRACK_SWITCH_ROUND, VoiceGate, resultSpeaker, resultVoiceSlot, VOICE_PRIORITY, VOICE_COOLDOWN_MS, voiceLine } from '../../public/js/audio.js';
 import { mediaUrl } from '../../public/js/media.js';
+import { pickedBgm, bgmChoiceKind, sanitizeBgmChoice, BGM_CHOICES, MAJOR_BGM_URL } from '../../public/js/bgmChoice.js';
+import { sanitizeSettings, DEFAULT_SETTINGS } from '../../public/js/ui/gameLogic.js';
 import { PHASE } from '../../shared/constants.js';
 import { makeBattle, chessRec } from '../helpers/battleHarness.js';
 
@@ -637,6 +639,89 @@ describe('AudioManager', () => {
       const n = urls.length;
       a.sfx('refresh');
       assert.equal(urls.length, n, 'muted ⇒ nothing requested');
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+  test('休整期 / 作战 picks (bgmChoice.js): which keys follow a pick, the picked track, official otherwise', () => {
+    const b = manifest.audio.bgm;
+    assert.deepEqual([bgmChoiceKind('prep'), bgmChoiceKind('combat'), bgmChoiceKind('combat:0'), bgmChoiceKind('combat:1')], ['prep', 'combat', 'combat', 'combat']);
+    for (const k of ['lobby', 'unite', 'boss', 'boss:boss_4', null]) assert.equal(bgmChoiceKind(k), null, String(k));
+    assert.equal(pickedBgm(manifest, 'prep', { prep: 'official' }), null, 'official: the manifest track (resolveBgm)');
+    assert.equal(pickedBgm(manifest, 'prep', null), null);
+    const local = { prep: 'blob:prep-file', combat: null };
+    assert.deepEqual(pickedBgm(manifest, 'prep', { prep: 'custom' }, null, local), { intro: null, loop: 'blob:prep-file', choice: 'blob:prep-file', local: true });
+    assert.equal(pickedBgm(manifest, 'combat:0', { combat: 'custom' }, null, local), null, '自选曲 without a file: official');
+    assert.equal(pickedBgm(manifest, 'prep', { prep: 'custom' }), null);
+    assert.equal(pickedBgm(manifest, 'prep', { prep: 'custom' }, new Set(['blob:prep-file']), local), null, 'a file that did not decode: official');
+    assert.deepEqual(pickedBgm(manifest, 'combat:1', { prep: 'custom', combat: 'knight' }, null, local), { intro: b.combatAlts[0].intro ?? null, loop: b.combatAlts[0].loop, choice: 'knight' });
+    assert.equal(pickedBgm(manifest, 'combat:1', { prep: 'knight' }), null, 'the 作战 pick, not the 休整期 one');
+    assert.equal(pickedBgm(manifest, 'unite', { prep: 'knight', combat: 'custom' }, null, { prep: 'blob:a', combat: 'blob:b' }), null, '联防 keeps its own track');
+    assert.equal(pickedBgm(manifest, 'boss:boss_4', { combat: 'knight' }), null, 'so do the boss phases');
+    assert.equal(pickedBgm(manifest, 'prep', { prep: 'knight' }, new Set(['knight'])), null, 'a pick that failed to load: official');
+    assert.equal(pickedBgm(manifest, 'prep', { prep: 'nope' }), null, 'an unknown pick: official');
+    assert.equal(pickedBgm({ audio: { bgm: {} } }, 'prep', { prep: 'knight' }), null, 'a manifest without that track: official');
+    assert.equal(sanitizeBgmChoice('knight'), 'knight');
+    assert.equal(sanitizeBgmChoice('x'), 'official');
+    assert.deepEqual([DEFAULT_SETTINGS.bgmPrep, DEFAULT_SETTINGS.bgmCombat], ['official', 'official']);
+    assert.deepEqual([sanitizeSettings({ bgmPrep: 'custom', bgmCombat: 'bogus' }).bgmPrep, sanitizeSettings({ bgmCombat: 'bogus' }).bgmCombat], ['custom', 'official']);
+    assert.deepEqual(pickedBgm(manifest, 'prep', { prep: 'major' }), { intro: null, loop: MAJOR_BGM_URL, choice: 'major' }, '上海Major: no manifest entry');
+    assert.deepEqual(pickedBgm(manifest, 'combat:0', { combat: 'major' })?.loop, MAJOR_BGM_URL);
+    assert.deepEqual(BGM_CHOICES.slice(0, 2), ['official', 'major'], '官方 first, then 上海Major');
+    assert.equal(BGM_CHOICES.at(-1), 'custom');
+    assert.ok(BGM_CHOICES.every((id) => id === 'official' || id === 'custom' || pickedBgm(manifest, 'prep', { prep: id })), 'every manifest pick resolves');
+  });
+  test('the picks play: 休整期 / 作战 follow them at once, 联防 does not; 自选曲 plays the file; one that does not decode plays the official track', async () => {
+    const fw = fakeWindow();
+    const origFetch = globalThis.fetch;
+    const urls = [];
+    // blob:bad is no audio: an empty body, which the context below fails to decode
+    globalThis.fetch = async (u) => { urls.push(u); return { ok: true, arrayBuffer: async () => new ArrayBuffer(String(u) === 'blob:bad' ? 0 : 8) }; };
+    const tick = () => new Promise((r) => setTimeout(r, 10));
+    const until = async (fn) => { for (let i = 0; i < 100 && !fn(); i++) await tick(); return fn(); };
+    const b = manifest.audio.bgm;
+    try {
+      const a = new AudioManager({ win: fw.win, getManifest: () => manifest });
+      a.install();
+      a.setBgmChoice({ prep: 'knight', combat: 'official' });
+      a.playBgm('prep');
+      fw.fire('pointerdown');
+      a.ctx.decodeAudioData = (ab, ok, fail) => (ab.byteLength ? ok({ duration: 1.5 }) : fail(new Error('no audio')));
+      assert.ok(await until(() => a.bgm?.loopUrl === b.combatAlts[0].loop), '休整期 plays the picked 骑士之日');
+      a.playBgm('combat:1');
+      assert.ok(await until(() => a.bgm?.loopUrl === b.combatAlts[1].loop), '作战 official: the round table (无畏者)');
+      a.setBgmChoice({ prep: 'knight', combat: 'lobby' });
+      assert.ok(await until(() => a.bgm?.loopUrl === b.lobby.loop), 'a new 作战 pick plays at once');
+      a.playBgm('unite');
+      assert.ok(await until(() => a.bgm?.loopUrl === b.unite.loop), '联防 keeps its own track');
+      a.setBgmChoice({ prep: 'custom', combat: 'lobby' });
+      a.playBgm('prep');
+      assert.ok(await until(() => a.bgm?.loopUrl === b.prep.loop), '自选曲 without a file: the official 休整期 track');
+      a.setBgmLocal('prep', 'blob:good');
+      assert.ok(await until(() => a.bgm?.loopUrl === 'blob:good'), 'a chosen file plays at once');
+      assert.equal(a.buffers.has('blob:good'), false, 'decoded outside the LRU cache');
+      a.setBgmLocal('prep', 'blob:bad');
+      assert.ok(await until(() => a.bgm?.loopUrl === b.prep.loop), 'a file that does not decode: the official track');
+      assert.ok(a.bgmChoiceFailed.has('blob:bad'));
+      const n = urls.length;
+      a.playBgm('combat:0'); a.playBgm('prep');
+      await tick(); await tick();
+      assert.ok(!urls.slice(n).includes('blob:bad'), 'not asked again on this page');
+      a.setBgmLocal('prep', 'blob:good');
+      assert.ok(await until(() => a.bgm?.loopUrl === 'blob:good'), 'another file plays again');
+      a.setBgmChoice({ prep: 'major', combat: 'lobby' });
+      assert.ok(await until(() => a.bgm?.loopUrl === MAJOR_BGM_URL), '上海Major plays where the host has it');
+      // a host without the 上海Major file: 404 on /media/, its OpenI retry and the original URL — the official track
+      globalThis.fetch = async (u) => { urls.push(u); return /sp_major_pause/.test(String(u)) ? { ok: false, status: 404, arrayBuffer: async () => new ArrayBuffer(0) } : { ok: true, arrayBuffer: async () => new ArrayBuffer(8) }; };
+      const fw2 = fakeWindow();
+      const c = new AudioManager({ win: fw2.win, getManifest: () => manifest });
+      c.install();
+      c.setBgmChoice({ prep: 'major', combat: 'official' });
+      c.playBgm('prep');
+      fw2.fire('pointerdown');
+      c.ctx.decodeAudioData = (ab, ok) => ok({ duration: 1.5 });
+      assert.ok(await until(() => c.bgm?.loopUrl === b.prep.loop), 'a missing 上海Major file: the official 休整期 track');
+      assert.ok(c.bgmChoiceFailed.has('major'));
     } finally {
       globalThis.fetch = origFetch;
     }

@@ -436,7 +436,7 @@ test('tools: template writes a skeleton (or adds the missing msgids to a pack), 
     assert.match(tpl.stdout, /wrote public\/i18n\/qaa\.json: \d+ msgids — 0 translations kept, \d+ added \(empty\)/);
     const pack = JSON.parse(fs.readFileSync(path.join(root, 'public/i18n/qaa.json'), 'utf8'));
     assert.equal(Object.keys(pack).length - 1, Object.keys(EN).filter((k) => !k.startsWith('_')).length, 'every msgid of the complete pack');
-    pack['开始'] = 'Los';
+    pack['设置'] = 'Los';
     fs.writeFileSync(path.join(root, 'public/i18n/qaa.json'), JSON.stringify(pack));
     const ok = run('check', 'qaa', '--strict');
     assert.equal(ok.status, 0, `${ok.stdout}${ok.stderr}`);

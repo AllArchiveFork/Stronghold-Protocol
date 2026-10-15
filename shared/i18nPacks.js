@@ -1,6 +1,6 @@
 // shared/i18nPacks.js — the language pack type ("lang") of the content packs (shared/packs.js, docs/PACKS.md;
 // translating: docs/I18N.md "Adding a language"): language codes, the language fields of a pack manifest, the fallback
-// chain t() walks, and the script family the title screen lays out by. No Node builtin: the browser, the server and the
+// chain t() walks, and the script family the document lays out by. No Node builtin: the browser, the server and the
 // tools share it.
 //
 // A language pack is files in the language folders, nothing else (the owner's decision of 2026-10-07):
@@ -169,8 +169,8 @@ export function computeChain(code, metaOf, known) {
 const WIDE_SCRIPT = /[ᄀ-ᇿ⺀-鿿가-힯豈-﫿＀-￯]/;
 
 /**
- * The script family of a text: 'cjk' (ideographs, kana, Hangul) or 'alphabetic' (Latin, Cyrillic, Greek …). The title
- * screen and the start button lay out by it (screens/title.js, ui/lang.js applyDocument), so a pack needs no flag.
+ * The script family of a text: 'cjk' (ideographs, kana, Hangul) or 'alphabetic' (Latin, Cyrillic, Greek …). The
+ * document lays out by it (ui/lang.js applyDocument: `data-script`), so a pack needs no flag.
  * @param {unknown} text
  * @returns {'cjk' | 'alphabetic'}
  */

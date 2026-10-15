@@ -48,14 +48,12 @@ test('voice preferences restore independently, write only voiceLang and never ch
   assert.equal(make(new Map([['voiceLang', 'unsupported']]), []).get().language, 'cn');
   assert.equal(getLang(), ui);
 });
-test('lobby language lives only in shared settings; title settings retain both language choices', () => {
+test('lobby language lives only in shared settings, which retain both language choices', () => {
   const read = path => readFileSync(new URL('../' + path, import.meta.url), 'utf8');
-  const lobby = read('public/js/screens/lobby.js'), title = read('public/js/screens/title.js');
+  const lobby = read('public/js/screens/lobby.js');
   const controls = read('public/js/ui/languageSettings.js'), settings = read('public/js/ui/settings.js');
   assert.doesNotMatch(lobby, /LanguageButton/);
   assert.match(lobby, /<\$\{SettingsButton\}/);
-  assert.match(title, /<\$\{SettingsModal\}/);
-  assert.doesNotMatch(title, /<\$\{LangToggle\}/);
   assert.match(controls, /data-testid="lobby-language"/);
   assert.match(controls, /data-testid="voice-language-toggle"/);
   assert.match(controls, /<\$\{LangToggle\}/);

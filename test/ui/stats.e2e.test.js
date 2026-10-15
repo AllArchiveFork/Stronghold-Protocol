@@ -4,7 +4,7 @@
 // 1. A seeded history (records built from three REAL m.result payloads, test/fixtures/stats-results.json) on desktop
 //    1920×1080 and a phone in landscape 844×390: the four tabs, the counting rule on screen (the match left in the first
 //    round is listed as 中途退出 / 不计入统计 and left out of the totals), the row click that re-views a settlement and
-//    its 返回统计, Esc, the title screen's entry; zero console errors. Screenshots: test/e2e/out/stats-*.png
+//    its 返回统计, Esc, the lobby's entry in English; zero console errors. Screenshots: test/e2e/out/stats-*.png
 // 2. The data actions: 导出 hands out a file the page itself imports again (nothing new), a corrupt file and a newer
 //    one are refused with a message and change nothing, 清空 asks first (the confirm dialog sits above the overlay and
 //    Esc closes only it), unreadable storage is set aside with a notice, a newer build's data is never overwritten.
@@ -64,7 +64,7 @@ describe('统计数据 page (real server, headless Chrome)', { skip: !ENABLED &&
   after(async () => { for (const c of clients) await c.close(); await srv?.stop(); });
 
   /** A fresh browser on `base` with `sp.pref.stats` (a string) stored before the page loads. */
-  async function open({ w = 1920, h = 1080, stored = null, entered = true, base = srv.base, lang = null } = {}) {
+  async function open({ w = 1920, h = 1080, stored = null, base = srv.base, lang = null } = {}) {
     const c = new Client(puppeteer, base, 'stats', { prefix: 'stats', w, h });
     clients.push(c);
     c.browser = await puppeteer.launch({
@@ -76,14 +76,13 @@ describe('统计数据 page (real server, headless Chrome)', { skip: !ENABLED &&
     await c.page.setViewport({ width: w, height: h, hasTouch: w < 1000, isMobile: w < 1000 });
     c.page.on('console', (m) => { if (m.type() === 'error') c.problems.push(`console: ${m.text()}`); });
     c.page.on('pageerror', (e) => c.problems.push(`pageerror: ${e.message}`));
-    await c.page.evaluateOnNewDocument((stored, entered, lang) => {
+    await c.page.evaluateOnNewDocument((stored, lang) => {
       localStorage.setItem('sp.name', 'Doctor');
-      if (entered) sessionStorage.setItem('sp.entered', '1');
       if (lang) localStorage.setItem('sp.pref.lang', JSON.stringify(lang));
       if (stored != null && !sessionStorage.getItem('sp.e2e.seeded')) { localStorage.setItem('sp.pref.stats', stored); sessionStorage.setItem('sp.e2e.seeded', '1'); }
-    }, stored, entered, lang);
+    }, stored, lang);
     await c.page.goto(`${base}/`, { waitUntil: 'domcontentloaded' });
-    await c.page.waitForFunction((needOnline) => (!needOnline || globalThis.__SP__?.store.get().connection.status === 'online') && !!document.querySelector('.screen'), { timeout: 30000 }, entered);
+    await c.page.waitForFunction(() => globalThis.__SP__?.store.get().connection.status === 'online' && !!document.querySelector('.screen'), { timeout: 30000 });
     return c;
   }
   const texts = (c, sel) => c.page.$$eval(sel, (els) => els.map((e) => e.innerText.replace(/\s+/g, ' ').trim()));
@@ -135,12 +134,12 @@ describe('统计数据 page (real server, headless Chrome)', { skip: !ENABLED &&
     assert.ok(await c.exists('.lobby-screen'));
     noProblems(c);
     await c.close();
-    // the title screen's entry (not entered yet: no connection needed), in English
-    const t = await open({ stored: JSON.stringify(env), entered: false, lang: 'en' });
-    await t.click('.title-corner .btn', 'Stats');
-    await t.page.waitForSelector('.st .st-tab', { visible: true, timeout: 15000 });
+    // the lobby's entry in English (there is no title screen since 2026-10-15)
+    const t = await open({ stored: JSON.stringify(env), lang: 'en' });
+    await t.dismissBoard();
+    await openStats(t);
     assert.match(await t.page.$eval('.st-top', (e) => e.textContent), /Overview/);
-    await t.page.screenshot({ path: path.join(OUT, 'stats-overview-title-en.png') });
+    await t.page.screenshot({ path: path.join(OUT, 'stats-overview-en.png') });
     noProblems(t);
     await t.close();
   });
@@ -242,6 +241,7 @@ describe('统计数据 page (real server, headless Chrome)', { skip: !ENABLED &&
     const n = await open({ stored: newer });
     await n.page.waitForSelector('.lobby-screen');
     await openStats(n);
+    await n.page.waitForFunction(() => !/加载中/.test(document.querySelector('.st-body')?.textContent || '加载中'), { timeout: 15000 });
     assert.match(await n.page.$eval('.st-body', (e) => e.textContent), /更新版本的统计数据/);
     assert.ok(await n.page.$eval('[data-testid="stats-clear"]', (b) => b.disabled), 'no 清空 over data this build cannot read');
     assert.equal(await n.page.evaluate(() => localStorage.getItem('sp.pref.stats')), newer);
@@ -264,6 +264,12 @@ describe('统计数据: the real flows (a fast real server, headless Chrome)', {
     await c.waitFor((s) => s.phase === 'INFO_CHECK', 'briefing', 30000);
   }
   async function toPrep(c) {
+    // the briefing's entrance transition covers its button for a moment: click once it is the button that is hit
+    await c.page.waitForFunction(() => {
+      const b = [...document.querySelectorAll('.brief__foot .btn--primary')].find((x) => x.textContent.includes('准备就绪'));
+      const r = b?.getBoundingClientRect();
+      return !!r && b.contains(document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2));
+    }, { timeout: 15000 });
     await c.click('.brief__foot .btn--primary', '准备就绪');
     await c.waitFor((s) => s.phase === 'BAND_DRAFT', 'band draft', 30000);
     await c.click('.dband', null, { nth: 1 });

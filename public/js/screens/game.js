@@ -535,6 +535,9 @@ function MatchScreen() {
     if (!wanted || !field || !field.fieldId || !relayFieldReady || field === staleFieldRef.current || field === enteredFieldRef.current) return;
     if (watchingOther && !combat && field.fieldId !== watching) return; // an older push while switching
     if (lastFieldRef.current && lastFieldRef.current !== field.fieldId) setDetail((d) => (inBattleCard(d) ? null : d));
+    // the watched player's scouted board sent again (each of their changes): the renderer keeps the unchanged pieces
+    // (render/app.js enterBattle) and the camera stays — the pen too, should the viewer be looking at it
+    const rescout = !!field.prep && !!enteredFieldRef.current?.prep && enteredFieldRef.current.fieldId === field.fieldId;
     enteredFieldRef.current = field;
     lastFieldRef.current = field.fieldId;
     reentryRef.current = null;
@@ -568,11 +571,13 @@ function MatchScreen() {
       : sides && sides[myId] ? sides[myId] : members.length > 1 && members.indexOf(myId) === 1 ? 'R' : 'L';
     // local simulation (client-side combat) feeds a frame per animation frame: no network jitter buffer
     view.raw?.setLocalFeed?.({ on: !!field.local, speed: field.speed });
-    setLayer('ALL');
-    // a lone player's boss field (solo modes, the odd player of a co-op Final Assault: the `_s` templates route every
-    // enemy to the left objective) is framed on its own half like the ‹ › half view; pairs start on 全景
-    const lone = kind === 'boss' && members.length === 1;
-    setCam(kind, lone ? { rect: field.rect, side, half: true } : { rect: field.rect, side, ...(field.prep ? { shop: false } : {}) });
+    if (!rescout) {
+      setLayer('ALL');
+      // a lone player's boss field (solo modes, the odd player of a co-op Final Assault: the `_s` templates route every
+      // enemy to the left objective) is framed on its own half like the ‹ › half view; pairs start on 全景
+      const lone = kind === 'boss' && members.length === 1;
+      setCam(kind, lone ? { rect: field.rect, side, half: true } : { rect: field.rect, side, ...(field.prep ? { shop: false } : {}) });
+    }
     audio.setFieldUnits(field.units);
     if (early && early.length) {
       // replay state-bearing events only (a burst of stale hit sparks / damage numbers would look wrong)
@@ -726,9 +731,10 @@ function MatchScreen() {
     if (next) setCam(next.kind, next.opts);
   }, [view, shopFolded, showPrep, pen, !!drag, !!facing, prepCamKey]);
 
-  // 联防 / 最终攻势: the ‹ › pill moves the camera between the field's halves and 全景 (research 09 §3.1)
+  // 联防 / 最终攻势: the ‹ › pill moves the camera between the field's halves and 全景 (research 09 §3.1) — a local
+  // replica's field and a streamed one (server-run combat: m.field carries the rect and the `sides`) alike
   useEffect(() => {
-    if (!view || !field || !field.local || !isCombatPhase(phase)) return;
+    if (!view || !field || !isCombatPhase(phase)) return;
     if (!cameraLayers(field, pub, myId).length) return;
     const kind = field.kind === 'hidden' ? 'boss' : field.kind;
     setCam(kind, layerCamera(field, layer, sidesOf(field)[myId] || 'L'));
@@ -740,7 +746,7 @@ function MatchScreen() {
   const whoAppliedRef = useRef({ who: null, field: null });
   useEffect(() => {
     const who = watchWho;
-    if (!view || !who || !field || field.fieldId !== who.fieldId || !field.local || !isCombatPhase(phase)) return;
+    if (!view || !who || !field || field.fieldId !== who.fieldId || !isCombatPhase(phase)) return;
     const A = whoAppliedRef.current;
     if (A.who === who && A.field === field) return;
     whoAppliedRef.current = { who, field };
@@ -775,10 +781,8 @@ function MatchScreen() {
     // none — the top bar's capsule plays them (ui/hud.js capsuleFxKind)
     const pop = phasePopupOf(phase, b);
     if (pop) setBanner({ ...pop, key: phaseKey });
-    if (phase === PHASE.FINAL_ASSAULT) {
-      faRoundRef.current = pub?.round ?? null;
-      setBossPlate({ kind: 'final', key: phaseKey, ...finalPlateRows(pub) });
-    }
+    // (the 最终攻势 plate opens the boss round's prep, not its fight: the 回合开始 effect below)
+    if (phase === PHASE.FINAL_ASSAULT) faRoundRef.current = pub?.round ?? null;
     if (phase === PHASE.ROUND_START) audio.sfx('roundStart');
     else if (phase === PHASE.PREP) audio.sfx('rest', { volume: 0.7 });
     else if (phase === PHASE.COMBAT) audio.sfx('battleStart');
@@ -820,13 +824,20 @@ function MatchScreen() {
 
   // 回合开始: the round plate (RoundPopup: 回合 NN · 获得 +N, 剩余 N 回合 near the final assault) a beat after the capsule's
   // kettles (video 7:56); a phase change within that beat (a skipped round start) shows none
-  // The round after a 最终攻势 can only be the hidden core's (server/match/match/prep.js): it opens with 隐秘核心已解锁
+  // The boss round opens with the 最终攻势 plate (the survivors' LP merging, 合力击败敌方领袖！) in place of the round
+  // plate, so it leads into the boss round's prep — not into its fight (the owner's correction of 2026-10-15). The
+  // round after a 最终攻势 can only be the hidden core's (server/match/match/prep.js): it opens with 隐秘核心已解锁
   // (video 11:26) in place of the round plate.
   const faRoundRef = useRef(null);
   useEffect(() => {
     if (phase !== PHASE.ROUND_START || !(pub?.round > 0)) return undefined;
     if (faRoundRef.current != null && pub.round > faRoundRef.current) {
       setBossPlate({ kind: 'core', key: `core:${pub.round}` });
+      return undefined;
+    }
+    if (pub.bossRound > 0 && pub.round === pub.bossRound) {
+      faRoundRef.current = pub.round;
+      setBossPlate({ kind: 'final', key: `final:${pub.round}`, ...finalPlateRows(pub) });
       return undefined;
     }
     const id = setTimeout(() => setRoundPop({ round: pub.round, left: roundsToBoss(pub), key: `round:${pub.round}` }), 600);
@@ -1472,13 +1483,14 @@ function MatchScreen() {
   // the solo pause button: only while the own battle still runs (the server refuses it afterwards)
   const canPause = pauseAvailable(pub, { solo, alive, done: meP?.status === 'done' || localDone });
   live.current.canPause = canPause;
-  // client-side combat: observing a teammate's battle (research 09 §3.1) and the 联防 / 最终攻势 camera halves
-  // (an eliminated player auto-observes a teammate's normal field — research 09 "keep-watching" — without asking)
+  // client-side combat: observing a teammate's battle (research 09 §3.1) (an eliminated player auto-observes a
+  // teammate's normal field — research 09 "keep-watching" — without asking); both modes: the 联防 / 最终攻势 camera halves
+  // (server-run combat too since 2026-10-15: production runs it, and its 联防 had no ‹ › pill nor avatar taps)
   const watchedFid = watchingOther ? watching : (cc && combat && !alive && battleState && battleState.watch && battleState.kind === 'normal' ? battleState.fieldId : null);
   // the ‹ › pill: on the 联防 / 最终攻势 field on screen — also one watched with 前往查看 (a leaker, an eliminated spectator)
-  const layers = cc && combat && field && field.local && (!watchingOther || field.fieldId === watching) ? cameraLayers(field, pub, myId) : [];
+  const layers = combat && field && (!watchingOther || field.fieldId === watching) ? cameraLayers(field, pub, myId) : [];
   // …and the avatar of a player on one of its halves: the tap goes to that half (again: 全景) — the team panel's
-  // `observe.half`. A player fighting on the field switches the camera itself; an observer (a 联防 leaker, an eliminated
+  // `halves`. A player fighting on the field switches the camera itself; an observer (a 联防 leaker, an eliminated
   // player, a spectator seat) picks that player as 前往查看 does — g.watch records whom it follows, the pill 返回战场
   const avatarHalf = (p) => (layers.length && p ? avatarLayer(field, pub, myId, p.playerId, layer) : null);
   const avatarPick = (k, p) => {
@@ -1637,8 +1649,8 @@ function MatchScreen() {
       <${TeamPanel} pub=${pub} myId=${myId} watching=${watchingNow} roster=${roster} emoteTtl=${bubbleMs} onWatch=${watchPlayer} cap=${gd.config?.lpCapPerRound ?? 10} uniteLocal=${uniteLocal}
         spMarks=${sp ? spMarks(sp, { solo }) : null}
         self=${Number.isFinite(priv?.lp) ? { lp: priv.lp, pending: liveLpNow.pending, unite: liveLpNow.unite, left: liveLpNow.left } : null}
-        observe=${cc ? { canObserve: (p) => observeTarget(p, pub, myId, { observing: watchingOther, ownDone: localDone }), observing: watchingOther, onBack: backHome,
-          half: avatarHalf, onHalf: avatarPick } : null} />
+        observe=${cc ? { canObserve: (p) => observeTarget(p, pub, myId, { observing: watchingOther, ownDone: localDone }), observing: watchingOther, onBack: backHome } : null}
+        halves=${layers.length ? { half: avatarHalf, onHalf: avatarPick } : null} />
 
       <div class="gm__effects"><${EffectsList} effects=${watchingOther && field ? (field.effects ?? null) : priv?.effects} /></div>
 
@@ -1661,7 +1673,8 @@ function MatchScreen() {
 
       ${combat || mode === 'settle' ? html`<${CombatHud} pub=${pub} myId=${myId} watching=${watchingNow} hud=${hud} myDone=${!!myDone && alive}
         spectating=${!alive} spectator=${spectator} onWatch=${watchField}
-        client=${cc ? { progress, observing: observingName ? { name: observingName } : null, onBack: alive ? backHome : null, layers, layer, onLayer: setLayer } : null} />` : null}
+        client=${cc ? { progress, observing: observingName ? { name: observingName } : null, onBack: alive ? backHome : null, layers, layer, onLayer: setLayer } : null}
+        halves=${!cc && layers.length ? { layers, layer, onLayer: setLayer } : null} />` : null}
 
       ${showDeadPill(alive, phase) ? (spectator
         ? html`<div class="gm__dead gm__dead--spectator" role="status"><${GIcon} name="eye" />${t('观战中 · 点击左侧成员头像切换查看')}</div>`

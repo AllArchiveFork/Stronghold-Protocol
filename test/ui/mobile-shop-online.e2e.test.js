@@ -69,8 +69,9 @@ test('phone online count and full-size shops stay visible, touchable and reconne
       if (await page.$('.announcement-board')) await tap('.announcement-board .modal__actions button', '关闭公告');
     };
     await viewport(844, 390);
+    // no title screen (2026-10-15): boot connects with the remembered callsign
+    await page.evaluateOnNewDocument(() => { try { localStorage.setItem('sp.name', 'Phone024'); } catch { /* none */ } });
     await page.goto(srv.url, { waitUntil: 'domcontentloaded' });
-    await page.waitForSelector('.title-login input'); await page.type('.title-login input', 'Phone024'); await tap('.title-login button');
     await page.waitForSelector('.lobby-screen'); await dismissNotice();
     await page.waitForFunction(() => globalThis.__SP__.store.get().presence?.online === 1);
     peer = new WebSocket(srv.url.replace(/^http/, 'ws') + '/ws');
@@ -164,8 +165,8 @@ test('phone online count and full-size shops stay visible, touchable and reconne
     const desktop = await desktopContext.newPage();
     desktop.on('pageerror', error => report.pageErrors.push(error.message));
     await desktop.setViewport({ width: 1920, height: 1080 });
+    await desktop.evaluateOnNewDocument(() => { try { localStorage.setItem('sp.name', 'Desktop024'); } catch { /* none */ } });
     await desktop.goto(srv.url, { waitUntil: 'domcontentloaded' });
-    await desktop.waitForSelector('.title-login input'); await desktop.type('.title-login input', 'Desktop024'); await desktop.click('.title-login button');
     await desktop.waitForSelector('.lobby-screen'); await pause(500);
     if (await desktop.$('.announcement-board')) await desktop.click('.announcement-board .modal__actions button');
     assert.ok(await desktop.$eval('.online-players', el => {

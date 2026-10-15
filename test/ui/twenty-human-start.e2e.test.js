@@ -88,9 +88,9 @@ test('browser start button launches twenty real human sessions with more than 64
     cdp.on('Network.webSocketFrameSent', event => {
       try { if (JSON.parse(event.response.payloadData).t === 'room.start') report.browserStartFrames++; } catch { /* non-JSON frame */ }
     });
+    // no title screen (2026-10-15): boot connects with the remembered callsign
+    await page.evaluateOnNewDocument(() => { try { localStorage.setItem('sp.name', 'LocalHost'); } catch { /* none */ } });
     await page.goto(url, { waitUntil: 'domcontentloaded' });
-    await page.waitForSelector('.title-login input', { timeout: 20000 });
-    await page.type('.title-login input', 'LocalHost'); await page.click('.title-login button');
     await page.waitForSelector('.lobby-screen', { timeout: 20000 });
     await page.evaluate(async ops => {
       const { data } = await import('/js/data.js'); await data.loadAll('chess', 'backups');

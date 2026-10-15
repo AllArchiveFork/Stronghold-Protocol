@@ -1103,3 +1103,23 @@
   --bk-c: var(--red-premium);
 }
 .crash__box h2 { font-size: calc(.3 * var(--t)); }
+
+/* ---- the game's dot-matrix emblem (ui/emblem.js: lobby hub centre, 成就 badge) -------------------------------------- */
+.emblem { position: relative; display: flex; align-items: center; gap: .26rem; margin-bottom: .26rem; animation: rise-in 600ms var(--ease-out) backwards; }
+.emblem__svg { width: 1.3rem; height: 1.4rem; overflow: visible; filter: drop-shadow(0 0 .12rem rgba(210, 255, 240, .25)); }
+.emblem__svg circle { fill: #dfe6e2; animation: dot-twinkle 4.8s ease-in-out infinite; }
+.emblem__svg circle.d1 { animation-delay: -.7s; }
+.emblem__svg circle.d2 { animation-delay: -1.4s; }
+.emblem__svg circle.d3 { animation-delay: -2.1s; }
+.emblem__svg circle.d4 { animation-delay: -2.8s; }
+.emblem__svg circle.d5 { animation-delay: -3.5s; }
+.emblem__svg circle.d6 { animation-delay: -4.2s; }
+.emblem__svg circle.is-accent { fill: var(--mint-glow); filter: drop-shadow(0 0 .04rem var(--mint-glow)); animation: none; }
+@keyframes dot-twinkle { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
+@keyframes rise-in { from { opacity: 0; transform: translateY(.14rem); } }
+.emblem__bracket { width: .16rem; height: 1.7rem; border: 2px solid rgba(223, 230, 226, .45); }
+.emblem__bracket--l { border-right: 0; }
+.emblem__bracket--r { border-left: 0; }
+
+/* the language select (ui/lang.js LanguageSelect, 设置) */
+.lang-select select { height: max(.38rem, 1.4em); min-width: 1.6rem; padding: 0 .12rem; background: #0a0d0c; border: 0; color: var(--text-hi); font-size: calc(.16 * var(--t)); cursor: pointer; }

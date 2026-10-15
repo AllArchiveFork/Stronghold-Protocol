@@ -5,8 +5,9 @@
 // 干员调配) and three big entries at the bottom right: 独立模拟 opens 选择模拟协议 (difficulty, create), 同盟模拟
 // opens 选择同盟方式 (create, join with a 同盟密钥 or 观战, 多人匹配), 多人匹配 opens 选择模拟协议 for the public queue
 // (queue.join → queue.state: 搜寻中, 确认入场, 搜寻成功 — ui/matchmaking.js QueueFlow). Joining a room whose match has
-// started goes back to this browser's own seat in it, else offers its spectator seat (joinRoom). The server is picked on
-// the title screen.
+// started goes back to this browser's own seat in it, else offers its spectator seat (joinRoom). There is no title screen
+// (2026-10-15): ✎ beside the name chip renames (ui/nickname.js); the footer under the feedback group (HubFoot) carries
+// the licence notice, the repository link and the version.
 // Not carried over from the design's original deployment (the owner's decision of 2026-10-14): chat, accounts and
 // friends, the cross-server room directory and public room list, 私密房间, 无限火力. Maintenance: the server's
 // presence.state `maintenance` pauses new matches (the entries say so); an announcement's `banner` line is shown above
@@ -21,11 +22,12 @@
 // config.json mode texts come localized from data.js.
 
 import { LobbyMusicButton } from '../ui/lobbyMusic.js';
-import { Emblem } from './title.js';
+import { Emblem } from '../ui/emblem.js';
 import { useHubBackdrop, HubBackdrop, HubRadar, BackdropSettings, BackdropGlyph, backdropTheme } from '../ui/hubBackdrop.js';
 import { ResumeMatchButton, resumeLocalMatch } from '../ui/resumeMatch.js';
+import { openNameDialog } from '../ui/nickname.js';
 import { useEffect, useRef, useState } from '../../vendor/hooks.module.js';
-import { DIFFICULTIES, DIFFICULTY_NAMES, DIFFICULTY_COLORS, ROOM_CODE_LEN, MAX_SEATS, MAX_SPECTATORS, modeIdFor, ERR } from '../../../shared/constants.js';
+import { DIFFICULTIES, DIFFICULTY_NAMES, DIFFICULTY_COLORS, ROOM_CODE_LEN, MAX_SEATS, MAX_SPECTATORS, modeIdFor, ERR, APP_VERSION, DEV_BUILD } from '../../../shared/constants.js';
 import { html, Button, Icon, MicroLabel, TextField, PingPill, AvatarFrame, Tooltip, Spinner, DifficultyIcon, doctorNo, confirmDialog } from '../ui/components.js';
 import { AnnouncementBoard, announcementRevision, announcementDismissed, dismissAnnouncement, announcementBanner, parseAnnouncements } from '../ui/announcements.js';
 import { ServerStatusModal } from '../ui/serverStatus.js';
@@ -594,6 +596,14 @@ function DesignCredit() {
   </p>`;
 }
 
+/** The fan-work notice, the project repository and the version (the title screen's footer until 2026-10-15). */
+function HubFoot() {
+  return html`<p class="hub-credit hub-foot">
+    <span>${t('非官方同人复刻 · 游戏素材版权归 上海鹰角网络 / Yostar 所有')}</span><span class="hub-credit__sep" aria-hidden="true">·</span><a class="hub-repo" href="https://github.com/sganggs/Stronghold-Protocol" target="_blank" rel="noopener noreferrer">${t('项目仓库')}</a><span class="hub-credit__sep" aria-hidden="true">·</span><span class="num">v${APP_VERSION}</span>
+    ${DEV_BUILD ? html`<span class="hub-dev" role="note">${t('开发版 · 不稳定，请勿用于公开服务器')}</span>` : null}
+  </p>`;
+}
+
 /** The top bar's name chip: the trophy badge, the name, DOCTOR #; opens 统计数据. */
 function MeChip({ me }) {
   const card = useMyCard();
@@ -720,10 +730,9 @@ export function LobbyScreen() {
       throw err;
     }));
   };
-  const backToTitle = () => {
-    if (queued) { toast(t('请先取消多人匹配再返回'), 'warn'); return; }
-    identity.setEntered(false);
-    store.set((s) => ({ session: { ...s.session, entered: false } }));
+  const rename = () => {
+    if (queued) { toast(t('请先取消多人匹配再修改代号'), 'warn'); return; }
+    openNameDialog();
   };
   const openSolo = () => { if (queued) { toast(t('请先取消多人匹配'), 'warn'); return; } savePref('lobby.mode', 'solo'); setSheetChained(false); setSheet('solo'); };
   const openAlly = () => { savePref('lobby.mode', 'coop'); setAllyOpen(true); };
@@ -735,7 +744,6 @@ export function LobbyScreen() {
     <${HubBackdrop} bg=${bg} />
     <header class="topbar hub-topbar">
       <div class="topbar__left">
-        <${Button} variant="ghost" size="sm" icon="chevronLeft" class="lobby-back" onClick=${backToTitle} title=${t('返回标题')} aria-label=${t('返回标题')}>${t('返回')}<//>
         <${PingPill} ms=${conn.ping} online=${conn.status === 'online'} status=${conn.status} loadState=${conn.loadState ?? 'unknown'} loadDetails=${conn.loadDetails}
           clusterLoad=${conn.clusterLoad} loadOpen=${loadOpen} onLoadClick=${() => setLoadOpen(true)} />
         <span class="topbar__sep" aria-hidden="true"></span>
@@ -754,6 +762,7 @@ export function LobbyScreen() {
           <span class="online-pill__dot"></span>${Number.isInteger(presence?.online) && conn.status === 'online'
             ? html`<span class="num">${presence.online}</span><span class="online-word">${t('名博士在线')}</span>` : html`<span>${t('在线人数 —')}</span>`}</span>
         <${ResumeMatchButton} />
+        <${Button} variant="secondary" size="sm" square=${true} icon="edit" class="me-rename" onClick=${rename} title=${t('修改博士代号')} aria-label=${t('修改博士代号')} />
         <${MeChip} me=${me} />
       </div>
     </header>
@@ -769,7 +778,7 @@ export function LobbyScreen() {
         <${AchievementEntry} onOpen=${() => setAchOpen(true)} />
         <${HubTile} icon="key" label=${t('密钥加入')} en="JOIN WITH KEY" onClick=${() => setJoinOpen(true)} />
         <${TipsPanel} />
-        <div class="hub-contact"><${LobbyFeedback} /><${DesignCredit} /></div>
+        <div class="hub-contact"><${LobbyFeedback} /><${DesignCredit} /><${HubFoot} /></div>
       </aside>
 
       <aside class="hub-right">

@@ -1,5 +1,5 @@
 // Release metadata: one version everywhere (package.json, package-lock.json, shared/constants.js APP_VERSION shown on
-// the title screen, the server banner and /healthz), the GPL-3.0-or-later licence (LICENSE, package.json, lockfile) and
+// the lobby's footer, the server banner and /healthz), the GPL-3.0-or-later licence (LICENSE, package.json, lockfile) and
 // the notice files the README and the release bundle point at.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -43,8 +43,8 @@ test('CHANGELOG.md opens with the release version, and the README links it', () 
 });
 
 test('the release version is what players see', () => {
-  assert.match(read('public/js/screens/title.js'), /v\$\{APP_VERSION\}/, 'title screen footer');
-  assert.ok(!/PROTOCOL v1/.test(read('public/js/screens/title.js')), 'no protocol number posing as a version');
+  assert.match(read('public/js/screens/lobby.js'), /v\$\{APP_VERSION\}/, 'lobby footer');
+  assert.ok(!/PROTOCOL v1/.test(read('public/js/screens/lobby.js')), 'no protocol number posing as a version');
   // the server's entry is server/index.js; the banner and /healthz live in server/http/ (boot.js, routes.js)
   assert.match(read('server/http/boot.js'), /Stronghold Protocol: Alliance v\$\{APP_VERSION\}/, 'boot banner');
   assert.match(read('server/http/routes.js'), /app: APP_VERSION/, '/healthz');
@@ -88,7 +88,7 @@ test('a development build says so everywhere a player or a host looks, and never
   if (!DEV_BUILD) return;
   const readme = read('README.md');
   assert.match(readme.split('\n').slice(0, 8).join('\n'), /开发版（dev 分支）：不稳定，请勿用于公开服务器/, 'the README warns right under the title');
-  assert.match(read('public/js/screens/title.js'), /DEV_BUILD \? html`<span class="title-dev"/, 'the title screen footer carries the dev tag');
+  assert.match(read('public/js/screens/lobby.js'), /DEV_BUILD \? html`<span class="hub-dev"/, 'the lobby footer carries the dev tag');
   assert.match(read('server/http/boot.js'), /if \(DEV_BUILD\) console\.log\(/, 'the boot banner warns the host');
   assert.ok(isDevVersion(APP_VERSION) && !isDevVersion('0.1.4'), 'tools/package.mjs treats the version as a development one');
   assert.match(read('tools/package.mjs'), /isDevVersion\(p\.version\) && !o\.allowDev/, 'packaging a dev version needs --allow-dev');

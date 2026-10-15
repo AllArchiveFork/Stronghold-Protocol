@@ -272,7 +272,7 @@ export function buildDiagnostics(input) {
     c.attempt ? `retry ${c.attempt}` : null, c.lastError ? `last error ${messageOf(c.lastError)}` : null)}`);
   const pub = state.match?.public || null;
   const room = state.room || null;
-  lines.push(`where: ${join(pub?.phase ? `phase ${pub.phase}` : room ? 'room' : state.session?.entered ? 'lobby' : 'title',
+  lines.push(`where: ${join(pub?.phase ? `phase ${pub.phase}` : room ? 'room' : state.session?.entered === false ? 'name dialog' : 'lobby',
     Number.isFinite(pub?.round) ? `round ${pub.round}` : null, room?.mode ? `mode ${room.mode}` : null,
     room?.difficulty ? `difficulty ${room.difficulty}` : null,
     Array.isArray(pub?.players) ? `players ${pub.players.length}` : Array.isArray(room?.seats) ? `seats ${room.seats.filter(Boolean).length}` : null)}`);

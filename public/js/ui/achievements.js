@@ -24,7 +24,7 @@ import { NameCardLayer, NameCardPicker } from './namecards.js';
 import { useMyCard, trophyTotal, setCardBackground, setCardAvatar } from './playerCard.js';
 import { cardOperators, cardAvatarUrl } from './seatArt.js';
 import { AvatarPicker } from './opPicker.js';
-import { Emblem } from '../screens/title.js';
+import { Emblem } from './emblem.js';
 import { OpCard, levelOf } from '../screens/settle.js';
 import { t, N_ } from '../../../shared/i18n.js';
 

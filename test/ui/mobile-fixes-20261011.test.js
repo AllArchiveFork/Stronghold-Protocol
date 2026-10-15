@@ -24,7 +24,7 @@ test('the hub keeps the join key, 公告, the feedback group and the queue', () 
   const lobby = source('../../public/js/screens/lobby.js');
   assert.match(lobby, /<\$\{HubTile\} icon="key" label=\$\{t\('密钥加入'\)\}/);
   assert.match(lobby, /<\$\{NoticeCard\} value=\$\{noticeValue\}/);
-  assert.match(lobby, /<div class="hub-contact"><\$\{LobbyFeedback\} \/><\$\{DesignCredit\} \/><\/div>/);
+  assert.match(lobby, /<div class="hub-contact"><\$\{LobbyFeedback\} \/><\$\{DesignCredit\} \/><\$\{HubFoot\} \/><\/div>/);
   assert.match(lobby, /net\.request\('queue\.join', \{ difficulty \}\)/);
   assert.match(lobby, /<\$\{QueueFlow\} queue=\$\{queue\}/);
   const css = source('../../public/css/screens/lobby.css');

@@ -251,7 +251,11 @@ function SettleIntro({ players, myId, lose, onDone }) {
     addEventListener('keydown', skip);
     return () => { clearTimeout(id); removeEventListener('keydown', skip); };
   }, []);
-  const seats = SEAT_BOX.map((xy, i) => ({ xy, p: players.find((p) => p.seat === i) || null }));
+  // four boxes: the own group's four seats in a bigger room (an experimental one of up to 20, seats in groups of four),
+  // numbered by their seats
+  const mine = players.find((p) => p.playerId === myId);
+  const base = Number.isInteger(mine?.seat) ? Math.floor(mine.seat / 4) * 4 : 0;
+  const seats = SEAT_BOX.map((xy, i) => ({ xy, seat: base + i, p: players.find((p) => p.seat === base + i) || null }));
   return html`<div class=${cx('sintro', lose && 'is-lose')} data-testid="settle-intro" onClick=${() => done.current()}>
     <div class="settle__stage">
       <svg class="sintro__svg" viewBox="0 0 1920 1080" aria-hidden="true">
@@ -262,8 +266,8 @@ function SettleIntro({ players, myId, lose, onDone }) {
         <circle class="sintro__ring" cx="960" cy="540" r="500" pathLength="1" />
         <path class="sintro__cross" d="M960 40v300M960 740v300" />
         <path class="sintro__bracket" d="M845 430h230M845 650h230M845 430v10M1075 430v10M845 650v-10M1075 650v-10" />
-        ${seats.map(({ xy: [x, y], p }, i) => html`<g key=${i} class=${cx('sintro__seat', !p && 'is-empty', p && (p.playerId === myId) && 'is-me', p && p.alive === false && 'is-out', p && p.left && 'is-left')} style=${`--i:${i}`}>
-          <rect x=${x} y=${y} width="135" height="135" /><text x=${x + 14} y=${y + 40}>${pad2(i + 1)}</text>
+        ${seats.map(({ xy: [x, y], seat, p }, i) => html`<g key=${i} class=${cx('sintro__seat', !p && 'is-empty', p && (p.playerId === myId) && 'is-me', p && p.alive === false && 'is-out', p && p.left && 'is-left')} style=${`--i:${i}`}>
+          <rect x=${x} y=${y} width="135" height="135" /><text x=${x + 14} y=${y + 40}>${pad2(seat + 1)}</text>
           <path class="sintro__hatch" d=${`M${x + 70} ${y + 135}l65-65M${x + 98} ${y + 135}l37-37M${x + 40} ${y + 135}l95-95`} />
         </g>`)}
         ${[[480, 200], [1310, 200], [480, 750], [1310, 750]].map(([x, y], i) => html`<g key=${`g${i}`} class="sintro__ghost" style=${`--i:${i}`}>
@@ -481,18 +485,35 @@ function TeamCard({ p, i, gd, self, victory, raw }) {
 function TeamPage({ r, res, gd, myId, at, backLabel, onBack, onDetail }) {
   const rounds = useCountUp(r.roundsPassed, { ms: 900, delay: 450 });
   const backRef = useRef(null);
+  const rowRef = useRef(null);
   const rawOf = (pid) => (Array.isArray(res?.players) ? res.players.find((x) => x && x.playerId === pid) : null) || null;
   useEffect(() => {
     audio.sfx('settlementTeam');
     const id = setTimeout(() => backRef.current?.focus({ preventScroll: true }), 900);
     return () => clearTimeout(id);
   }, []);
+  // more than four doctors (an experimental room of up to 20, the owner's report of 2026-10-15: the cards ran off both
+  // edges): the row scrolls sideways — it opens on the own card, and a mouse wheel scrolls it
+  const wide = r.players.length > 4;
+  useEffect(() => {
+    const row = rowRef.current;
+    if (!wide || !row) return undefined;
+    const me = row.querySelector('.tcard.is-self');
+    if (me) row.scrollLeft = me.offsetLeft - (row.clientWidth - me.offsetWidth) / 2;
+    const onWheel = (e) => {
+      if (Math.abs(e.deltaY) <= Math.abs(e.deltaX) || row.scrollWidth <= row.clientWidth) return;
+      row.scrollLeft += e.deltaY;
+      e.preventDefault();
+    };
+    row.addEventListener('wheel', onWheel, { passive: false });
+    return () => row.removeEventListener('wheel', onWheel);
+  }, [wide]);
   return html`<section class=${cx('steam', r.victory ? 'is-win' : 'is-lose')} data-testid="settle-team">
     <div class="settle__stage">
       <div class="steam__bg" aria-hidden="true"></div>
       <${Logo} />
-      <div class="steam__cards" style=${`--n:${r.players.length}`}>
-        ${r.players.length ? r.players.map((p, i) => html`<${TeamCard} key=${p.playerId} p=${p} i=${i} gd=${gd} self=${p.playerId === myId} victory=${r.victory} raw=${rawOf(p.playerId)} />`)
+      <div ref=${rowRef} class=${cx('steam__cards', wide && 'is-wide')} style=${`--n:${r.players.length}`}>
+        ${r.players.length ? r.players.map((p, i) => html`<${TeamCard} key=${p.playerId} p=${p} i=${wide ? Math.min(i, 7) : i} gd=${gd} self=${p.playerId === myId} victory=${r.victory} raw=${rawOf(p.playerId)} />`)
           : html`<p class="steam__none">${t('暂无结算数据')}</p>`}
       </div>
       <div class="settle__barbg steam__barbg" aria-hidden="true"></div>

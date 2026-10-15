@@ -1426,13 +1426,22 @@ export async function createFieldView(host, options = {}) {
     if (release) { try { release(); } catch { /* ignore */ } }
   }
 
+  // `rescout`: the same scouted prep board again — the server sends the whole board on each change of the watched
+  // player's (Match._notifyPrepScouts: a move, a purchase, an effect). Rebuilding every view made all their operators
+  // vanish and fade in on each of their actions (the owner's report of 2026-10-15, 观战 flicker): the pieces whose
+  // UnitInfo did not change but for the tile keep their views (the next snapshot moves them), the others are built again.
   function enterBattle(meta) {
     if (destroyed || !meta || typeof meta !== 'object') return false;
     holdScene(true); // before the prep views go: the cache is never "quiet" across the switch
     drag.reset();
     endDragVisual(false);
     cancelReplay();  // the round start's replay is a prep-board thing: none of it reaches a battle (or a scouted board)
-    clearViews();
+    const rescout = meta.prep === true && mode === 'battle' && !!battleMeta?.prep
+      && battleMeta.fieldId === (meta.fieldId ?? null) && battleMeta.kind === (meta.kind || 'normal');
+    if (rescout) {
+      const looks = new Map((Array.isArray(meta.units) ? meta.units : []).filter((u) => u && u.id != null).map((u) => [u.id, scoutLook(u)]));
+      for (const [id, v] of [...views]) if (!v._look || looks.get(id) !== v._look) dropView(id);
+    } else clearViews();
     if (prepPieces.length) promoBase = prepPieces;
     prepPieces = [];
     prepMapChars = [];
@@ -1460,7 +1469,10 @@ export async function createFieldView(host, options = {}) {
     }
     tiles.setBattleRect(rect);
     board3d?.setBattleRect(rect);
-    for (const u of Array.isArray(meta.units) ? meta.units : []) addInfo(u);
+    for (const u of Array.isArray(meta.units) ? meta.units : []) {
+      const info = addInfo(u);
+      if (info && battleMeta.prep) info._look = scoutLook(u);
+    }
     return true;
   }
 
@@ -1468,6 +1480,11 @@ export async function createFieldView(host, options = {}) {
     const info = renderInfo(u);
     if (info) infos.set(info.id, info);
     return info;
+  }
+
+  /** A scouted board's UnitInfo without its tile: equal ⇒ the piece's view is kept when the board is sent again. */
+  function scoutLook(u) {
+    try { return JSON.stringify({ ...u, x: undefined, y: undefined }); } catch { return null; }
   }
 
   // a hand item on a scouted prep board (UnitInfo kind 'item'): the plate's icon and colour resolve client-side,
@@ -1496,6 +1513,7 @@ export async function createFieldView(host, options = {}) {
     v.setWorld(info.x, info.y, 0);
     v._seen = false;
     v._born = performance.now();
+    v._look = info._look || null;
     views.set(id, v);
     return v;
   }

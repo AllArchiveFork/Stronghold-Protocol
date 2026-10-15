@@ -151,7 +151,7 @@ function stripLangParam() {
 export const htmlLang = (code) => (code === DEFAULT_LANG ? 'zh-CN' : code);
 
 /**
- * <html lang>, data-lang, data-script (the title screen's layout: CJK or alphabetic, from the pack's title) and the tab
+ * <html lang>, data-lang, data-script (CJK or alphabetic, from the pack's title: a hook for script-specific CSS) and the tab
  * title follow the language.
  */
 function applyDocument(lang) {

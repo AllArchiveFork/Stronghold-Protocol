@@ -89,7 +89,7 @@ for (const [name, change] of [
   ['queued matchmaking', r => { r.state.queue = { state: 'queued' }; }],
   ['an offered match', r => { r.state.queue = { state: 'offered' }; }],
   ['a closed connection', r => { r.connection.status = 'offline'; }],
-  ['the title screen', r => { r.state.session.entered = false; }],
+  ['a refused name (the name dialog)', r => { r.state.session.entered = false; }],
 ]) {
   test(`confirmation becomes stale after ${name}: no spectator request`, async () => {
     const r = rig();

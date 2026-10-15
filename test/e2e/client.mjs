@@ -285,14 +285,31 @@ export class Client {
     return file;
   }
 
-  /** Title → lobby with a callsign. */
+  /**
+   * Play under a callsign (there is no title screen): in the lobby ✎ beside the name chip → 博士代号 → 确认; a page
+   * that follows an invite link (`?room=`) joins the room by itself, so there the name is stored and the page reloaded —
+   * the session and its room resume under it (the password gate stores the callsign the same way in production).
+   */
   async enter(name) {
-    await this.page.waitForSelector('.title-login input', { timeout: 20000 });
-    await this.click('.title-login input');
-    await this.page.keyboard.type(name);
-    await this.click('.title-login button', '开始');
-    await this.page.waitForSelector('.lobby-screen', { timeout: 20000 });
+    await this.page.waitForFunction(() => globalThis.__SP__?.store.get().connection.status === 'online', { timeout: 30000 });
+    if (await this.page.evaluate(() => !!globalThis.__SP__.store.get().ui.pendingJoin || !document.querySelector('.lobby-screen'))) {
+      await this.page.evaluate((n) => localStorage.setItem('sp.name', n), name);
+      await this.page.reload({ waitUntil: 'domcontentloaded' });
+      await this.page.waitForFunction((n) => globalThis.__SP__?.net.status === 'online' && globalThis.__SP__.net.helloName === n,
+        { timeout: 30000 }, name);
+      return;
+    }
     await this.dismissBoard();
+    await this.click('.me-rename');
+    await this.page.waitForSelector('.name-dialog input', { visible: true, timeout: 10000 });
+    // the dialog opens with the current name selected: typing replaces it
+    await this.page.waitForFunction(() => { const el = document.querySelector('.name-dialog input'); return el && el.value.length > 0 && document.activeElement === el && el.selectionStart === 0 && el.selectionEnd === el.value.length; }, { timeout: 5000 });
+    await this.page.keyboard.type(name);
+    await this.click('.name-dialog .modal__actions button', '确认');
+    await this.page.waitForSelector('.name-dialog', { hidden: true, timeout: 10000 });
+    // the server's welcome to the renaming hello (net.js helloName) — the session plays under the new name
+    await this.page.waitForFunction((n) => globalThis.__SP__?.net.status === 'online' && globalThis.__SP__.net.helloName === n,
+      { timeout: 20000 }, name);
   }
 
   // ---- hub and room (the lobby / room design adopted 2026-10-14) ----------------------------------------------------

@@ -132,12 +132,13 @@ class Client {
     this.shots += 1;
   }
 
-  /** Title → lobby with a callsign. */
+  /** The lobby with a callsign: no title screen since 2026-10-15 — the remembered name, then a reload (boot says hello). */
   async enter(name) {
-    await this.page.waitForSelector('.title-login input', { timeout: 20000 });
-    await this.click('.title-login input'); // fresh profile per client: the field starts empty
-    await this.page.keyboard.type(name);
-    await this.click('.title-login button', '开始');
+    await this.page.waitForFunction(() => !!globalThis.__SP__, { timeout: 20000 });
+    await this.page.evaluate((n) => localStorage.setItem('sp.name', n), name);
+    await this.page.reload({ waitUntil: 'domcontentloaded' });
+    await this.page.waitForFunction((n) => globalThis.__SP__?.net.status === 'online' && globalThis.__SP__.net.helloName === n,
+      { timeout: 30000 }, name);
   }
 
   // ---- field view helpers (render engine debug hooks) ------------------------------------------------------------

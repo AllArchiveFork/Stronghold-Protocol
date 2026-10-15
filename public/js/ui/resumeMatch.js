@@ -13,7 +13,6 @@ import { toast } from './toasts.js';
  */
 export async function resumeLocalMatch(item) {
   if (!(await identity.resume(item.id))) return false;
-  identity.setEntered(true);
   store.patch('session', { entered: true });
   // Keep the tentative token in this document until welcome persists it. Reloading here
   // would either lose the selection or falsely turn it into an established session claim.

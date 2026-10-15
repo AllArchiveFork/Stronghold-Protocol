@@ -69,7 +69,7 @@ test('browser survives two-redirect CDN failures with bounded public-material Op
       void req.respond({ status: 302, headers: { Location: providerUrl + '/jump/' + encodeURIComponent(url.pathname), 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' } });
     });
     await page.goto(app.url, { waitUntil: 'domcontentloaded' });
-    await page.waitForFunction(() => !!globalThis.__SP__ && !!document.querySelector('.title-login input'), { timeout: 30000 });
+    await page.waitForFunction(() => !!globalThis.__SP__ && !!document.querySelector('.lobby-screen'), { timeout: 30000 });
     report.dom = await page.evaluate(async () => {
       const { MaterialImage } = await import('/js/ui/materialImage.js');
       const { h, render } = await import('/vendor/preact.module.js');
@@ -108,7 +108,6 @@ test('browser survives two-redirect CDN failures with bounded public-material Op
     assert.equal(report.forced.includes('/assets/test/browser-stale.png'), false, 'old source timer is cancelled');
     assert.equal(report.forced.includes('/assets/test/browser-healthy.png'), false, 'healthy image is not duplicated');
     assert.equal(report.forced.filter(path => path.includes('both-fail')).length, 1, 'both failures cannot loop');
-    await page.type('.title-login input', 'Fallback Test'); await page.click('.title-login button');
     await page.waitForSelector('.lobby-screen', { timeout: 20000 });
     const request = (type, fields = {}) => page.evaluate((type, fields) => globalThis.__SP__.net.request(type, fields).then(() => true), type, fields);
     await request('room.create', { mode: 'solo', difficulty: 'NORMAL' }); await request('room.start');

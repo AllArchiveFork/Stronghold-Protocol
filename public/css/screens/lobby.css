@@ -2493,6 +2493,10 @@ button.ach-card__ava:hover, button.ach-card__ava:focus-visible { border-color: v
 .hub-credit { margin: 0; padding: .03rem .1rem; font-size: max(calc(.12 * var(--t)), 10px); line-height: 1.5; color: rgba(223, 230, 226, .62); background: rgba(6, 10, 10, .55); }
 .hub-credit b { color: rgba(223, 230, 226, .85); font-weight: 600; }
 .hub-credit__sep { margin: 0 .06rem; }
+.hub-foot { color: rgba(223, 230, 226, .5); }
+.hub-repo { color: inherit; text-decoration: underline; text-underline-offset: .02rem; }
+.hub-repo:hover { color: var(--mint-400); }
+.hub-dev { display: block; color: var(--amber); font-weight: 700; }
 .ally-note { display: block; margin-top: .04rem; font-size: max(calc(.12 * var(--t)), 10px); }
 .join-foot__note { flex-basis: 100%; font-size: max(calc(.12 * var(--t)), 11px); }
 

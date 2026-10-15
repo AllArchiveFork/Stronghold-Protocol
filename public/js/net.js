@@ -792,7 +792,6 @@ const K_TOKEN = 'sp.token';      // sessionStorage: this tab's token
 const K_WELCOME = 'sp.tokenWelcome'; // sessionStorage: { hash, at } from the first welcome for this token
 const K_RECENT = 'sp.tokens';    // localStorage: this browser's recent tokens, most recent first
 const K_MATCHES = 'sp.matches'; // local metadata for explicit recovery of another closed tab's seat
-const K_ENTERED = 'sp.entered';  // sessionStorage: this tab passed the title screen
 const RECENT_MAX = 4;
 const TOKEN_MAX_LEN = 64;        // protocol limit for hello.token
 const CHANNEL_NAME = 'sp.identity';
@@ -847,7 +846,7 @@ function defaultChannel() {
 }
 
 /**
- * Create the identity helper (nickname, "entered" flag and reconnect-token selection; see above).
+ * Create the identity helper (nickname and reconnect-token selection; see above).
  * @param {{ local?: Storage|null, session?: Storage|null, tabId?: string,
  *           channel?: { postMessage: Function, addEventListener?: Function, onmessage?: any } | null,
  *           setTimeout?: (fn: Function, ms: number) => any, queryMs?: number, now?: () => number,
@@ -1091,10 +1090,6 @@ export function createIdentity(deps = {}) {
       sdel(session, K_WELCOME);
       if (t) writeRecent(readRecent().filter((x) => x !== t));
     },
-    /** Whether this tab already passed the title screen (survives reloads, not new tabs). */
-    wasEntered: () => sget(session, K_ENTERED) === '1',
-    /** @param {boolean} on */
-    setEntered: (on) => (on ? sset(session, K_ENTERED, '1') : sdel(session, K_ENTERED)),
   };
 }
 

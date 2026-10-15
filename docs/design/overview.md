@@ -127,7 +127,7 @@ public/
     data.js                fetches /data/*.json, same indexes as server/data.js
     audio.js               BGM/SFX manager (Web Audio), volume settings
     assets.js              asset URLs, image cache, Spine loader with LRU + fallback
-    screens/               title.js, lobby.js, room.js, briefing.js, bandDraft.js, game.js (entry; game/*.js plates, marks, early events), result.js
+    screens/               lobby.js, room.js, briefing.js, bandDraft.js, game.js (entry; game/*.js plates, marks, early events), result.js
     ui/                    hud.js, bondStrip.js, bondPopup.js, shopBar.js, teamPanel.js, detailPanel.js,
                            tooltip.js, choiceOverlay.js, rewardOverlay.js, ticker.js, emotes.js, settings.js, toasts.js,
                            gameLogic.js (barrel; gameLogic/*.js placement, bonds, phases, shop, loadout)

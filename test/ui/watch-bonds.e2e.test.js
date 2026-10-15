@@ -634,6 +634,11 @@ describe('DESIGN §20.15 — the bond strip shows the watched teammate\'s bonds 
       await host.click('.readybtn');
       for (const c of [host, guest]) await c.waitFor((s) => s.phase === 'FINAL_ASSAULT', 'Final Assault', 90000);
       await guest.page.waitForSelector('.chud__layers', { timeout: 20000 });
+      // the eliminated guest's 协议已失效 plate (ui/matchPlates.js DownedPlate) covers the field: 继续观战 closes it
+      if (await guest.page.waitForSelector('[data-testid="downed-plate"]', { visible: true, timeout: 3000 }).catch(() => null)) {
+        await guest.click('[data-testid="downed-plate"] .downpl__btn--watch');
+        await guest.page.waitForSelector('[data-testid="downed-plate"]', { hidden: true, timeout: 5000 });
+      }
       await sleep(1000);
       const mv = await matchView(guest);
       const pair = mv.fields.find((f) => f.players.length === 2);

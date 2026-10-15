@@ -31,6 +31,11 @@
 .damage-board__group > .damage-board__rows { max-height: none; overscroll-behavior: contain; touch-action: pan-y; }
 .damage-board__group .damage-board__empty { padding-block: 8px; gap: 4px; }
 .damage-board__group .damage-board__empty > .icon { display: none; }
+/* more than two players (an experimental room's relay 联防: up to four helpers over its two fields; the owner's report of
+   2026-10-15): the two-row grid would crush them — the groups follow one another, each whole, in one scroll */
+.damage-board__groups.is-many { display: flex; flex-direction: column; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--line-3) transparent; }
+.damage-board__groups.is-many > .damage-board__group { flex: none; }
+.damage-board__groups.is-many .damage-board__group > .damage-board__rows { overflow: visible; }
 .damage-board__tip { display: block; }
 .damage-board__row { display: flex; align-items: center; gap: .1rem; padding: max(.075rem, calc(6px * var(--ui))) 0; }
 .damage-board__row:hover, .damage-board__row:focus-visible { background: var(--bg-2); }

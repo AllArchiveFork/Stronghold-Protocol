@@ -130,10 +130,10 @@ describe('multi-device (Chrome device emulation)', { skip: !ENABLED && 'set SP_E
   }
 
   for (const dev of Object.keys(DEVICES)) {
-    test(`${dev}: title page — fits, touch classes, no zoom gestures, no errors`, async () => {
+    test(`${dev}: first page (the lobby: no title screen since 2026-10-15) — fits, touch classes, no zoom gestures, no errors`, async () => {
       const { page, problems } = await open(dev, '/');
-      await page.waitForSelector('.title-screen', { timeout: 10000 });
-      await page.screenshot({ path: path.join(OUT, `device-${dev}-title.png`) });
+      await page.waitForSelector('.lobby-screen', { timeout: 10000 });
+      await page.screenshot({ path: path.join(OUT, `device-${dev}-first.png`) });
       const st = await page.evaluate(() => ({
         cls: document.documentElement.className,
         rotate: getComputedStyle(document.querySelector('.rotate-hint')).display,
@@ -275,7 +275,7 @@ describe('multi-device (Chrome device emulation)', { skip: !ENABLED && 'set SP_E
   }
 
   for (const dev of ['iphone14', 'phone-min', 'ipad']) {
-    test(`${dev}: title → lobby → room with taps (the on-screen flow before a match fits and responds)`, async () => {
+    test(`${dev}: lobby (✎ callsign) → room with taps (the on-screen flow before a match fits and responds)`, async () => {
       // a fresh profile: another device's saved session (same origin) would resume straight into its room
       const ctx = await browser.createBrowserContext();
       const { page, problems } = await open(dev, '/', { ctx });
@@ -290,10 +290,18 @@ describe('multi-device (Chrome device emulation)', { skip: !ENABLED && 'set SP_E
         await page.touchscreen.tap(r.x, r.y);
         await sleep(350);
       };
-      await tapText('.title-login input');
+      await page.waitForSelector('.lobby-screen', { timeout: 15000 });
+      if (await page.waitForSelector('.announcement-board', { visible: true, timeout: 1500 }).catch(() => null)) {
+        await tapText('.announcement-board .modal__actions button');
+        await page.waitForSelector('.announcement-board', { hidden: true });
+      }
+      // the callsign: ✎ beside the name chip, the dialog opens with the current name selected — typing replaces it
+      await tapText('.me-rename');
+      await page.waitForSelector('.name-dialog input', { visible: true });
+      await page.$eval('.name-dialog input', (el) => { el.focus(); el.select(); });
       await page.keyboard.type('凯尔希');
-      await tapText('.title-login button', '开始');
-      await page.waitForSelector('.lobby-screen', { timeout: 15000 }).catch(async (err) => {
+      await tapText('.name-dialog .modal__actions button', '确认');
+      await page.waitForFunction(() => globalThis.__SP__?.net.helloName === '凯尔希', { timeout: 15000 }).catch(async (err) => {
         await page.screenshot({ path: path.join(OUT, `device-${dev}-lobby-FAILED.png`) });
         throw err;
       });
@@ -398,7 +406,7 @@ describe('multi-device (Chrome device emulation)', { skip: !ENABLED && 'set SP_E
     const desk = await browser.newPage();
     await desk.setViewport({ width: 900, height: 1000 });
     await desk.goto(`${base}/`, { waitUntil: 'networkidle0' });
-    await desk.waitForSelector('.title-screen', { timeout: 10000 });
+    await desk.waitForSelector('.lobby-screen', { timeout: 10000 });
     assert.equal(await desk.$eval('.rotate-hint', (el) => getComputedStyle(el).display), 'none', 'desktop keeps the game');
     await desk.close();
   });

@@ -2,10 +2,10 @@
 // screen and a running match; opt-in, ~15 s):
 //   SP_E2E=1 CHROME_PATH=… node --test test/ui/settings-entry.e2e.test.js
 //
-// After 开始 the lobby's top bar carries a 设置 button left of 玩法说明 (ui/settings.js SettingsButton), and so does the
-// room's after 创建同盟; each opens the very settings modal of the title screen (language, sound, 快捷键 …) and closes
+// The lobby's top bar carries a 设置 button left of 玩法说明 (ui/settings.js SettingsButton), and so does the
+// room's after 创建同盟; each opens the very same settings modal (language, sound, 快捷键 …) and closes
 // with Esc or 完成, leaving the screen as it was. No console / page errors. The modal itself and its contents are covered
-// by the title screen's tests; this file is about the entry. Not in the modal, deliberately: background music in a
+// by test/ui/modal.e2e.test.js and test/ui/i18n.e2e.test.js; this file is about the entry. Not in the modal, deliberately: background music in a
 // hidden tab and the board style (the owner's decision of 2026-10-07 on #238).
 
 import { test, describe, before, after } from 'node:test';

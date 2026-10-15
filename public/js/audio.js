@@ -69,7 +69,8 @@
 // - Buffers are fetched once and cached (LRU); failed fetch/decode ⇒ silent (logged once as a warning).
 //
 // `bgmKeyFor(route, pub)` picks the track for the current screen/phase (main.js calls `audio.install()`,
-// which follows the store).
+// which follows the store); a player's own 休整期 / 作战 pick replaces the official track of those keys (bgmChoice.js,
+// `setBgmChoice`; 自选曲 plays the file `setBgmLocal` hands over, decoded outside the LRU cache: `_localBuffer`).
 
 import { sanitizeVoiceOverrides, voiceLangFor } from './voicePrefs.js';
 import { PHASE } from '../../shared/constants.js';
@@ -77,6 +78,7 @@ import { mediaUrl } from './media.js';
 import { fetchMaterial } from './materialFallback.js';
 import { normalizeVoiceLanguage, voiceCandidates } from './voiceLanguage.js';
 import { unhashedUrl } from '../../shared/assetPaths.js';
+import { pickedBgm, sanitizeBgmChoice } from './bgmChoice.js';
 
 const MAX_VOICES = 8;
 const UNIT_COOLDOWN_MS = 160;
@@ -580,6 +582,10 @@ export class AudioManager {
     this.wantBgm = null;      // desired key (kept while locked)
     this.bgm = null;          // { key, loopUrl, nodes: [{src, gain}], gain }
     this.bgmToken = 0;
+    this.bgmChoice = { prep: 'official', combat: 'official' }; // the player's 休整期 / 作战 picks (bgmChoice.js)
+    this.bgmChoiceFailed = new Set(); // picks whose track did not load on this page: the official one plays instead
+    this.bgmLocal = { prep: null, combat: null }; // object URLs of the player's 自选曲 files (ui/lobbyMusic.js matchMusic)
+    this.localBgm = null;     // { url, p }: the one decoded 自选曲 (a long file must not evict the whole LRU cache)
     this.units = new Map();   // battle unit id → defId
     this.pendingSkill = new Map(); // unit id → the 'skill' tuple that arrived before the unit was known (see _track)
     this.lastAttacker = new Map(); // target id → { def, at, skillIndex, skillActive } of the hostile attack aimed at it (its impact sound,
@@ -731,6 +737,60 @@ export class AudioManager {
     if (this.landWarm && this.ctx && !this.volumes.muted && this.volumes.sfx > 0) this.warmLandings();
   }
 
+  /**
+   * The player's 休整期 / 作战 picks (settings bgmPrep / bgmCombat, bgmChoice.js); the track on screen follows at once.
+   * @param {{ prep?: string, combat?: string }} v
+   */
+  setBgmChoice(v) {
+    const next = { prep: sanitizeBgmChoice(v?.prep), combat: sanitizeBgmChoice(v?.combat) };
+    if (next.prep === this.bgmChoice.prep && next.combat === this.bgmChoice.combat) return;
+    this.bgmChoice = next;
+    const key = this.bgm?.key ?? this.wantBgm;
+    if (key) this.playBgm(key);
+  }
+
+  /**
+   * The player's 自选曲 file of 休整期 / 作战 (an object URL, null: none); the track on screen follows at once.
+   * @param {'prep'|'combat'} kind
+   * @param {string|null} url
+   */
+  setBgmLocal(kind, url) {
+    if (!(kind in this.bgmLocal) || this.bgmLocal[kind] === (url || null)) return;
+    this.bgmLocal = { ...this.bgmLocal, [kind]: url || null };
+    if (this.localBgm && !Object.values(this.bgmLocal).includes(this.localBgm.url)) this.localBgm = null;
+    const key = this.bgm?.key ?? this.wantBgm;
+    if (key) this.playBgm(key);
+  }
+
+  /** The track of a BGM key: the player's pick for 休整期 / 作战 when it has one, else the manifest's (resolveBgm). */
+  _bgmTrack(key) {
+    const manifest = this.getManifest();
+    return pickedBgm(manifest, key, this.bgmChoice, this.bgmChoiceFailed, this.bgmLocal) || resolveBgm(manifest, key);
+  }
+
+  /** Decode a 自选曲 file (an object URL) into the single local slot. Resolves null on failure. */
+  _localBuffer(url) {
+    if (!this.ctx) return Promise.resolve(null);
+    if (this.localBgm?.url === url) return this.localBgm.p;
+    const ctx = this.ctx;
+    const p = (async () => {
+      try {
+        const ab = await (await fetch(url)).arrayBuffer();
+        return await new Promise((resolve) => {
+          try {
+            const r = ctx.decodeAudioData(ab, resolve, () => resolve(null));
+            if (r && typeof r.then === 'function') r.then(resolve, () => resolve(null));
+          } catch { resolve(null); }
+        });
+      } catch (err) {
+        this._warn('bgm-local', err);
+        return null;
+      }
+    })();
+    this.localBgm = { url, p };
+    return p;
+  }
+
   /** Is the music silent — muted, or the BGM volume at 0? Then no BGM is downloaded (playBgm). */
   get bgmSilent() { return this.volumes.muted || this.volumes.bgm <= 0; }
 
@@ -849,14 +909,14 @@ export class AudioManager {
       if (!this.ctx) { this.wantBgm = key; return; }
       if (this.bgmSilent) {
         this.wantBgm = key;
-        const silentTrack = resolveBgm(this.getManifest(), key);
+        const silentTrack = this._bgmTrack(key);
         if (this.bgm && silentTrack && this.bgm.loopUrl === silentTrack.loop) { this.bgm.key = key; return; }
         ++this.bgmToken; // a start still waiting for its download stays silent too
         this._fadeOutBgm();
         return;
       }
       this.wantBgm = null;
-      const track = resolveBgm(this.getManifest(), key);
+      const track = this._bgmTrack(key);
       if (this.bgm && track && this.bgm.loopUrl === track.loop) { this.bgm.key = key; return; }
       if (!track && !this.bgm) return;
       const token = ++this.bgmToken;
@@ -867,7 +927,15 @@ export class AudioManager {
   }
 
   async _startBgm(key, track, token) {
-    const [intro, loop] = await Promise.all([track.intro ? this._buffer(track.intro) : null, this._buffer(track.loop)]);
+    const loopOf = track.local ? this._localBuffer(track.loop) : this._buffer(track.loop);
+    const [intro, loop] = await Promise.all([track.intro ? this._buffer(track.intro) : null, loopOf]);
+    // a pick that does not load (a failed download, a file the browser cannot decode): the official track of the key
+    // for the rest of the page (a 自选曲 file until another one is chosen)
+    if (!loop && track.choice) {
+      this.bgmChoiceFailed.add(track.choice);
+      if (token === this.bgmToken) { this.bgm = null; this.playBgm(key); }
+      return;
+    }
     if (token !== this.bgmToken || !this.ctx || !loop) return;
     try {
       const ctx = this.ctx;

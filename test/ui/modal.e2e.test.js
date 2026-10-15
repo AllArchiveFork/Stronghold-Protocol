@@ -1,5 +1,5 @@
 // Shared Modal keyboard boundaries, real Chrome. Component fixtures cover nested / empty dialogs; the settings
-// case uses the real title screen. Opt-in: SP_E2E=1 node --test test/ui/modal.e2e.test.js
+// case uses the real lobby's ⚙. Opt-in: SP_E2E=1 node --test test/ui/modal.e2e.test.js
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
@@ -17,6 +17,16 @@ describe('Modal keyboard focus', { skip: !ENABLED && 'set SP_E2E=1 and have Chro
   });
   after(async () => { await browser?.close(); await srv?.close(); });
   const active = (page) => page.evaluate(() => document.activeElement.id);
+  // the lobby's ⚙ (no title screen since 2026-10-15); a 公告板 that opened by itself is closed first
+  const lobbySettings = async (page) => {
+    await page.waitForSelector('.lobby-settings');
+    const board = await page.waitForSelector('.announcement-board', { visible: true, timeout: 1500 }).catch(() => null);
+    if (board) {
+      await page.click('.announcement-board .modal__actions button');
+      await page.waitForSelector('.announcement-board', { hidden: true });
+    }
+    await page.click('.lobby-settings');
+  };
   const tab = async (page, reverse = false) => {
     if (reverse) await page.keyboard.down('Shift');
     await page.keyboard.press('Tab');
@@ -149,14 +159,13 @@ describe('Modal keyboard focus', { skip: !ENABLED && 'set SP_E2E=1 and have Chro
     } finally { await page.close(); }
   });
 
-  test('title settings: Tab cycles and leaves hotkey capture; Esc cancels capture before closing', async () => {
+  test('lobby settings: Tab cycles and leaves hotkey capture; Esc cancels capture before closing', async () => {
     const page = await browser.newPage();
     try {
       await page.setViewport({ width: 1280, height: 720 });
       page.setDefaultTimeout(5000);
       await page.goto(srv.url, { waitUntil: 'domcontentloaded' });
-      await page.waitForSelector('.title-settings');
-      await page.click('.title-settings');
+      await lobbySettings(page);
       await page.waitForFunction(() => document.querySelector('.modal__box')?.contains(document.activeElement));
       const assertInside = async () => assert.equal(await page.evaluate(() => document.querySelector('.modal__box').contains(document.activeElement)), true);
       for (const reverse of [false, true]) for (let i = 0; i < 25; i++) { await tab(page, reverse); await assertInside(); }
@@ -175,8 +184,8 @@ describe('Modal keyboard focus', { skip: !ENABLED && 'set SP_E2E=1 and have Chro
       assert.ok(await page.$('.modal'), 'capture consumes the first Esc');
       await page.keyboard.press('Escape');
       await page.waitForSelector('.modal', { hidden: true });
-      assert.equal(await page.evaluate(() => document.activeElement.matches('.title-settings')), true);
-      assert.ok(await page.$('.title-screen'), 'the background start button was not activated');
+      assert.equal(await page.evaluate(() => document.activeElement.matches('.lobby-settings')), true);
+      assert.ok(await page.$('.lobby-screen') && !(await page.$('.modal')), 'nothing behind the dialog was activated');
     } finally { await page.close(); }
   });
 
@@ -185,8 +194,7 @@ describe('Modal keyboard focus', { skip: !ENABLED && 'set SP_E2E=1 and have Chro
     try {
       page.setDefaultTimeout(5000);
       await page.goto(srv.url, { waitUntil: 'domcontentloaded' });
-      await page.waitForSelector('.title-settings');
-      await page.click('.title-settings');
+      await lobbySettings(page);
       await page.waitForSelector('.set-guide');
       await page.waitForFunction(() => !document.querySelector('.modal__box').getAnimations().some((a) => a.playState === 'running'));
       await page.click('.set-guide');

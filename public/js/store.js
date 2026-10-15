@@ -77,7 +77,7 @@ export const emptyMatch = () => ({ public: null, private: null, field: null, res
 export const initialState = Object.freeze({
   connection: { status: 'idle', ping: null, loadState: 'unknown', loadDetails: null, clusterLoad: null, attempt: 0, retryAt: 0, lastError: null, everOnline: false },
   me: { playerId: null, name: '', token: null },
-  session: { entered: false },
+  session: { entered: false }, // false only before boot and after a NAME_REJECTED hello (ui/nickname.js)
   room: null,
   presence: null,
   queue: { state: 'idle', ticketId: null },
@@ -85,24 +85,23 @@ export const initialState = Object.freeze({
   ticker: [],
   emotes: [],
   clock: { offset: 0, rtt: null, synced: false },
-  ui: { pendingJoin: null, restoring: false, buildStale: false },
+  ui: { pendingJoin: null, restoring: false, buildStale: false, nameDialog: false },
 });
 
 /** The app-wide store singleton. */
 export const store = createStore(initialState);
 
 /**
- * Which screen the router shows for a given app state:
- * not entered → title; m.public.phase ≠ LOBBY or room.inMatch → game; in a room → room; else lobby.
+ * Which screen the router shows for a given app state (there is no title screen: ui/nickname.js):
+ * m.public.phase ≠ LOBBY or room.inMatch → game; in a room → room; else lobby.
  * @param {any} s store state
- * @returns {'title'|'lobby'|'room'|'game'}
+ * @returns {'lobby'|'room'|'game'}
  */
 export function selectRoute(s) {
-  if (!s?.session?.entered) return 'title';
-  const phase = s.match?.public?.phase;
+  const phase = s?.match?.public?.phase;
   if (phase && phase !== PHASE.LOBBY) return 'game';
-  if (s.room?.inMatch) return 'game'; // match starting: m.public is on its way
-  if (s.room) return 'room';
+  if (s?.room?.inMatch) return 'game'; // match starting: m.public is on its way
+  if (s?.room) return 'room';
   return 'lobby';
 }
 

@@ -366,6 +366,14 @@
 .pcardx__txt i .icon { width: 85%; height: 85%; }
 .pcardx__face { position: relative; flex: none; height: 100%; aspect-ratio: 1; overflow: hidden; background: #0b2621; box-shadow: 0 0 0 calc(.2 * var(--pq)) #e8fff7; }
 .pcardx__face .pavatar { --pa: 100%; border: 0; }
+/* a big room (more than three rows a side, ui/matchIntro.js pboot--dense): one line per card — number, COMPLETE, ✓ —
+   sized by the card's height (--ch: its height in --pq), so ten thin rows a side stay legible and apart */
+.pboot--dense .pcardx__txt { flex-direction: row; align-items: center; justify-content: flex-end; gap: calc(.3 * var(--ch) * var(--pq)); padding: 0 calc(.45 * var(--ch) * var(--pq)); }
+.pboot--dense .pcardx--r .pcardx__txt { justify-content: flex-start; }
+.pboot--dense .pcardx__txt b { font-size: calc(.68 * var(--ch) * var(--pq)); }
+.pboot--dense .pcardx__txt span { font-size: calc(.36 * var(--ch) * var(--pq)); }
+.pboot--dense .pcardx__txt i { width: calc(.5 * var(--ch) * var(--pq)); height: calc(.5 * var(--ch) * var(--pq)); margin-top: 0; }
+.pboot--dense .pcardx__mark svg { width: auto; height: 72%; }
 .pboot__title { position: absolute; left: 0; right: 0; top: 66.4%; margin: 0; text-align: center; font-size: calc(4.4 * var(--pq)); font-weight: 900; letter-spacing: calc(.3 * var(--pq)); line-height: 1.2;
   color: #4ff0c0; text-shadow: 0 0 calc(1.2 * var(--pq)) rgba(80, 255, 200, .45); animation: pboot-title 520ms cubic-bezier(.2, .8, .2, 1) 1400ms backwards; }
 @keyframes pboot-title { 0% { opacity: 0; transform: scale(1.35); filter: brightness(2.2) blur(2px); } 60% { opacity: 1; filter: brightness(1.4); } }

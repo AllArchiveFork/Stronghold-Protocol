@@ -241,6 +241,15 @@ describe('§20.15 the ‹ › pill of a shared field watched with 前往查看 (
     assert.match(textOf(pill), /返回战场/);
     assert.ok(![...walk(v)].some((x) => hasClass(x, 'chud__observe')));
   });
+  test('server-run combat on a field with halves (`halves`): the ‹ › half pill replaces the legacy field switcher', () => {
+    const pub = { fields: [{ fieldId: 'u', kind: 'unite', live: true, players: [ME, 'p2'] }] };
+    const v = CombatHud({ pub, myId: ME, watching: 'u', hud: null, myDone: false, halves: { layers, layer: 'R', onLayer() {} } });
+    const pill = [...walk(v)].find((x) => hasClass(x, 'chud__layers'));
+    assert.ok(pill && /阿米娅/.test(textOf(pill)) && !/返回战场/.test(textOf(pill)));
+    assert.equal([...walk(v)].filter((x) => hasClass(x, 'vswitch')).length, 1, 'no second (legacy) switcher');
+    const legacy = CombatHud({ pub, myId: ME, watching: 'u', hud: null, myDone: false });
+    assert.ok([...walk(legacy)].some((x) => hasClass(x, 'is-single')) && ![...walk(legacy)].some((x) => hasClass(x, 'chud__layers')), 'without halves: the legacy switcher');
+  });
   test('observing a normal field: the "👁 name" pill + 返回战场; a helper\'s own pill has no 返回战场', () => {
     const v = CombatHud({ pub: {}, myId: ME, watching: 'n:p2', hud: null, myDone: true, client: { observing: { name: '阿米娅' }, onBack() {}, layers: [], layer: 'ALL' } });
     const pill = [...walk(v)].find((x) => hasClass(x, 'chud__observe'));

@@ -11,7 +11,7 @@ import { checkButtons } from '../../public/js/ui/hud.js';
 import { penPlacement, penZoneTiles, previewEnemyKey, PEN } from '../../public/js/ui/gameLogic.js';
 import { bannerVisible } from '../../public/js/ui/connBanner.js';
 import { layoutPen } from '../../public/js/render/pen.js';
-import { stripLoneSurrogates, sanitizeName } from '../../public/js/screens/title.js';
+import { stripLoneSurrogates, sanitizeName } from '../../public/js/ui/nickname.js';
 import { AudioManager } from '../../public/js/audio.js';
 
 // ---- fakes -----------------------------------------------------------------------------------------------------------

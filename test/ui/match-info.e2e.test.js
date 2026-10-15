@@ -57,7 +57,7 @@ describe('GitHub issue #8 item 1: 本局信息 in the strategy draft (real serve
     await srv?.close();
   });
 
-  /** One player: its own Chrome with one always-visible page, past the title screen, in the lobby. */
+  /** One player: its own Chrome with one always-visible page, in the lobby. */
   async function player(name, { phone = null } = {}) {
     const browser = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ARGS, protocolTimeout: 90000 });
     browsers.push(browser);

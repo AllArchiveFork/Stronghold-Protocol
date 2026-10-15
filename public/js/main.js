@@ -1,14 +1,13 @@
 // Client entry: boot (fonts, identity, socket), net → store wiring, router, global overlays.
 //
-// Router (derived from the store, no URL routes):
-//   not entered            → Title
+// Router (derived from the store, no URL routes; no title screen — the nickname: ui/nickname.js):
 //   m.public.phase ≠ LOBBY → Game (screens/game.js: briefing / band draft / match / result by phase)
 //   room.inMatch           → Game (match starting, m.public on its way)
 //   in a room              → Room
 //   otherwise              → Lobby
-// Deep link `?room=CODE`: remembered at boot, auto-joined once the player has entered and the
+// Deep link `?room=CODE`: remembered at boot, auto-joined once the player has a name and the
 // session is online (after a short grace period in case the server restores a room on resume).
-// Reloading a tab that already passed the title re-enters automatically (sessionStorage flag) and
+// Boot connects with the remembered nickname (the gate's callsign; a first visit: 博士 + four digits) and
 // resumes the server session with the saved token; stale room/match state is dropped if the
 // server does not re-push it within RESTORE_GRACE_MS after `welcome`. Boot waits for
 // `identity.init()` (which token this tab may use without stealing another live tab's session)
@@ -42,12 +41,13 @@ import './queueCancellation.js';
 import { store, useStore, emptyMatch, selectRoute, sessionResetNotice, isSpectating } from './store.js';
 import { data } from './data.js';
 import { GAME_FILES } from './ui/gameComponents.js';
-import { TitleScreen, sanitizeName } from './screens/title.js';
+import { NameHost, sanitizeName, defaultName } from './ui/nickname.js';
 import { LobbyScreen, rememberRoom, parseRoomParam, joinRoom } from './screens/lobby.js';
 import { RoomScreen } from './screens/room.js';
 import { GameScreen } from './screens/game.js';
 import { audio, installAudio } from './audio.js';
 import { settingsStore } from './ui/settings.js';
+import { matchMusic } from './ui/lobbyMusic.js';
 import { GuideHost } from './ui/guide.js';
 import { installDeviceSupport } from './ui/device.js';
 import { LoadoutHost } from './screens/loadout.js';
@@ -67,7 +67,7 @@ const CLAIM_RETRY_GAP_MS = 5000;
 const TICKER_KEEP = 20;
 const EMOTE_KEEP = 20;
 
-const SCREENS = { title: TitleScreen, lobby: LobbyScreen, room: RoomScreen, game: GameScreen };
+const SCREENS = { lobby: LobbyScreen, room: RoomScreen, game: GameScreen };
 
 /** Copy of a server message without transport fields. */
 function payload(msg) {
@@ -265,8 +265,9 @@ function wireNet() {
       identity.rejectToken();
     }
     if (err.code === 'NAME_REJECTED') {
-      identity.setEntered(false);
-      store.set({ session: { entered: false } }); // retain room/token: correcting a legacy name must not abandon its game
+      // ui/nickname.js NameHost asks for another name over the screen; room/token stay: correcting a legacy name must
+      // not abandon its game
+      store.set({ session: { entered: false } });
     }
     if (err.code === 'SERVER_FULL') return; // the connection banner shows it and counts down to the automatic retry
     toastError(err);
@@ -335,7 +336,7 @@ function wireNet() {
     store.set((s) => ({ emotes: [...s.emotes.slice(-(EMOTE_KEEP - 1)), { seq: ++seq, playerId: msg.playerId, id: msg.id, at: Date.now() }] }));
   });
 
-  // Entering (title → lobby) while already online also needs the deep-link join.
+  // A corrected name (after NAME_REJECTED) while already online also needs the deep-link join.
   store.subscribe((s, prev) => {
     if (s.session.entered && !prev.session.entered) schedulePendingJoin();
     // in a room (co-op or solo, also a resumed one) a match is near: its data starts downloading
@@ -383,6 +384,7 @@ function App() {
     <${GuideHost} />
     <${LoadoutHost} />
     <${StatsHost} />
+    <${NameHost} />
   </div>`;
 }
 
@@ -431,10 +433,9 @@ async function boot() {
 
   const pendingJoin = parseRoomParam(location.search);
   const savedName = sanitizeName(identity.loadName());
-  const entered = identity.wasEntered() && !!savedName;
   store.set((s) => ({
     me: { ...s.me, name: savedName },
-    session: { entered },
+    session: { entered: true },
     ui: { ...s.ui, pendingJoin },
   }));
 
@@ -447,18 +448,24 @@ async function boot() {
   net.attachBrowserHooks();
   // Audio: unlock on first gesture, BGM follows the route / match phase (js/audio.js).
   installAudio({ getManifest: () => data.get('assets'), subscribe: store.subscribe, getState: store.get, selectRoute, settings: settingsStore.get() });
+  matchMusic.load(); // the player's 休整期 / 作战 自选曲 files (IndexedDB)
   data.load('assets').catch(() => {});
   // Warm the data cache in the background (missing files are tolerated).
   data.loadAll('config').catch(() => {});
   // Optional local-client art manifest (emotes, tutorial pages, official UI sprites; DESIGN §13).
   data.load('local').catch(() => {});
 
-  const connectWhenReady = identityReady.then(() => {
-    if (entered) net.setName(savedName);
-    else net.connect();
-  });
   // the language (and its UI translations) before the first render: no Chinese flash for an English player
   const langReady = initLang().catch((err) => console.warn('[app] language setup failed', err));
+  const connectWhenReady = Promise.all([identityReady, langReady]).then(() => {
+    // a first visit (no gate callsign, nothing remembered): 博士 + four digits in the chosen language; ✎ renames
+    const name = savedName || defaultName();
+    if (!savedName) {
+      identity.saveName(name);
+      store.set((s) => ({ me: { ...s.me, name } }));
+    }
+    net.setName(name);
+  });
   await Promise.all([waitForFonts(1200), connectWhenReady, langReady]);
   const root = document.getElementById('app');
   render(html`<${App} />`, root);

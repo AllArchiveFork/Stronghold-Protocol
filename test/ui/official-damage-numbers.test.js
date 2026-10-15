@@ -49,9 +49,9 @@ test('every interface pack translates the new settings and title strings', () =>
   }
 });
 
-test('the title page links the project repository in a new tab', () => {
-  const src = read('public/js/screens/title.js');
-  assert.match(src, /class="title-repo"/);
+test('the lobby links the project repository in a new tab', () => {
+  const src = read('public/js/screens/lobby.js');
+  assert.match(src, /class="hub-repo"/);
   assert.match(src, /href="https:\/\/github\.com\/sganggs\/Stronghold-Protocol"/);
   assert.match(src, /target="_blank"/);
   assert.match(src, /rel="noopener noreferrer"/);

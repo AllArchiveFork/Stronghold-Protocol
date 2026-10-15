@@ -149,7 +149,7 @@ const JS_FILES = walk(path.join(PUBLIC, 'js'), '.js');
 describe('client modules parse as ES modules', () => {
   test('found client modules', () => {
     for (const f of ['main.js', 'net.js', 'store.js', 'data.js', 'ui/components.js', 'ui/toasts.js',
-      'screens/title.js', 'screens/lobby.js', 'screens/room.js', 'screens/game.js']) {
+      'ui/nickname.js', 'screens/lobby.js', 'screens/room.js', 'screens/game.js']) {
       assert.ok(existsSync(path.join(PUBLIC, 'js', f)), `public/js/${f} exists`);
     }
   });
@@ -290,13 +290,15 @@ describe('store.js', () => {
   test('selectRoute', async () => {
     const { selectRoute } = await mod('store.js');
     const base = { session: { entered: true }, room: null, match: { public: null } };
-    assert.equal(selectRoute({ ...base, session: { entered: false } }), 'title');
+    // no title screen: a refused name keeps the screen (ui/nickname.js NameHost opens over it)
+    assert.equal(selectRoute({ ...base, session: { entered: false } }), 'lobby');
+    assert.equal(selectRoute({ ...base, session: { entered: false }, room: { code: 'ABCD', inMatch: true } }), 'game');
     assert.equal(selectRoute(base), 'lobby');
     assert.equal(selectRoute({ ...base, room: { code: 'ABCD' } }), 'room');
     assert.equal(selectRoute({ ...base, room: { code: 'ABCD', inMatch: true } }), 'game');
     assert.equal(selectRoute({ ...base, room: { code: 'ABCD' }, match: { public: { phase: 'PREP' } } }), 'game');
     assert.equal(selectRoute({ ...base, room: { code: 'ABCD' }, match: { public: { phase: 'LOBBY' } } }), 'room');
-    assert.equal(selectRoute(undefined), 'title');
+    assert.equal(selectRoute(undefined), 'lobby');
   });
 
   test('serverNow applies the clock offset', async () => {
@@ -863,16 +865,11 @@ describe('identity (reconnect-token selection across tabs)', () => {
     assert.equal(await racing.init(), 'fromWelcome');
   });
 
-  test('entered flag, name, clearToken, bad tokens and missing storage', async () => {
+  test('name, clearToken, bad tokens and missing storage', async () => {
     const { createIdentity, tokenHash } = await mod('net.js');
     const local = memStorage();
     const id = createIdentity({ local, session: memStorage(), tabId: 'X', channel: null });
     await id.init();
-    assert.equal(id.wasEntered(), false);
-    id.setEntered(true);
-    assert.equal(id.wasEntered(), true);
-    id.setEntered(false);
-    assert.equal(id.wasEntered(), false);
     id.saveName('凯尔希');
     assert.equal(id.loadName(), '凯尔希');
     id.saveToken('t');
@@ -896,7 +893,6 @@ describe('identity (reconnect-token selection across tabs)', () => {
     none.saveToken('x');
     assert.equal(none.getToken(), 'x', 'kept in memory for this page');
     assert.equal(none.loadName(), '');
-    assert.equal(none.wasEntered(), false);
   });
 });
 
@@ -996,8 +992,8 @@ describe('data.js', () => {
 // ---- unit: screen helpers & components ----------------------------------------------------------------------
 
 describe('screen helpers', () => {
-  test('title: sanitizeName / isValidName / findUiAsset', async () => {
-    const { sanitizeName, isValidName, findUiAsset } = await mod('screens/title.js');
+  test('nickname: sanitizeName / isValidName / defaultName', async () => {
+    const { sanitizeName, isValidName, defaultName } = await mod('ui/nickname.js');
     assert.equal(sanitizeName('  凯尔希  '), '凯尔希');
     assert.equal(sanitizeName('a\u0000b\u200bc\u202ed'), 'abcd');
     assert.equal(sanitizeName('a   b'), 'a b');
@@ -1014,18 +1010,22 @@ describe('screen helpers', () => {
     assert.equal(sanitizeName(null), '');
     assert.equal(isValidName('   '), false);
     assert.equal(isValidName('Doctor'), true);
-    assert.equal(findUiAsset({ ui: { 'entry/bkg_01': '/assets/ui/entry/bkg_01.png' } }, ['titleBackdrop', 'entry/bkg_01']), '/assets/ui/entry/bkg_01.png');
-    assert.equal(findUiAsset({ ui: { titleBackdrop: { url: '/a.png' } } }, ['titleBackdrop']), '/a.png');
-    assert.equal(findUiAsset({ files: ['/assets/ui/entry_bkg_01.webp'] }, ['entry_bkg_01']), '/assets/ui/entry_bkg_01.webp');
-    assert.equal(findUiAsset(null, ['x']), null);
-    assert.equal(findUiAsset({ ui: {} }, ['x']), null);
+    // a first visit's name: 博士 + four digits, a valid name the server keeps unchanged
+    for (let i = 0; i < 20; i++) {
+      const name = defaultName();
+      assert.match(name, /^博士\d{4}$/);
+      assert.equal(server.sanitizeName(name), name);
+    }
   });
 
-  test('title exposes the shared settings modal', () => {
-    const source = readFileSync(path.join(PUBLIC, 'js/screens/title.js'), 'utf8');
-    assert.match(source, /import \{ SettingsModal \} from '\.\.\/ui\/settings\.js'/);
-    assert.match(source, /class="title-settings fsbtn tapx"/, 'title screen includes the settings control');
-    assert.match(source, /<\$\{SettingsModal\} open=\$\{settingsOpen\}/, 'settings control opens the shared modal');
+  test('no title screen: boot connects with the remembered or a generated name, the lobby renames', () => {
+    const main = readFileSync(path.join(PUBLIC, 'js/main.js'), 'utf8');
+    assert.ok(!/screens\/title\.js/.test(main) && !existsSync(path.join(PUBLIC, 'js/screens/title.js')));
+    assert.match(main, /const name = savedName \|\| defaultName\(\);/);
+    assert.match(main, /<\$\{NameHost\} \/>/, 'the rename dialog is mounted over every route');
+    const lobby = readFileSync(path.join(PUBLIC, 'js/screens/lobby.js'), 'utf8');
+    assert.match(lobby, /class="me-rename" onClick=\$\{rename\}/);
+    assert.ok(!/backToTitle|lobby-back/.test(lobby), 'no way back to a title screen');
   });
 
   test('lobby: normalizeCode / parseRoomParam / difficultyInfo', async () => {

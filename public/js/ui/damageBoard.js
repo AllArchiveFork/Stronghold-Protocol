@@ -126,7 +126,7 @@ export function DamageBoard({ snapshot, ownerId, ownerName, uniteOwners = null, 
         <p class="damage-board__phase" role="status">${label}<small>${score.shared ? sharedScope : frozen ? t('保留至下一轮开战') : t('随当前视角同步')}</small></p>
       </div>
       <div class="damage-board__columns" aria-hidden="true"><span>${score.shared ? t('干员 / 本人占比') : t('干员 / 伤害占比')}</span><span>${t('实际伤害')}</span></div>
-      ${score.shared ? html`<div class="damage-board__groups">
+      ${score.shared ? html`<div class=${`damage-board__groups${score.groups.length > 2 ? ' is-many' : ''}`}>
         ${score.groups.map(group => html`<section key=${group.playerId} class="damage-board__group" data-player-id=${group.playerId} aria-label=${t('{name}的输出', { name: group.name })}>
           <header class="damage-board__group-heading"><strong title=${group.name}>${group.name}</strong>
             <span>${t('小计')} <b class="num">${group.available ? damageNumber(group.total) : '—'}</b></span></header>
