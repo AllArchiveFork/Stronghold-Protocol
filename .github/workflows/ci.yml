@@ -20,7 +20,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        # Ubuntu only (the owner's decision of 2026-10-15): the Windows job failed on every push since 2026-10-13
+        os: [ubuntu-latest]
         # Node 24 only: the one supported version (what `winget install OpenJS.NodeJS.LTS` installs today)
         node: [24]
     env:
@@ -71,7 +72,7 @@ jobs:
           node tools/doctor.mjs || true
           kill $pid || true
 
-  # Separate from the test matrix so lint / types / import boundaries run once, not four times.
+  # Separate from the test matrix so lint / types / import boundaries run once.
   # Lint warnings do not fail the job (npm run lint does not pass --max-warnings=0).
   tooling:
     name: tooling (lint, imports, typecheck)
