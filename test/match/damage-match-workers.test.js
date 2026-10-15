@@ -205,7 +205,7 @@ test('actual WS six-worker scoreboard delivery and spectator reconnect expose on
   const initial = await observer.waitFor('m.damage', (p) => p.status === 'live'); assert.equal(initial.matchId, info.matchId);
   const frozen = await observer.waitFor('m.damage', (p) => p.status === 'frozen', 5000);
   assert.ok(frozen.owners.length > 0);
-  for (const row of frozen.owners) assert.deepEqual(Object.keys(row), ['playerId', 'name', 'seat', 'total', 'operators', 'otherDamage']);
+  for (const row of frozen.owners) assert.deepEqual(Object.keys(row), ['playerId', 'name', 'seat', 'total', 'healing', 'seconds', 'operators', 'otherDamage', 'otherHealing']);
   assert.equal(observer.log.some((p) => p.t === 'm.private'), false);
   await observer.close(); const resumed = await connect('Observer', observer.token);
   const replay = await resumed.waitFor('m.damage', (p) => p.status === 'frozen', 5000);

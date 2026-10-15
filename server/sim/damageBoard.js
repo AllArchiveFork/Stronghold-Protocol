@@ -1,4 +1,4 @@
-// Read the simulation's existing actual-HP-loss counters, never damage event amounts.
+// Read the simulation's existing actual-HP-loss and effective-heal counters (stats.dmg / stats.heal), never event amounts.
 // Kept outside Battle.result(): trials call result() repeatedly but never need this view.
 const histories = new WeakMap();
 const damage = (n) => typeof n === 'number' && Number.isFinite(n) && n > 0 ? n : 0;
@@ -40,7 +40,8 @@ export function damageRows(battle) {
       }
     }
     rows.set(ps.playerId, { playerId: ps.playerId, total: damage(battle._perPlayer?.[ps.playerId]?.damageDealt),
-      operators: new Map([...metadata].map(([key, meta]) => [key, { ...meta, damage: 0 }])), otherDamage: 0 });
+      healing: damage(battle._perPlayer?.[ps.playerId]?.healingDone),
+      operators: new Map([...metadata].map(([key, meta]) => [key, { ...meta, damage: 0, healing: 0 }])), otherDamage: 0, otherHealing: 0 });
   }
   // this.units is the full history (devices included). A reused Unit reference must never count twice.
   const seen = new Set();
@@ -49,21 +50,20 @@ export function damageRows(battle) {
     seen.add(u);
     const row = rows.get(u.ownerId);
     if (!row) continue;
-    const dealt = damage(u.stats?.dmg);
+    const dealt = damage(u.stats?.dmg), healed = damage(u.stats?.heal);
     const root = rootOperator(u, operators);
     const op = root && row.operators.get(operatorDamageKey(row.playerId, root.uid, root.id));
-    if (op) op.damage += dealt;
-    else row.otherDamage += dealt;
+    if (op) { op.damage += dealt; op.healing += healed; } else { row.otherDamage += dealt; row.otherHealing += healed; }
   }
   return { owners: [...rows.values()].map((row) => ({ ...row, operators: [...row.operators.values()] })) };
 }
 
 /** Clean failed fields still carry their captured initial operator metadata; no result-stat truncation. */
 export function emptyDamageRows(spec) {
-  return { owners: (spec.players || []).map((p) => ({ playerId: p.playerId, total: 0,
+  return { owners: (spec.players || []).map((p) => ({ playerId: p.playerId, total: 0, healing: 0,
     operators: (p.units || []).filter((u) => u.kind !== 'token').map((u, i) => ({
-      key: operatorDamageKey(p.playerId, u.uid, `input:${i}`), uid: u.uid ?? null, defId: u.chessId ?? null, damage: 0,
-    })), otherDamage: 0 })) };
+      key: operatorDamageKey(p.playerId, u.uid, `input:${i}`), uid: u.uid ?? null, defId: u.chessId ?? null, damage: 0, healing: 0,
+    })), otherDamage: 0, otherHealing: 0 })) };
 }
 
 export function damageFrame(field, rows) {

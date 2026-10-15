@@ -9,6 +9,7 @@ const VOICE_OPTIONS = [
   { code: 'cn', label: N_('中文'), micro: 'CN' },
   { code: 'jp', label: N_('日语'), micro: 'JP' },
   { code: 'en', label: N_('英语'), micro: 'EN' },
+  { code: 'kr', label: N_('韩语'), micro: 'KR' },
 ];
 
 export function LanguageSettings() {
@@ -31,7 +32,7 @@ export function LanguageSettings() {
       </div>
     </div>
     <p class="set-hint language-options__hint">${t('界面语言与配音分别保存，仅影响本浏览器，不改变队友的设置。')}</p>
-    <p class="set-hint language-options__hint">${t('部分干员暂无英语配音；所选配音缺失或无法载入时，使用中文配音。')}</p>
+    <p class="set-hint language-options__hint">${t('部分干员暂无英语或韩语配音；所选配音缺失或无法载入时，使用中文配音。')}</p>
   </section>`;
 }
 

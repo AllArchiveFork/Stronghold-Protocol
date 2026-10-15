@@ -13,6 +13,13 @@
 .damage-board__close { flex: none; width: max(.3rem, calc(28px * var(--ui))); height: max(.3rem, calc(28px * var(--ui))); display: grid; place-items: center; border: 0; color: var(--text-lo); background: transparent; cursor: pointer; }
 .damage-board__close:hover { color: var(--text-hi); background: var(--bg-2); }
 .damage-board__close > .icon { width: 16px; height: 16px; }
+.damage-board__metrics { flex: none; display: flex; gap: 0; margin-top: .08rem; border: 1px solid var(--line); }
+.damage-board__metrics > button { flex: 1; min-width: 0; min-height: max(.32rem, calc(28px * var(--ui))); padding: 0 .08rem; border: 0; background: transparent; color: var(--text-md); font: inherit; font-size: max(calc(.13 * var(--t)), calc(12px * var(--ui))); cursor: pointer; }
+.damage-board__metrics > button + button { border-left: 1px solid var(--line); }
+.damage-board__metrics > button.is-on { background: var(--mint-500); color: var(--text-on-mint); font-weight: 600; }
+.damage-board__metrics > button:focus-visible { outline: 2px solid var(--mint-500); outline-offset: 2px; }
+.damage-board__rate { color: var(--text-lo); font-size: max(calc(.12 * var(--t)), calc(11px * var(--ui))); white-space: nowrap; }
+.damage-board__rate > b { color: var(--text-md); font-weight: 600; }
 .damage-board__summary { flex: none; display: flex; align-items: flex-end; justify-content: space-between; gap: .12rem; padding: .14rem 0 .13rem; margin-bottom: .1rem; border-bottom: 1px solid var(--line-2); }
 .damage-board__summary > div { display: flex; flex-direction: column; gap: .03rem; }
 .damage-board__summary > div > span { color: var(--text-lo); font-size: max(calc(.12 * var(--t)), calc(11px * var(--ui))); }

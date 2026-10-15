@@ -64,12 +64,27 @@ test('same definition remains two UID rows; nested expired summons and dead-sour
   b.units.push(u); // a historical duplicate reference must not double count the same stats
   const r = row(b);
   assert.deepEqual(r.operators, [
-    { key: operatorDamageKey('p1', 11), uid: 11, defId: 'score_op', damage: 97 },
-    { key: operatorDamageKey('p1', 12), uid: 12, defId: 'score_op', damage: 30 },
+    { key: operatorDamageKey('p1', 11), uid: 11, defId: 'score_op', damage: 97, healing: 0 },
+    { key: operatorDamageKey('p1', 12), uid: 12, defId: 'score_op', damage: 30, healing: 0 },
   ]);
   assert.equal(r.total, 127);
   assert.equal(r.otherDamage, 0);
   assert.equal(before.owners[0].total, 0, 'old public rows are detached');
+});
+
+test('effective healing: overheal never counts, a summon\'s heal credits its root operator, the owner total is the player\'s healingDone', () => {
+  const h = arena();
+  const b = h.b, u = h.unit(11), v = h.unit(12);
+  v.hp = v.s.maxHp - 40;
+  assert.equal(b.heal(u, v, 100), 40, 'only the missing HP is restored');
+  const t = b.spawnToken(u, 'score_token', 11, 4, { def: tokenDef });
+  v.hp -= 25;
+  assert.equal(b.heal(t, v, 25), 25);
+  const r = row(b);
+  assert.deepEqual(r.operators.map((op) => [op.uid, op.healing]), [[11, 65], [12, 0]]);
+  assert.equal(r.healing, 65);
+  assert.equal(r.otherHealing, 0);
+  assert.equal(b.result().perPlayer.p1.healingDone, 65);
 });
 
 test('element gauges do not count; actual HP burst/DOT still count after the filler dies', () => {

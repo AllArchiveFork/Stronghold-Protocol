@@ -632,9 +632,10 @@ export const S2C = [
   // through tick `to` (b.start `ext` carries the record so far; server/sim/spec.js ReplayBossPool)
   'b.sync', 'b.ext',
   // Complete public round ledger (server combat): m.damage { matchId, round, phase: normal|unite|boss|hidden,
-  // status: live|frozen, owners: [{ playerId, name?, seat?, total, otherDamage,
-  // operators: [{ key, uid, defId, damage }] }] }. PREP retains frozen previous-round rows; battle start resets.
-  // Operator keys identify pieces, not definitions. Damage is actual opposing HP lost, summons credited to root ops.
+  // status: live|frozen, owners: [{ playerId, name?, seat?, total, healing, seconds, otherDamage, otherHealing,
+  // operators: [{ key, uid, defId, damage, healing }] }] }. PREP retains frozen previous-round rows; battle start resets.
+  // Operator keys identify pieces, not definitions. Damage is actual opposing HP lost, healing the effective HP restored,
+  // summons credited to root ops; seconds is the owner's battle time this round (DPS / HPS).
   // Client-authoritative combat sends available:false with owners:[] instead of trusting submitted operator stats.
   'm.damage',
   // server-run combat streaming (legacy / SP_COMBAT=server only); full b.snap carries unitStats: [unitStatsEntry],

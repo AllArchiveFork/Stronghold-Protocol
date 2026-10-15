@@ -41,6 +41,27 @@ test('normal finals plus live unite replace absolute values, not replies; same-d
   assert.equal(sum(b).total, 145);
 });
 
+test('healing rides the same ledger (optional on input); seconds add up the battle time of every field an owner fought', () => {
+  const b = createDamageBoard('fixtureMatch');
+  b.startCombat(1, 'normal', owners);
+  const healed = score('p0', 10, 0, { healing: 50, otherHealing: 4 });
+  healed.operators[0].healing = 46;
+  assert.ok(put(b, [healed], { gt: 30, final: true }));
+  assert.ok(put(b, [score('p1', 5)], { fieldId: 'n:p1', gt: 25, final: true }), 'a row without healing heals 0');
+  b.startCombat(1, 'unite', owners);
+  const unite = score('p0', 1, 0, { healing: 6 });
+  unite.operators[0].healing = 6;
+  assert.ok(put(b, [unite, score('p1', 2)], { phase: 'unite', fieldId: 'u', gt: 12, final: true }));
+  const p0 = sum(b), p1 = sum(b, 'p1');
+  assert.deepEqual([p0.healing, p0.otherHealing, p0.operators[0].healing, p0.seconds], [56, 4, 52, 42]);
+  assert.deepEqual([p1.healing, p1.otherHealing, p1.operators[0].healing, p1.seconds], [0, 0, 0, 37]);
+  for (const bad of [{ healing: -1 }, { healing: NaN }, { otherHealing: Infinity }]) {
+    assert.equal(put(b, [score('p0', 1, 0, bad)], { phase: 'unite', fieldId: 'u:bad', gt: 1 }), false);
+  }
+  const badOp = score('p0', 1); badOp.operators[0].healing = -1;
+  assert.equal(put(b, [badOp], { phase: 'unite', fieldId: 'u:bad', gt: 1 }), false);
+});
+
 test('stale match/round/phase/gt/seq and post-terminal live updates cannot regress the stream', () => {
   const b = new DamageBoard('fixtureMatch');
   b.startCombat(1, 'normal', owners);
@@ -65,7 +86,7 @@ test('freeze survives PREP board changes, eliminated owners and unseen teammate 
   assert.equal(packet.round, 1);
   assert.equal(packet.owners.length, 4, 'all owners retained, including eliminated/missing fields');
   assert.deepEqual(packet.owners.find((o) => o.playerId === 'p2'), {
-    playerId: 'p2', name: 'Owner 2', seat: 2, total: 0, operators: [], otherDamage: 0,
+    playerId: 'p2', name: 'Owner 2', seat: 2, total: 0, healing: 0, seconds: 0, operators: [], otherDamage: 0, otherHealing: 0,
   });
   const reconnect = b.packet();
   assert.equal(reconnect.owners.find((o) => o.playerId === 'p3').total, 100, 'no earlier observation is required');
@@ -110,8 +131,8 @@ test('capture whitelists public score metadata only and keeps authoritative tota
   const packet = b.packet();
   assert.equal(sum(b).total, 20, 'do not pretend sum(operator) equals all player damage');
   assert.equal(sum(b).otherDamage, 3);
-  assert.deepEqual(Object.keys(packet.owners[0]), ['playerId', 'name', 'seat', 'total', 'operators', 'otherDamage']);
-  assert.deepEqual(Object.keys(packet.owners[0].operators[0]), ['key', 'uid', 'defId', 'damage']);
+  assert.deepEqual(Object.keys(packet.owners[0]), ['playerId', 'name', 'seat', 'total', 'healing', 'seconds', 'operators', 'otherDamage', 'otherHealing']);
+  assert.deepEqual(Object.keys(packet.owners[0].operators[0]), ['key', 'uid', 'defId', 'damage', 'healing']);
   assert.equal(JSON.stringify(packet).includes('secret'), false);
   assert.equal(JSON.stringify(packet).includes('authToken'), false);
 });

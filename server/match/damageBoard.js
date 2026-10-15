@@ -1,6 +1,8 @@
 // Match lifecycle ledger: replace absolute field scores, retain normal + unite, freeze before fields are cleared.
 // No players/board references survive capture, and no per-hit or per-tick aggregation is required on main.
 const amount = (n) => typeof n === 'number' && Number.isFinite(n) && n >= 0 ? n : null;
+// Healing (fork 2026-10-16, the upstream 作战统计 merged into this board): optional on input — a row without it heals 0.
+const healAmount = (n) => n === undefined ? 0 : amount(n);
 const PHASES = new Set(['normal', 'unite', 'boss', 'hidden']);
 const clone = (value) => value == null ? value : structuredClone(value);
 const ownerMeta = (owner) => typeof owner === 'string' ? { playerId: owner } : {
@@ -56,32 +58,39 @@ export class DamageBoard {
     const seen = new Set();
     for (const owner of owners) {
       if (!this.owners.has(owner?.playerId) || seen.has(owner.playerId) || amount(owner.total) == null
-        || amount(owner.otherDamage) == null || !Array.isArray(owner.operators)) return false;
+        || amount(owner.otherDamage) == null || healAmount(owner.healing) == null || healAmount(owner.otherHealing) == null
+        || !Array.isArray(owner.operators)) return false;
       seen.add(owner.playerId);
       const operators = [];
       const opKeys = new Set();
       for (const op of owner.operators) {
-        if (typeof op?.key !== 'string' || opKeys.has(op.key) || amount(op.damage) == null
+        if (typeof op?.key !== 'string' || opKeys.has(op.key) || amount(op.damage) == null || healAmount(op.healing) == null
           || (op.uid != null && !Number.isSafeInteger(op.uid)) || (op.defId != null && typeof op.defId !== 'string')) return false;
         opKeys.add(op.key);
-        operators.push({ key: op.key, uid: op.uid ?? null, defId: op.defId ?? null, damage: op.damage });
+        operators.push({ key: op.key, uid: op.uid ?? null, defId: op.defId ?? null, damage: op.damage, healing: healAmount(op.healing) });
       }
-      rows.push({ playerId: owner.playerId, total: owner.total, operators, otherDamage: owner.otherDamage });
+      rows.push({ playerId: owner.playerId, total: owner.total, healing: healAmount(owner.healing), operators,
+        otherDamage: owner.otherDamage, otherHealing: healAmount(owner.otherHealing) });
     }
     this.fields.set(key, { gt, seq, final: final === true, owners: rows });
     return true;
   }
 
   _packet() {
-    const rows = new Map([...this.owners].map(([id, meta]) => [id, { ...meta, total: 0, operators: new Map(), otherDamage: 0 }]));
+    // seconds: the battle time of every field the owner fought on this round (the board's DPS / HPS divisor)
+    const rows = new Map([...this.owners].map(([id, meta]) => [id, { ...meta, total: 0, healing: 0, seconds: 0, operators: new Map(),
+      otherDamage: 0, otherHealing: 0 }]));
     for (const field of this.fields.values()) for (const owner of field.owners) {
       const row = rows.get(owner.playerId);
       row.total += owner.total;
+      row.healing += owner.healing || 0;
+      row.seconds += field.gt;
       row.otherDamage += owner.otherDamage;
+      row.otherHealing += owner.otherHealing || 0;
       for (const op of owner.operators) {
         const existing = row.operators.get(op.key);
-        if (existing) existing.damage += op.damage;
-        else row.operators.set(op.key, { ...op });
+        if (existing) { existing.damage += op.damage; existing.healing = (existing.healing || 0) + (op.healing || 0); }
+        else row.operators.set(op.key, { ...op, healing: op.healing || 0 });
       }
     }
     return { t: 'm.damage', matchId: this.matchId, round: this.round, phase: this.phase, status: this.status,

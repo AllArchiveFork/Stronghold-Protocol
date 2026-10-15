@@ -1,5 +1,7 @@
 // Single views follow the bond strip's owner; shared 联防/Boss fields show their actual participants separately.
-import { useMemo } from '../../vendor/hooks.module.js';
+// 伤害 / 治疗 (fork 2026-10-16, upstream's 作战统计 merged in): the same server ledger ranks either the actual damage or
+// the effective healing of each piece (summons credited to their operator), with DPS / HPS over the owner's battle time.
+import { useMemo, useState } from '../../vendor/hooks.module.js';
 import { PHASE } from '../../../shared/constants.js';
 import { html, Icon, Tooltip } from './components.js';
 import { Img, GIcon } from './gameComponents.js';
@@ -25,20 +27,31 @@ export function acceptDamageSnapshot(current, next, matchId) {
   return next;
 }
 
-export function damageRows(snapshot, ownerId) {
-  if (snapshot?.available === false) return { available: false, total: 0, rows: [] };
+const amount = (n) => Number.isFinite(n) && n > 0 ? n : 0;
+
+/** @param {'damage'|'healing'} metric the ranked value; healing lists only the pieces that healed. */
+export function damageRows(snapshot, ownerId, metric = 'damage') {
+  if (snapshot?.available === false) return { available: false, total: 0, seconds: 0, rows: [] };
   const owner = snapshot?.owners?.find(p => p?.playerId === ownerId);
-  if (!owner) return { available: false, total: 0, rows: [] };
+  if (!owner) return { available: false, total: 0, seconds: 0, rows: [] };
+  const healing = metric === 'healing';
   const rows = (Array.isArray(owner.operators) ? owner.operators : [])
     .filter(row => row && Number.isFinite(row.damage) && row.damage >= 0)
-    .map((row, i) => ({ key: typeof row.key === 'string' ? row.key : `uid:${row.uid}:${i}`, uid: row.uid, defId: row.defId, damage: row.damage, other: false }));
-  if (Number.isFinite(owner.otherDamage) && owner.otherDamage > 0) {
-    rows.push({ key: 'other', uid: null, defId: null, damage: owner.otherDamage, other: true });
+    .map((row, i) => ({ key: typeof row.key === 'string' ? row.key : `uid:${row.uid}:${i}`, uid: row.uid, defId: row.defId,
+      damage: row.damage, healing: amount(row.healing), other: false }));
+  if (amount(owner.otherDamage) || amount(owner.otherHealing)) {
+    rows.push({ key: 'other', uid: null, defId: null, damage: amount(owner.otherDamage), healing: amount(owner.otherHealing), other: true });
   }
-  rows.sort((a, b) => b.damage - a.damage || a.key.localeCompare(b.key));
-  const sum = rows.reduce((total, row) => total + row.damage, 0);
-  return { available: true, total: Number.isFinite(owner.total) && owner.total >= 0 ? owner.total : sum, rows };
+  const listed = rows.filter(row => healing ? row.healing > 0 : !row.other || row.damage > 0);
+  listed.sort((a, b) => b[metric] - a[metric] || a.key.localeCompare(b.key));
+  const sum = listed.reduce((total, row) => total + row[metric], 0);
+  const reported = healing ? owner.healing : owner.total;
+  return { available: true, total: Number.isFinite(reported) && reported >= 0 ? reported : sum, seconds: amount(owner.seconds), rows: listed };
 }
+
+/** Per second of the owner's battle time this round (DPS / HPS); null before any battle time. */
+export const damageRate = (total, seconds) => (seconds > 0 && Number.isFinite(total) ? total / seconds : null);
+const rateText = (value) => (value == null ? '—' : damageNumber(value));
 
 export function damageShare(damage, total) {
   return Number.isFinite(damage) && damage >= 0 && Number.isFinite(total) && total > 0
@@ -82,12 +95,12 @@ function fieldDamageOwners(pub, members, limit = 2) {
 }
 
 /** Per-player groups keep identical operator/other keys isolated and never label missing data as zero. */
-export function damageGroups(snapshot, owners) {
+export function damageGroups(snapshot, owners, metric = 'damage') {
   const seen = new Set();
   const groups = (Array.isArray(owners) ? owners : []).filter(owner => {
     if (!owner || typeof owner.playerId !== 'string' || !owner.playerId || seen.has(owner.playerId)) return false;
     seen.add(owner.playerId); return true;
-  }).map(owner => ({ playerId: owner.playerId, name: owner.name || t('队友'), ...damageRows(snapshot, owner.playerId) }));
+  }).map(owner => ({ playerId: owner.playerId, name: owner.name || t('队友'), ...damageRows(snapshot, owner.playerId, metric) }));
   const total = groups.reduce((sum, group) => sum + group.total, 0);
   return { groups, shared: groups.length > 1, available: !!groups.length && groups.every(group => group.available) && Number.isFinite(total), total };
 }
@@ -103,7 +116,10 @@ export function DamageBoard({ snapshot, ownerId, ownerName, uniteOwners = null, 
   const boss = Array.isArray(bossOwners) && bossOwners.length > 0;
   const owners = boss ? bossOwners : Array.isArray(uniteOwners) && uniteOwners.length ? uniteOwners : [{ playerId: ownerId, name: ownerName || t('当前视角') }];
   const ownersKey = JSON.stringify(owners);
-  const score = useMemo(() => open ? damageGroups(snapshot, owners) : null, [open, snapshot, ownersKey]);
+  const [metric, setMetric] = useState('damage');
+  const healing = metric === 'healing';
+  const score = useMemo(() => open ? damageGroups(snapshot, owners, metric) : null, [open, snapshot, ownersKey, metric]);
+  const rateLabel = healing ? 'HPS' : 'DPS';
   const frozen = snapshot?.status === 'frozen';
   const label = snapshot?.round > 0 ? t('第 {round} 回合 · {1}', { round: snapshot.round, 1: frozen ? t('结算冻结') : t('实时累计') }) : t('尚无战斗记录');
   const manifest = data.get('assets');
@@ -121,30 +137,39 @@ export function DamageBoard({ snapshot, ownerId, ownerName, uniteOwners = null, 
         <span class="damage-board__status"><${Icon} name=${frozen ? 'snow' : 'sword'} />${frozen ? t('已结算') : t('实时')}</span>
         <button type="button" class="damage-board__close" aria-label=${t('收起输出统计')} onClick=${() => onToggle?.(false)}><${Icon} name="close" /></button>
       </header>
+      <div class="damage-board__metrics" role="radiogroup" aria-label=${t('统计项目')}>
+        ${[['damage', t('伤害')], ['healing', t('治疗')]].map(([id, text]) => html`<button key=${id} type="button" role="radio"
+          aria-checked=${metric === id ? 'true' : 'false'} class=${metric === id ? 'is-on' : ''} onClick=${() => setMetric(id)}>${text}</button>`)}
+      </div>
       <div class="damage-board__summary">
-        <div><span>${score.shared ? score.groups.length > 2 ? t('参与者本轮合计') : t('双方本轮合计') : t('累计伤害')}</span><strong class="damage-board__total">${score.available ? damageNumber(score.total) : '—'}</strong></div>
+        <div><span>${score.shared ? score.groups.length > 2 ? t('参与者本轮合计') : t('双方本轮合计') : healing ? t('累计治疗') : t('累计伤害')}</span><strong class="damage-board__total">${score.available ? damageNumber(score.total) : '—'}</strong>
+          ${score.shared ? null : html`<small class="damage-board__rate">${rateLabel} <b class="num">${score.available ? rateText(damageRate(score.groups[0].total, score.groups[0].seconds)) : '—'}</b></small>`}</div>
         <p class="damage-board__phase" role="status">${label}<small>${score.shared ? sharedScope : frozen ? t('保留至下一轮开战') : t('随当前视角同步')}</small></p>
       </div>
-      <div class="damage-board__columns" aria-hidden="true"><span>${score.shared ? t('干员 / 本人占比') : t('干员 / 伤害占比')}</span><span>${t('实际伤害')}</span></div>
+      <div class="damage-board__columns" aria-hidden="true"><span>${score.shared ? t('干员 / 本人占比') : healing ? t('干员 / 治疗占比') : t('干员 / 伤害占比')}</span><span>${healing ? t('有效治疗') : t('实际伤害')}</span></div>
       ${score.shared ? html`<div class=${`damage-board__groups${score.groups.length > 2 ? ' is-many' : ''}`}>
         ${score.groups.map(group => html`<section key=${group.playerId} class="damage-board__group" data-player-id=${group.playerId} aria-label=${t('{name}的输出', { name: group.name })}>
           <header class="damage-board__group-heading"><strong title=${group.name}>${group.name}</strong>
-            <span>${t('小计')} <b class="num">${group.available ? damageNumber(group.total) : '—'}</b></span></header>
-          <${DamageRows} score=${group} manifest=${manifest} ownerName=${group.name} shared=${true} units=${units} />
+            <span>${t('小计')} <b class="num">${group.available ? damageNumber(group.total) : '—'}</b></span>
+            <span>${rateLabel} <b class="num">${group.available ? rateText(damageRate(group.total, group.seconds)) : '—'}</b></span></header>
+          <${DamageRows} score=${group} manifest=${manifest} ownerName=${group.name} shared=${true} units=${units} metric=${metric} />
         </section>`)}
-      </div>` : html`<${DamageRows} score=${score.groups[0]} manifest=${manifest} units=${units} />`}
-      <details class="damage-board__rules"><summary>${t('统计口径')}</summary><p>${score.shared ? boss ? t('仅展示当前 Boss 战场的参与者，分别统计本轮累计；占比以该玩家小计计算，不等同于全队共享 Boss 血池扣血。') : t('按场上参与者分别展示本轮累计（各自行动 + 联防），占比以该玩家小计计算。') : ''}${t('只计实际扣除的生命值。召唤物归所属干员；装置与无干员归属伤害单列；过量伤害、护盾吸收与友方伤害不计。')}</p></details>
+      </div>` : html`<${DamageRows} score=${score.groups[0]} manifest=${manifest} units=${units} metric=${metric} />`}
+      <details class="damage-board__rules"><summary>${t('统计口径')}</summary><p>${score.shared ? boss ? t('仅展示当前 Boss 战场的参与者，分别统计本轮累计；占比以该玩家小计计算，不等同于全队共享 Boss 血池扣血。') : t('按场上参与者分别展示本轮累计（各自行动 + 联防），占比以该玩家小计计算。') : ''}${t('只计实际扣除的生命值。召唤物归所属干员；装置与无干员归属伤害单列；过量伤害、护盾吸收与友方伤害不计。')}${t('治疗只计实际恢复的生命值，溢出不计；DPS / HPS 按本轮战斗秒数计算。')}</p></details>
     </section>` : null}
   </aside>`;
 }
 
-function DamageRows({ score = { available: false, rows: [], total: 0 }, manifest, ownerName, shared = false, units = [] }) {
+function DamageRows({ score = { available: false, rows: [], total: 0 }, manifest, ownerName, shared = false, units = [], metric = 'damage' }) {
+  const healing = metric === 'healing';
   return html`<ol class="damage-board__rows">
     ${score.rows.length ? score.rows.map((row, index) => {
       const chess = row.other ? null : damageAppearance(getChess(row.defId), row, score.playerId, units);
       const name = row.other ? t('装置 / 其他') : chess?.name || row.defId || t('干员');
-      const share = damageShare(row.damage, score.total);
-      const detail = t('{0}{name} · 实际伤害 {2} · {3} {4}%', { 0: shared ? `${ownerName} · ` : '', name, 2: row.damage.toLocaleString('zh-CN', { maximumFractionDigits: 2 }), 3: shared ? t('本人占比') : t('占比'), 4: share.toFixed(1) });
+      const value = healing ? row.healing : row.damage;
+      const share = damageShare(value, score.total);
+      const exact = (n) => (n || 0).toLocaleString('zh-CN', { maximumFractionDigits: 2 });
+      const detail = t('{0}{name} · 实际伤害 {2} · 有效治疗 {5} · {3} {4}%', { 0: shared ? `${ownerName} · ` : '', name, 2: exact(row.damage), 5: exact(row.healing), 3: shared ? t('本人占比') : t('占比'), 4: share.toFixed(1) });
       return html`<li key=${row.key}>
         <${Tooltip} text=${detail} block class="damage-board__tip">
           <div class="damage-board__row" tabIndex="0" aria-label=${detail}>
@@ -154,12 +179,12 @@ function DamageRows({ score = { available: false, rows: [], total: 0 }, manifest
               <span class="damage-board__rank num">${index + 1}</span>
             </span>
             <span class="damage-board__row-body">
-              <span class="damage-board__row-label"><span class="damage-board__name">${name}</span><span class="damage-board__value num">${damageNumber(row.damage)}</span></span>
+              <span class="damage-board__row-label"><span class="damage-board__name">${name}</span><span class="damage-board__value num">${damageNumber(value)}</span></span>
               <span class="damage-board__row-meter"><span class="damage-board__bar" aria-hidden="true"><i style=${`transform:scaleX(${share / 100})`}></i></span><span class="damage-board__share num">${share.toFixed(1)}%</span></span>
             </span>
           </div>
         <//>
       </li>`;
-    }) : html`<li class="damage-board__empty"><${Icon} name="sword" /><strong>${score.available ? t('本轮尚未造成伤害') : t('暂无此视角的战斗记录')}</strong><span>${t('开战后自动记录干员输出')}</span></li>`}
+    }) : html`<li class="damage-board__empty"><${Icon} name="sword" /><strong>${score.available ? healing ? t('本轮尚无治疗') : t('本轮尚未造成伤害') : t('暂无此视角的战斗记录')}</strong><span>${t('开战后自动记录干员输出')}</span></li>`}
   </ol>`;
 }

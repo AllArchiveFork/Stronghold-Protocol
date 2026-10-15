@@ -1089,9 +1089,7 @@ otherwise the item stays normal and the charge remains. A random grant is still 
 `m.public.sp.cards[].soldOut` disables a 机变 item card when a preceding choice used the final copy; timer/bot choices
 use the same availability. Those cards are not already-shown shop or reward cards, so they stay stock-limited.
 Non-shop effect-only equipment is unlimited. A 机密商店 coin slot draws another tier-I item once no stock holds a
-盟约之币 (2026-10-12): such a card could only have been shown as sold out. m.private marks an equipment card of the
-shop or an offer whose stock is used up `soldOut` (`outOfStock`; never an operator card since 0.2.5, #498), and the bar
-names it 「全队库存已用完」 (others' copies or the player's own).
+盟约之币 (2026-10-12): such a card could only have been shown as sold out.
 
 Operator capacities use measured single-player exceptions and twice those counts in co-op; DIY remains private.
 Fork grouped / player chess pools and the host's `disableSharedPool` option remain. Equipment stock follows the same

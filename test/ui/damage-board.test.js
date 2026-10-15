@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { damageNumber, damageRows, damageShare, acceptDamageSnapshot, uniteDamageOwners, bossDamageOwners, damageGroups } from '../../public/js/ui/damageBoard.js';
+import { damageNumber, damageRows, damageShare, acceptDamageSnapshot, uniteDamageOwners, bossDamageOwners, damageGroups, damageRate } from '../../public/js/ui/damageBoard.js';
 import { emptyMatch } from '../../public/js/store.js';
 import { PHASE } from '../../shared/constants.js';
 
@@ -173,7 +173,7 @@ test('scoreboard defaults collapsed, keeps the single-owner fallback and receive
   assert.match(component, /隐藏 Boss 输出/);
   assert.match(component, /同场玩家本轮累计/);
   assert.match(component, /不等同于全队共享 Boss 血池扣血/);
-  assert.match(component, /open \? damageGroups\(snapshot, owners\) : null/);
+  assert.match(component, /open \? damageGroups\(snapshot, owners, metric\) : null/);
   assert.match(component, /key=\$\{group\.playerId\}/);
   assert.match(component, /本人占比/);
   assert.match(readFileSync(new URL('../../public/index.html', import.meta.url), 'utf8'), /\/css\/screens\/damage-board\.css/);
@@ -213,4 +213,21 @@ test('expanded rows reuse manifest avatars, accessible exact-value tooltips and 
   assert.match(component, /tabIndex="0" aria-label=\$\{detail\}/);
   assert.match(component, /share\.toFixed\(1\)/);
   assert.match(component, /aria-label=\$\{t\('输出统计'\)\}/);
+});
+
+test('伤害 / 治疗: the healing view ranks effective healing, lists only the pieces that healed; the rate divides by the battle seconds', () => {
+  const snap = { matchId: 'm', round: 3, status: 'live', owners: [{ playerId: 'p0', total: 300, healing: 90, seconds: 30, otherDamage: 20, otherHealing: 0,
+    operators: [{ key: 'a', uid: 1, defId: 'x', damage: 200, healing: 0 }, { key: 'b', uid: 2, defId: 'y', damage: 80, healing: 90 }] }] };
+  const dealt = damageRows(snap, 'p0');
+  assert.deepEqual(dealt.rows.map((r) => r.key), ['a', 'b', 'other']);
+  assert.deepEqual([dealt.total, dealt.seconds], [300, 30]);
+  const healed = damageRows(snap, 'p0', 'healing');
+  assert.deepEqual(healed.rows.map((r) => [r.key, r.healing]), [['b', 90]]);
+  assert.equal(healed.total, 90);
+  assert.equal(damageRate(healed.total, healed.seconds), 3);
+  assert.equal(damageRate(10, 0), null, 'no battle time yet: no rate');
+  assert.equal(damageGroups(snap, [{ playerId: 'p0', name: 'A' }], 'healing').total, 90);
+  // a packet without healing fields (an older server): zero, never NaN
+  const old = damageRows({ owners: [{ playerId: 'p0', total: 5, otherDamage: 0, operators: [{ key: 'a', uid: 1, defId: 'x', damage: 5 }] }] }, 'p0', 'healing');
+  assert.deepEqual([old.total, old.rows.length, old.seconds], [0, 0, 0]);
 });
