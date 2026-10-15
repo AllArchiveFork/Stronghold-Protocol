@@ -73,7 +73,7 @@ test('site names cover the exact thirty-two slots in order without changing wire
   for (const label of [null, undefined, 1, 'game-001', 'game-00', 'game-257', 'game-01\n', 'private-node', '罗德岛']) assert.equal(gameDisplayName(label), null);
   const notices = JSON.parse(source('../../data/announcements.json'));
   assert.equal(notices.length, 2);
-  assert.equal(notices[0].title, '版本更新：直接进入大厅、对局音乐可选、干员自由拖放');
+  assert.equal(notices[0].title, '版本更新 0.3.0：官方战斗特效、多语言配音、扩容房同时选择');
   assert.doesNotMatch(notices.flatMap(notice => notice.paragraphs).join('\n'), /节点更名|服务器更名|罗德岛|企鹅物流/);
 });
 

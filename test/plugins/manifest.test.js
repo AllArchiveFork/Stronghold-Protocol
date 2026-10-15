@@ -134,7 +134,12 @@ test('manifest 2: what keeps a plugin out', () => {
   assert.match(problemsOf(marathon(), 'my_plug'), /not a plugin id/, 'no underscore: it would collide in record ids');
 });
 
-test('a value JSON.parse reads but JSON.stringify cannot write back (deep nesting) is quoted by its kind, never thrown', () => {
+// Node 24's JSON.stringify overflows on a nesting JSON.parse still reads; from Node 26 both are unbounded and no such
+// value exists, so the case has nothing to test there.
+const DEEP_UNWRITABLE = (() => { try { JSON.stringify(JSON.parse(`${'['.repeat(20000)}${']'.repeat(20000)}`)); return false; } catch { return true; } })();
+const deepSkip = { skip: !DEEP_UNWRITABLE && 'this Node writes back every value JSON.parse reads' };
+
+test('a value JSON.parse reads but JSON.stringify cannot write back (deep nesting) is quoted by its kind, never thrown', deepSkip, () => {
   const deep = (open, close, n = 20000) => JSON.parse(`${open.repeat(n)}${close.repeat(n)}`);
   assert.match(readPluginManifest({ manifest: deep('[', ']') }, ctx('deep')).problems.join(), /"manifest": \[…\] is not 2/);
   assert.match(readPluginManifest({ ...marathon(), api: deep('[', ']') }, ctx('marathon')).problems.join(), /"api": \[…\] is not an integer/);

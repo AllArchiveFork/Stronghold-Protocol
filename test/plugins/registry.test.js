@@ -192,7 +192,12 @@ test('links: a symbolic link inside a plugin folder keeps it out; a plugin folde
   }
 });
 
-test('one unreadable entry never stops the scan, the registry or the server: JSON nested too deep to quote back', async () => {
+// Node 24's JSON.stringify overflows on a nesting JSON.parse still reads; from Node 26 both are unbounded and no such
+// value exists, so the case has nothing to test there.
+const DEEP_UNWRITABLE = (() => { try { JSON.stringify(JSON.parse(`${'['.repeat(20000)}${']'.repeat(20000)}`)); return false; } catch { return true; } })();
+const deepSkip = { skip: !DEEP_UNWRITABLE && 'this Node writes back every value JSON.parse reads' };
+
+test('one unreadable entry never stops the scan, the registry or the server: JSON nested too deep to quote back', deepSkip, async () => {
   const root = exampleRoot();
   const deep = (n) => `{"manifest":${'['.repeat(n)}${']'.repeat(n)}}`;
   put(root, 'plugins/deep-one/plugin.json', deep(20000));

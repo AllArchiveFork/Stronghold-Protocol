@@ -80,7 +80,7 @@ test('offline release stage runs plugin CLI, native author harness and sandbox t
       run(['tools/plugin.mjs', 'check', `release-${template}`, '--strict']);
       run(['tools/plugin.mjs', 'pack', `release-${template}`, '--zip']);
     }
-    assert.match(run(['tools/plugin.mjs', 'test', 'release-script']), /# fail 0/);
+    assert.match(run(['tools/plugin.mjs', 'test', 'release-script']), /(?:#|ℹ) fail 0\b/);
     run(['--input-type=module', '-e', `
       import assert from 'node:assert/strict';
       import { createPluginRegistry } from './server/plugins/registry.js';
