@@ -54,10 +54,10 @@
 // clicks and hover (battleUnitAt), the pen (penUnitAt) — is render/pick.js over the tile under the pointer (groundTile:
 // raised tops first); battle enemies, which walk between tiles, by their ground position (flying ones by their drawn
 // body; a huge boss also anywhere on its hit area — data/enemies.json `hitArea`, user playtest #5). A dragged piece
-// drops on the tile under the pointer (render/drag.js). A dragged unit stands on that tile while it is a legal target
-// (a board tile or a bench slot: drag.js dragStandTile; the official deploy drag, the owner's recording of 2026-10-09,
-// PR #403's report) and is held under the pointer elsewhere — its drawn feet DRAG_HOLD_TILES below it, the pointer on
-// its body; an item plate stays centred on the pointer. An item dropped on a unit's tile equips that unit.
+// drops on the tile under the pointer (render/drag.js). A dragged unit follows the pointer smoothly, never snapped to a
+// tile (the free deploy drag, 2026-10-15) — its drawn feet DRAG_HOLD_TILES below a finger, DRAG_HOLD_MOUSE_TILES below
+// a mouse — and glides onto its tile when dropped; an item plate stays centred on the pointer. An item dropped on a
+// unit's tile equips that unit.
 //   Direction step (ui/facingWheel.js, research 09 §1.2):
 //   view.tileScreen(row, col) → { x, y, s, poly: [[x,y]×4] } (client px: tile-top centre, px per tile, corners) | null
 //   view.holdPiece(uid, {row,col} | null)       keep a dropped prep piece standing on a tile while its direction is
@@ -133,7 +133,7 @@ import { SnapshotBuffer, frameTime } from './interp.js';
 import { TileField } from './tiles.js';
 import { UnitView, ItemView, DeviceView, FORMS, syncView } from './units.js';
 import { FxSystem, ensureDamageFonts } from './fx.js';
-import { createDragController, pieceTile, dragStandTile } from './drag.js';
+import { createDragController, pieceTile } from './drag.js';
 import { backdropTextures, shadowTexture, refreshTierChips, refreshDownLabels, silhouetteTexture } from './textures.js';
 import { TILE_H, TIER_COLORS, COLORS } from './style.js';
 import { loadBoardArt } from './boardArt.js';
@@ -148,14 +148,14 @@ import { pickOnTile, pickBattle, hitTiles } from './pick.js';
 import { promotionsOf } from './promote.js';
 import { ensurePixi } from './app/pixi.js';
 import { pieceDirOf, pickUnitOf } from './app/pick.js';
-import { CAMERA_MS, BOARD3D_STABLE_MS, BOARD3D_RETRY_MS, PEN_CAMERA_MS, RANGE_GROUPS, LEADER_HIT_STYLE, DRAG_HOLD_TILES, CHAIN_KINDS, DROP_PENDING_MS, DEPLOY_REPLAY_MS } from './app/tune.js';
+import { CAMERA_MS, BOARD3D_STABLE_MS, BOARD3D_RETRY_MS, PEN_CAMERA_MS, RANGE_GROUPS, LEADER_HIT_STYLE, DRAG_HOLD_TILES, DRAG_HOLD_MOUSE_TILES, DRAG_FOLLOW_RATE, CHAIN_KINDS, DROP_PENDING_MS, DEPLOY_REPLAY_MS } from './app/tune.js';
 import { boardPreference, switchableBox, bandFor, fieldRows, boardArea, viewKind, penShown, leaderShown } from './app/view.js';
 import { renderInfo, FORCED_EXIT, showsDeathFx } from './app/info.js';
 import { resolveAssets, makeData, withTimeout, QUALITY_RES, BOARD_RES, releaseGl } from './app/host.js';
 import { t } from '../../../shared/i18n.js';
 
 export { ensurePixi } from './app/pixi.js';
-export { PEN_CAMERA_MS, LEADER_HIT_STYLE, DRAG_HOLD_TILES, DEPLOY_REPLAY_MS } from './app/tune.js';
+export { PEN_CAMERA_MS, LEADER_HIT_STYLE, DRAG_HOLD_TILES, DRAG_HOLD_MOUSE_TILES, DEPLOY_REPLAY_MS } from './app/tune.js';
 export { viewKind, boardArea, bandFor, fieldRows, penShown, leaderShown, boardPreference, switchableBox } from './app/view.js';
 export { FORCED_EXIT, showsDeathFx, renderInfo } from './app/info.js';
 export { releaseGl } from './app/host.js';
@@ -1219,6 +1219,7 @@ export async function createFieldView(host, options = {}) {
     dragState = { uid: p.uid, key, view: v, from: p.from, home: v._home || { x: v.x, y: v.y, z: v.z } };
     v.lift = 0.3;
     v._tween = null;
+    v._follow = null;
     const t = pieceTile(p.piece);
     if (t) drawHighlight([[t.row, t.col]], 'hover', 'dragFrom');
     drawHighlight(legalTiles(p.piece), 'legal', 'legal');
@@ -1228,30 +1229,23 @@ export async function createFieldView(host, options = {}) {
     if (!dragState) return;
     const v = dragState.view;
     const item = v instanceof ItemView;
-    // a unit over a legal drop target — the tile under the pointer, on the board or the bench (render/drag.js
-    // dragStandTile) — stands on it, lifted, as in the official deploy drag (the owner's recording of 2026-10-09): the
-    // world point the drop tween goes to (boardWorld, the prep field transform applied), set at once, no tween
-    const stand = item ? null : dragStandTile(p);
-    if (stand) {
-      const w = boardWorld(stand.row, stand.col, stand.bench);
-      v.x = w.x; v.y = w.y; v.z = w.z;
-    } else {
-      // otherwise held under the pointer (the player still sees what they carry): a unit with its drawn (lifted) feet
-      // DRAG_HOLD_TILES of its own px per tile below it (the scale at the pointer's ground, refined once at the feet), an
-      // item plate centred on it
-      const g = cam.unproject(p.x, p.y, 0);
-      const hold = item ? 0 : DRAG_HOLD_TILES;
-      const s0 = g ? cam.scaleAt(g.x, g.y, 0) : cam.scale;
-      const t = pickTile(cam, p.x, p.y + hold * s0, heightAt, tiles.levels);
-      const z = t ? heightAt(t.row, t.col) : 0;
-      const up = item ? z : z + (v.lift || 0) + (v.hover || 0);
-      let w = cam.unproject(p.x, p.y + hold * s0, up);
-      if (w && hold) w = cam.unproject(p.x, p.y + hold * cam.scaleAt(w.x, w.y, up), up) || w;
-      if (w) {
-        v.x = Math.max(-1, Math.min(21, w.x));
-        v.y = Math.max(-1, Math.min(19, w.y));
-        v.z = z;
-      }
+    // held under the pointer, never snapped to a tile (the free deploy drag, 2026-10-15; the target below stays the
+    // pointer's tile): a unit with its drawn (lifted) feet DRAG_HOLD_TILES (a finger) / DRAG_HOLD_MOUSE_TILES (a mouse,
+    // a pen) of its own px per tile below it (the scale at the pointer's ground, refined once at the feet), an item plate
+    // centred on it. The point is a float world point the view follows each frame (_follow, the frame loop); the first
+    // move puts it there at once.
+    const g = cam.unproject(p.x, p.y, 0);
+    const hold = item ? 0 : p.pointerType === 'touch' ? DRAG_HOLD_TILES : DRAG_HOLD_MOUSE_TILES;
+    const s0 = g ? cam.scaleAt(g.x, g.y, 0) : cam.scale;
+    const t = pickTile(cam, p.x, p.y + hold * s0, heightAt, tiles.levels);
+    const z = t ? heightAt(t.row, t.col) : 0;
+    const up = item ? z : z + (v.lift || 0) + (v.hover || 0);
+    let w = cam.unproject(p.x, p.y + hold * s0, up);
+    if (w && hold) w = cam.unproject(p.x, p.y + hold * cam.scaleAt(w.x, w.y, up), up) || w;
+    if (w) {
+      const f = { x: Math.max(-1, Math.min(21, w.x)), y: Math.max(-1, Math.min(19, w.y)), z };
+      if (!v._follow) { v.x = f.x; v.y = f.y; v.z = f.z; }
+      v._follow = f;
     }
     // the drop target (p.target, highlighted) is the tile under the pointer
     if (p.target && p.target.area !== 'temp') {
@@ -1264,6 +1258,7 @@ export async function createFieldView(host, options = {}) {
   function dropDragVisual(p) {
     if (!dragState) return;
     const v = dragState.view;
+    v._follow = null;
     const t = p.target;
     if (t && (t.area === 'board' || t.area === 'hand')) {
       const row = t.area === 'board' ? t.row : GEO.HAND_ROW, col = t.area === 'board' ? t.col : t.idx;
@@ -1284,7 +1279,7 @@ export async function createFieldView(host, options = {}) {
       const v = dragState.view;
       const h = dragState.home;
       if (cancelled && v && !v.destroyed) v._tween = { fx: v.x, fy: v.y, fz: v.z, tx: h.x, ty: h.y, tz: h.z, t: 0 };
-      if (v) v.lift = 0;
+      if (v) { v.lift = 0; v._follow = null; }
     }
     dragState = null;
     clearHl('dragFrom'); clearHl('dragTarget'); clearHl('legal');
@@ -1893,6 +1888,10 @@ export async function createFieldView(host, options = {}) {
           const k = 1 - (1 - tw.t) * (1 - tw.t);
           v.x = tw.fx + (tw.tx - tw.fx) * k; v.y = tw.fy + (tw.ty - tw.fy) * k; v.z = tw.fz + (tw.tz - tw.fz) * k;
           if (tw.t >= 1) v._tween = null;
+        } else if (v._follow) {
+          // a dragged piece closing on the pointer (moveDragVisual): dt in s, the same feel at any refresh rate
+          const f = v._follow, k = 1 - Math.exp(-dt * DRAG_FOLLOW_RATE);
+          v.x += (f.x - v.x) * k; v.y += (f.y - v.y) * k; v.z += (f.z - v.z) * k;
         }
         v.update(dt, cam, clock);
         if (v.remove) { dropView(key); if (mode === 'battle') gone.add(key); }

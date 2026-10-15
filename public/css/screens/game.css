@@ -1004,6 +1004,10 @@
 .fa__row .pavatar { --pa: var(--fa-av, .66rem); border: 2px solid rgba(236, 240, 239, .78); }
 .fa__lp { display: flex; align-items: center; gap: .03rem; min-width: .62rem; font-size: calc(.24 * var(--t)); font-weight: 700; color: #eef2f1; }
 .fa__lp .icon { width: .2rem; height: .2rem; color: var(--mint-400); }
+/* more than 5 survivors (matchPlates.js finalLayout): a grid, each LP under its avatar, centred on its cell */
+.fa__row--grid { flex-direction: column; gap: .02rem; transform: translate(-50%, -50%); animation-name: fa-row-grid; }
+.fa__row--grid .fa__lp { justify-content: center; min-width: 0; font-size: calc(.16 * var(--t)); line-height: 1; }
+.fa__row--grid .fa__lp .icon { width: .15rem; height: .15rem; }
 .fa__node { position: absolute; width: .92rem; height: .92rem; transform: translate(-50%, -50%); }
 .fa__ring { position: absolute; left: 50%; top: 50%; width: 2.3rem; height: 2.3rem; margin: -1.15rem 0 0 -1.15rem; border-radius: 50%;
   border: 2px solid rgba(23, 249, 183, .3); background: radial-gradient(circle, rgba(23, 249, 183, .16), transparent 68%);
@@ -1026,6 +1030,7 @@
 @keyframes fa-draw { to { stroke-dashoffset: 0; } }
 @keyframes fa-comet { 0% { opacity: 1; stroke-dashoffset: .16; } 92% { opacity: 1; } 100% { opacity: 0; stroke-dashoffset: -1; } }
 @keyframes fa-row { from { opacity: 0; transform: translate(-.4rem, -50%); } }
+@keyframes fa-row-grid { from { opacity: 0; transform: translate(calc(-50% - .4rem), -50%); } }
 @keyframes fa-ring { from { opacity: 0; transform: scale(.4); } }
 @keyframes fa-pulse { 0% { opacity: .9; transform: scale(.5); } 100% { opacity: 0; transform: scale(1.7); } }
 @keyframes fa-num { from { opacity: 0; transform: scale(2); filter: brightness(2.5); } }

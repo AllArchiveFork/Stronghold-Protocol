@@ -59,22 +59,39 @@ export function bossIconOf(gd, bossId) {
 }
 
 /**
- * The lines of the 最终攻势 plate in its 1240 × 400 design box: one per survivor row (centred on the node's height), from
- * the row's LP to the node's left edge, fanned a little where they meet. Rows close up past four (a 10-seat room).
- * @param {number} n rows
- * @returns {{ y: number, d: string, gap: number }[]}
+ * The survivors and the lines of the 最终攻势 plate in its 1240 × 400 design box, the rows centred on the node's height.
+ * Up to FA_ROWS survivors: one column, an avatar beside its LP, one line per row from the LP to the node's left edge,
+ * fanned a little where they meet. More (an 8–20-seat room): a grid of at most FA_ROWS rows filled column by column,
+ * centred in the box, each LP under its avatar, one line per grid row from the grid's right edge — a single column of
+ * 20 rows left each avatar a few px and stacked the LP numbers over each other.
+ * @param {number} n survivors
+ * @returns {{ grid: boolean, cells: { x: number, y: number, av: number }[], lines: { y: number, d: string }[] }}
  */
-export function finalLines(n) {
+export function finalLayout(n) {
   const k = Math.max(0, Math.trunc(n) || 0);
-  const gap = k > 1 ? Math.min(88, Math.floor(320 / (k - 1))) : 88;
-  const top = FA_NODE.y - ((k - 1) * gap) / 2;
-  return Array.from({ length: k }, (_, i) => {
-    const y = Math.round(top + i * gap);
-    const ey = Math.round(FA_NODE.y + (i - (k - 1) / 2) * Math.min(10, 40 / Math.max(1, k - 1)));
-    return { y, gap, d: `M424 ${y} C508 ${y} 500 ${ey} 572 ${ey}` };
+  const grid = k > FA_ROWS;
+  const cols = grid ? Math.ceil(k / FA_ROWS) : 1;
+  const rows = Math.ceil(k / cols);
+  const gap = rows < 2 ? 88 : grid ? Math.min(75, Math.floor(300 / (rows - 1))) : Math.min(88, Math.floor(320 / (rows - 1)));
+  const top = (grid ? 200 : FA_NODE.y) - ((rows - 1) * gap) / 2;
+  const pitch = Math.min(150, Math.floor(340 / cols));
+  const av = grid ? Math.min(56, gap - 22, pitch - 22) : Math.min(66, gap - 10);
+  const cells = Array.from({ length: k }, (_, i) => {
+    const c = grid ? Math.floor(i / rows) : 0;
+    const r = grid ? i % rows : i;
+    return { x: grid ? FA_GRID_RIGHT - (cols - 1 - c) * pitch : FA_ROW_X, y: Math.round(top + r * gap), av };
   });
+  const lines = Array.from({ length: rows }, (_, i) => {
+    const y = Math.round(top + i * gap);
+    const ey = Math.round(FA_NODE.y + (i - (rows - 1) / 2) * Math.min(10, 40 / Math.max(1, rows - 1)));
+    return { y, d: `M424 ${y} C508 ${y} 500 ${ey} 572 ${ey}` };
+  });
+  return { grid, cells, lines };
 }
 const FA_NODE = { x: 620, y: 165 };
+const FA_ROWS = 5;
+const FA_ROW_X = 262;       // a row's left edge (one column)
+const FA_GRID_RIGHT = 388;  // the grid's last column's centre
 const rem = (px) => `${px / 100}rem`;
 
 /**
@@ -110,7 +127,7 @@ export function TurnPopup({ onDone }) {
  */
 export function FinalAssaultPlate({ rows, total, icon = null, onDone }) {
   const leaving = useTimedLeave(FINAL_PLATE_MS, onDone);
-  const lines = finalLines(rows.length);
+  const { grid, cells, lines } = finalLayout(rows.length);
   return html`<div class=${cx('bplate', 'bplate--final', leaving && 'is-leaving')} role="status" aria-live="polite"
       aria-label=${t('最终攻势：合力击败敌方领袖！')} data-testid="final-plate">
     <div class="bplate__panel">
@@ -122,7 +139,8 @@ export function FinalAssaultPlate({ rows, total, icon = null, onDone }) {
           <path class="fa__comet" d=${l.d} pathLength="1" />
         </g>`)}
       </svg>
-      ${rows.map((r, i) => html`<div key=${r.player?.playerId ?? i} class="fa__row" style=${`top:${rem(lines[i].y)};--i:${i};--fa-av:${rem(Math.min(66, lines[i].gap - 10))}`}>
+      ${rows.map((r, i) => html`<div key=${r.player?.playerId ?? i} class=${cx('fa__row', grid && 'fa__row--grid')}
+          style=${`left:${rem(cells[i].x)};top:${rem(cells[i].y)};--i:${grid ? (i * FA_ROWS / rows.length).toFixed(2) : i};--fa-av:${rem(cells[i].av)}`}>
         <${PlayerAvatar} player=${r.player} size="sm" prefer="avatar" class="fa__ava" />
         <span class="fa__lp num"><${Icon} name="rook" />${Number.isFinite(r.lp) ? Math.max(0, r.lp) : '--'}</span>
       </div>`)}
