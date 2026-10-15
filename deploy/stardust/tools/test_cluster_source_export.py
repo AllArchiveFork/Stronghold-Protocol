@@ -21,6 +21,7 @@ class ClusterSourceExportTests(unittest.TestCase):
             'server/cluster/start.mjs': '// fixture\n', 'shared/experimental.js': '// fixture\n',
             'shared/cluster-load.js': '// fixture\n', 'data/assets.json': '{}',
             'public/js/main.js': '// fixture\n', 'public/css/main.css': 'body{}',
+            'public/sw.js': '// fixture worker\n', 'tools/assets/skel.mjs': '// fixture parser\n', 'tools/other.mjs': '// not runtime\n',
             'deploy/stardust/cluster/Dockerfile.cluster': '# fixture Dockerfile\n',
             '.gitignore': 'data/local-assets.json\npublic/assets/\nnode_modules/\n'}
         files.update({'deploy/stardust/auth/' + name: 'fixture\n' for name in exporter.AUTH_FILES})
@@ -91,6 +92,14 @@ class ClusterSourceExportTests(unittest.TestCase):
                 with self.assertRaises(exporter.assets.Refused):
                     exporter.export(self.root, target, self.revision)
                 self.assertFalse(target.exists())
+
+    def test_service_worker_and_server_imported_tools_are_code(self):
+        exporter.export(self.root, self.output, self.revision)
+        paths = [row['path'] for row in json.loads((self.output / 'source-manifest.json').read_text())['files']]
+        self.assertIn('public/sw.js', paths)
+        self.assertIn('tools/assets/skel.mjs', paths)
+        self.assertNotIn('tools/other.mjs', paths)
+        self.assertTrue((self.output / 'app/tools/assets/skel.mjs').is_file())
 
     def test_committed_language_packs_are_code_not_public_art(self):
         self.put('public/i18n/en.json', '{"_meta":{"lang":"en"},"开始":"Start"}\n')

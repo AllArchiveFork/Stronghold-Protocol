@@ -16,6 +16,9 @@ SPEC.loader.exec_module(assets)
 HEX40 = re.compile(r'[a-f0-9]{40}')
 APP_ICON_FILES = ('app-192.png', 'app-512.png', 'app-maskable-192.png', 'app-maskable-512.png',
                   'app.svg', 'apple-touch-icon.png', 'favicon-16.png', 'favicon-32.png', 'favicon-48.png', 'favicon.ico')
+# 0.3.0: the server imports the Spine/atlas parsers of tools/assets (server/plugins/pack.js, server/studio/), and the
+# page registers the material Service Worker /sw.js (public/js/assetCache.js).
+RUNTIME_TOOL_FILES = ('tools/assets/anim-roles.mjs', 'tools/assets/atlas.mjs', 'tools/assets/skel.mjs')
 AUTH_FILES = ('name-policy.mjs', 'name-dictionary.mjs', 'name-sensitive-dictionary.mjs',
               'name-filter-vendor.mjs', 'name-filter-node.mjs', 'NAME-DICTIONARY-LICENSE.txt',
               'NAME-FILTER-LICENSE.txt', 'NAME-CATEGORIES-LICENSE.txt', 'NAME-POLITICAL-LICENSE.txt')
@@ -30,7 +33,8 @@ def canonical(value):
 
 
 def code_path(name):
-    return name in ('package.json', 'package-lock.json', 'public/index.html', 'public/manifest.json') \
+    return name in ('package.json', 'package-lock.json', 'public/index.html', 'public/manifest.json', 'public/sw.js') \
+        or name in RUNTIME_TOOL_FILES \
         or name in tuple('public/icons/' + file for file in APP_ICON_FILES) \
         or name.startswith(('server/', 'shared/', 'data/', 'public/js/', 'public/css/')) \
         or re.fullmatch(r'public/i18n/[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*\.json', name) is not None \
