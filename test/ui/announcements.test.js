@@ -85,22 +85,26 @@ test('shipped announcement data validates; optional board is mounted from the lo
   assert.match(board, /ariaLabel=\$\{t\('大厅公告板'\)\} trapFocus=\$\{true\}/);
 });
 
-test('today is one notice: the 0.3.0 update (official effects, voices, 8–20 seats choosing at once, restart recovery), this morning\'s update recalled, credits to the original and to xinhai-ai, the access rule and the maintenance; the introduction is retained with the credit and a first-visit guide', () => {
+test('today\'s notices: a small update (no board zoom while deploying, the replayed-battle prompt) over the 0.3.0 update (official effects, voices, 8–20 seats choosing at once, restart recovery), this morning\'s update recalled, credits to the original and to xinhai-ai, the access rule and the maintenance; the introduction is retained with the credit and a first-visit guide', () => {
   const entries = parseAnnouncements(JSON.parse(source('../../data/announcements.json')));
-  assert.equal(entries.length, 2);
-  assert.equal(entries[0].title, '版本更新 0.3.0：官方战斗特效、多语言配音、扩容房同时选择');
+  assert.equal(entries.length, 3);
+  assert.equal(entries[0].title, '小更新：拖动部署时不再缩放棋盘');
   assert.equal(entries[0].date, '2026-10-16');
-  assert.equal(entries[1].title, '欢迎游玩卫戍协议！卫来！');
-  assert.equal(entries[1].date, '2026-10-06');
-  const today = entries[0].paragraphs.join('\n');
+  const small = entries[0].paragraphs.join('\n');
+  for (const phrase of ['不再临时收起商店、放大棋盘', '资金旁的「收起」', '作战要重新进行']) assert.ok(small.includes(phrase), phrase);
+  assert.equal(entries[1].title, '版本更新 0.3.0：官方战斗特效、多语言配音、扩容房同时选择');
+  assert.equal(entries[1].date, '2026-10-16');
+  assert.equal(entries[2].title, '欢迎游玩卫戍协议！卫来！');
+  assert.equal(entries[2].date, '2026-10-06');
+  const today = entries[1].paragraphs.join('\n');
   for (const phrase of ['Bilibili@雨千代chiyo', '请刷新页面重新进入', '「设置 → 官方特效」', '「本土语言」', '全员同时选择', '「实验性选项」', '「正在恢复对局…」',
     '本次更新本身仍会中断当前对局', '直接进入大厅', '「对局音乐」', 'github.com/sganggs/Stronghold-Protocol', 'github.com/xinhai-ai/Stronghold-Protocol',
     '插件功能，本服务器暂不开放', '只向中国大陆网络开放']) assert.ok(today.includes(phrase), phrase);
-  assert.doesNotMatch(today, /保证不卡顿|带宽无限|固定比例下降|会话重置.*已修复|正在进行服务器扩容|不[^。；]{0,100}，也不/);
-  assert.match(entries[1].paragraphs.join('\n'), /纯公益.*非官方/);
-  assert.match(entries[1].paragraphs.join('\n'), /github\.com\/sganggs\/Stronghold-Protocol/);
-  assert.match(entries[1].paragraphs.join('\n'), /界面致谢：.*Bilibili@雨千代chiyo/);
-  assert.match(entries[1].paragraphs.join('\n'), /第一次来的博士：.*「玩法说明」/);
+  assert.doesNotMatch(today, /棋盘放大|保证不卡顿|带宽无限|固定比例下降|会话重置.*已修复|正在进行服务器扩容|不[^。；]{0,100}，也不/);
+  assert.match(entries[2].paragraphs.join('\n'), /纯公益.*非官方/);
+  assert.match(entries[2].paragraphs.join('\n'), /github\.com\/sganggs\/Stronghold-Protocol/);
+  assert.match(entries[2].paragraphs.join('\n'), /界面致谢：.*Bilibili@雨千代chiyo/);
+  assert.match(entries[2].paragraphs.join('\n'), /第一次来的博士：.*「玩法说明」/);
   // the owner asked for a fuller notice on 2026-10-14 (was < 800) and a longer one for the 0.3.0 update on 2026-10-16
   // (was < 1600): the board scrolls, but the two together stay bounded
   assert.ok(entries.flatMap(entry => entry.paragraphs).join('\n').length < 4000, 'the notices stay readable');
