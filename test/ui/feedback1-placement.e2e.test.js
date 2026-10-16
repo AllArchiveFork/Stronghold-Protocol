@@ -28,6 +28,7 @@ async function soloToPrep(c) {
   await c.waitFor((s) => !!s.room, 'solo room');
   if (!(await c.st()).phase) await c.roomStart({ timeout: 20000 });
   await c.waitFor((s) => s.phase === 'INFO_CHECK', 'briefing', 30000);
+  await c.settled('.brief-go'); // (a click during its entrance falls through)
   await c.click('.brief__foot .btn--primary', '准备就绪');
   await c.waitFor((s) => s.phase === 'BAND_DRAFT', 'band draft', 30000);
   await c.click('.dband', null, { nth: 1 });
@@ -46,7 +47,7 @@ const wheelOpen = (c) => c.page.evaluate(() => !!document.querySelector('.fwheel
 
 /**
  * Press on hand piece `uid`, move over `hover` and read the legal highlights mid-drag, then release on `drop`. The tiles'
- * points are aimed at again once the piece is picked up: the deploy fold zooms the board then (GitHub #602).
+ * points are aimed at again once the piece is picked up (e2e/client.mjs aimedDrag).
  */
 async function dragRead(c, uid, hover, drop, shot = null) {
   const from = await c.piecePoint(uid);

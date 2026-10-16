@@ -48,10 +48,10 @@ export async function waitForFunctionLong(page, fn, { timeout = 30000, polling =
 }
 
 // ---- drags that aim after the pickup (GitHub #602, PR #646) ---------------------------------------------------------
-// Picking a piece up on the own prep board folds the shop bar and zooms the board to the shop-collapsed camera: a client
-// point read before the press lies over another tile once that camera settles (FOLD_CAMERA_MS). A drag that read its
-// target before the press therefore picks the piece up first, waits for the camera, and ends on the same ground spot
-// under the new camera — as a player aims at the board they see. No-ops on the DOM fallback (its grid does not move).
+// 0.3.0's deploy fold zoomed the board as a piece was picked up, so a client point read before the press lay over
+// another tile once that camera settled. The fold is gone (the owner's decision of 2026-10-16) but a drag still aims
+// after the pickup: it picks the piece up, waits for any camera flight, and ends on the same ground spot under the
+// camera then — as a player aims at the board they see. No-ops on the DOM fallback (its grid does not move).
 
 /** The ground spot under client point `p` (world x / y on the tile top there and its height), or null (DOM fallback, off the board). */
 export function groundAnchor(page, p) {
@@ -512,8 +512,7 @@ export class Client {
 
   /**
    * Press at `from`, move in steps to `to`, optionally screenshot mid-drag, release. `to` read before the press is
-   * re-aimed after the pickup: the own prep board's deploy fold zooms the board (`aimedDrag`, GitHub #602); `retarget`
-   * gives a DOM target the fold moved instead.
+   * re-aimed after the pickup (`aimedDrag`); `retarget` gives a DOM target read after the pickup instead.
    */
   async drag(from, to, { steps = 14, midShot = null, retarget = null } = {}) {
     return aimedDrag(this.page, from, to, { steps, settle: 160, retarget, before: midShot ? () => this.shot(midShot) : null });

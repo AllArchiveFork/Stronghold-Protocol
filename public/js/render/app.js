@@ -1967,8 +1967,8 @@ export async function createFieldView(host, options = {}) {
     try {
       const flying = !!camTo;
       stepCamera(now);
-      // a drag under a still pointer follows a camera flight — the shop-collapsed zoom of a deploy (GitHub #602) starts
-      // as the piece is picked up: the target tile and the dragged piece are judged again at the pointer
+      // a drag under a still pointer follows a camera flight: the target tile and the dragged piece are judged again at
+      // the pointer
       if (flying && mode === 'prep' && drag.dragging) drag.refresh();
       if (board3d) {
         if (board3d.lost) onBoard3dLost();

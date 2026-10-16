@@ -1,12 +1,11 @@
-// Browser check of the temporary shop fold while deploying (GitHub #602), on the in-match mock harness:
+// Browser check that deploying leaves the shop bar and the camera alone (GitHub #602's deploy fold, removed by the
+// owner on 2026-10-16), on the in-match mock harness:
 //   SP_E2E=1 CHROME_PATH=… node --test test/ui/issue602-deploy-fold.e2e.test.js
 //
-// On the own prep board (DOM fallback field), picking up a hand piece — an operator or equipment — folds the shop bar
-// (the 展开商店 tab, the screen's `is-collapsed`) and keeps it folded through the dropped operator's direction wheel;
-// cancelling the drag / the wheel, or equipping, gives the player's own 收起/展开 state back — it is never written by
-// the drag. The zoomed camera itself is covered by issue602-deploy-fold.test.js's projection measurement; the engine
-// test (0.3.0 port) checks the zoom on the render engine: at once with the pickup, the drop target following the camera
-// under a resting pointer, and the exact shop camera afterwards.
+// On the own prep board (DOM fallback field), picking up a hand piece — an operator or equipment — keeps the player's
+// 收起/展开 state (the screen's `is-collapsed`, the 展开商店 tab) through the drag and the dropped operator's direction
+// wheel. On the render engine the camera holds still through the pickup and the drop target is the tile under the
+// resting finger.
 
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -16,7 +15,7 @@ const CHROME = process.env.CHROME_PATH || '/Applications/Google Chrome.app/Conte
 const ENABLED = process.env.SP_E2E === '1' && existsSync(CHROME);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-describe('the shop folds while deploying a piece and restores afterwards (#602)', { skip: !ENABLED && 'set SP_E2E=1 (and have Chrome) to run' }, () => {
+describe('deploying a piece leaves the shop and the camera as they are (#602 removed)', { skip: !ENABLED && 'set SP_E2E=1 (and have Chrome) to run' }, () => {
   let srv;
   let browser;
   let base;
@@ -74,20 +73,20 @@ describe('the shop folds while deploying a piece and restores afterwards (#602)'
     return { page, problems, chess, item, tile, folded, pickup, cancelDrag, dropOn };
   }
 
-  test('picking up an operator folds the shop; cancelling the drag restores it (phone viewport)', async () => {
+  test('picking up an operator keeps the shop open, or folded when the player folded it (phone viewport)', async () => {
     const h = await openPage({ width: 390, height: 844 });
     assert.deepEqual(await h.folded(), { cls: false, tab: false }, 'the shop starts open');
 
     await h.pickup(h.chess);
-    assert.deepEqual(await h.folded(), { cls: true, tab: true }, 'the shop folds as the operator is picked up');
+    assert.deepEqual(await h.folded(), { cls: false, tab: false }, 'the shop stays open while the operator is carried');
     await h.cancelDrag();
-    assert.deepEqual(await h.folded(), { cls: false, tab: false }, 'a cancelled drag opens it again');
+    assert.deepEqual(await h.folded(), { cls: false, tab: false }, 'and after a cancelled drag');
 
-    // the player folds by hand: the deploy fold must not undo it
+    // the player folds by hand: a drag does not undo it
     await h.page.click('.funds__collapse');
     await h.page.waitForSelector('.shopbar-tab');
     await h.pickup(h.chess);
-    assert.equal((await h.folded()).cls, true, 'folded by hand, then picked up: still folded');
+    assert.deepEqual(await h.folded(), { cls: true, tab: true }, 'folded by hand, then picked up: still folded');
     await h.cancelDrag();
     assert.deepEqual(await h.folded(), { cls: true, tab: true }, 'the hand-made fold survives the cancelled drag');
     await h.page.click('.shopbar-tab__btn');
@@ -97,26 +96,25 @@ describe('the shop folds while deploying a piece and restores afterwards (#602)'
     await h.page.close();
   });
 
-  test('it stays folded through the direction wheel and unfolds when the wheel is cancelled', async () => {
+  test('the shop stays open through the direction wheel and after it is cancelled', async () => {
     const h = await openPage({ width: 1600, height: 900 });
     await h.pickup(h.chess);
-    assert.equal((await h.folded()).cls, true, 'folded on pickup');
+    assert.equal((await h.folded()).cls, false, 'open on pickup');
     await h.dropOn(...h.tile);
     await h.page.waitForSelector('.fwheel__dia', { timeout: 5000 });
     await sleep(200);
-    assert.deepEqual(await h.folded(), { cls: true, tab: true }, 'the direction wheel keeps the shop folded');
+    assert.deepEqual(await h.folded(), { cls: false, tab: false }, 'the direction wheel leaves the shop open');
     await h.page.keyboard.press('Escape');
     await h.page.waitForFunction(() => !document.querySelector('.fwheel'));
     await sleep(200);
-    assert.deepEqual(await h.folded(), { cls: false, tab: false }, 'cancelling the wheel restores the open shop');
+    assert.deepEqual(await h.folded(), { cls: false, tab: false }, 'still open after the wheel');
     assert.deepEqual(h.problems, []);
     await h.page.close();
   });
 
-  // the 0.3.0 port, on the render engine: the zoom starts with the pickup while the finger may rest — the drop target
-  // is the tile under the finger under the NEW camera (render/drag.js refresh) — and ends on the exact shop camera.
-  // Touch input: a resting mouse gets Chrome's synthetic moves when the layout changes (the shop bar folding), a finger not.
-  test('engine (touch): the pickup zooms at once, a resting finger keeps the tile under it as the target, the end restores the exact shop camera', async () => {
+  // on the render engine: the camera holds still through the pickup, the drop target is the tile under the resting
+  // finger, and the wheel / the end of the drag leave the exact shop camera.
+  test('engine (touch): the pickup does not move the camera, the target is the tile under the resting finger', async () => {
     const page = await browser.newPage();
     await page.setViewport({ width: 1280, height: 720, hasTouch: true });
     const problems = [];
@@ -136,7 +134,7 @@ describe('the shop folds while deploying a piece and restores afterwards (#602)'
     await t.touchStart(from.x, from.y);
     // one move: the drag starts with the finger already on P (its target judged under the shop camera), then it rests
     await t.touchMove(P.x, P.y);
-    await sleep(800); // the zoom (FOLD_CAMERA_MS) runs and ends under the resting finger
+    await sleep(800); // longer than a fold flight (FOLD_CAMERA_MS): nothing may fly
     const s = await page.evaluate((P, uid) => {
       const d = globalThis.__SP_VIEW__.raw.debug;
       const rect = d.app.view.getBoundingClientRect();
@@ -149,14 +147,14 @@ describe('the shop folds while deploying a piece and restores afterwards (#602)'
       };
     }, P, chess.uid);
     assert.equal(s.dragging, true);
-    assert.equal(s.folded, true, 'the shop folded with the pickup');
-    assert.notEqual(s.cam, shopCam, 'the camera zoomed to the shop-collapsed framing');
-    assert.ok(s.under && (s.under[0] !== 10 || s.under[1] !== 6), `the zoom moved the board under the resting finger (${s.under})`);
-    assert.deepEqual(s.target, s.under, 'the drop target is the tile under the finger now, not the one before the zoom');
+    assert.equal(s.folded, false, 'the shop stays open');
+    assert.equal(s.cam, shopCam, 'the camera did not move');
+    assert.deepEqual(s.under, [10, 6], 'the board did not move under the resting finger');
+    assert.deepEqual(s.target, s.under, 'the drop target is the tile under the finger');
     await t.touchEnd();
     await sleep(400);
     if (await page.$('.fwheel')) {
-      assert.equal(await page.evaluate(() => document.querySelector('.gm')?.classList.contains('is-collapsed')), true, 'the wheel keeps the zoom');
+      assert.equal(await cam(), shopCam, 'the wheel does not zoom either');
       await page.keyboard.press('Escape');
       await page.waitForFunction(() => !document.querySelector('.fwheel'));
     }
@@ -167,12 +165,12 @@ describe('the shop folds while deploying a piece and restores afterwards (#602)'
     await page.close();
   });
 
-  test('picking up equipment folds the shop too, and dropping it restores the player\'s state', async () => {
+  test('picking up equipment keeps the shop open too', async () => {
     const h = await openPage({ width: 1600, height: 900 });
     await h.pickup(h.item);
-    assert.deepEqual(await h.folded(), { cls: true, tab: true }, 'equipment pickup folds the shop (no direction wheel for items)');
+    assert.deepEqual(await h.folded(), { cls: false, tab: false }, 'equipment pickup leaves the shop open');
     await h.cancelDrag();
-    assert.deepEqual(await h.folded(), { cls: false, tab: false }, 'released without equipping: open again');
+    assert.deepEqual(await h.folded(), { cls: false, tab: false }, 'released without equipping: still open');
     assert.deepEqual(h.problems, []);
     await h.page.close();
   });

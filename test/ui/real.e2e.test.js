@@ -178,7 +178,7 @@ class Client {
     }, row, col);
   }
 
-  /** Press, move in steps, release — re-aimed after the pickup: the deploy fold zooms the board (GitHub #602, e2e/client.mjs aimedDrag). */
+  /** Press, move in steps, release — re-aimed after the pickup (e2e/client.mjs aimedDrag). */
   async drag(from, to, steps = 14) {
     await aimedDrag(this.page, from, to, { steps, settle: 120 });
   }

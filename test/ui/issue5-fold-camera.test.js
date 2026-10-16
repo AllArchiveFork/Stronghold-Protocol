@@ -204,12 +204,11 @@ describe('wiring', () => {
     assert.match(app, /hud: hudBands\(vk, sz, \{ shop: o\.shop !== false \}\),/);
     assert.match(app, /return opts\.hud\(kind, sz, o\) \|\| null;/);
     const game = read('public/js/screens/game.js');
-    // issue #602 also ORs the deploy interaction's temporary fold into the camera state (issue602-deploy-fold.test.js)
-    assert.match(game, /const shopFolded = showShop && \(pen \? penRef\.current\.collapsed : \(collapsed \|\| deployFold\)\);/);
+    // the player's own fold state (a drag never folds it: issue602-deploy-fold.test.js)
+    assert.match(game, /const shopFolded = showShop && \(pen \? penRef\.current\.collapsed : collapsed\);/);
     // entering prep and the boss-prep re-frame take the fold state; a fold / unfold re-frames through foldCamera
     assert.equal((game.match(/const pc = prepCameraFor\(pub, myId, shopFolded\);/g) || []).length, 2);
-    // a hand-made fold still goes through foldCamera, still deferred while busy (the deploy fold's own branch is
-    // asserted in issue602-deploy-fold.test.js)
+    // a hand-made fold goes through foldCamera, deferred while busy
     assert.match(game, /const next = foldCamera\(\{\n\s+pub, myId, folded: shopFolded, ownPrep: !!view && viewModeRef\.current === 'prep' && showPrep,\n\s+pen, busy: !!drag \|\| !!facing, current: camRef\.current,\n\s+\}\);\n\s+if \(next\) setCam\(next\.kind, \{ \.\.\.next\.opts, ms: FOLD_CAMERA_MS \}\);/);
   });
 });

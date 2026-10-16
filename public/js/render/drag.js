@@ -249,8 +249,8 @@ export function createDragController(hooks) {
 
     /**
      * Judge the drag again at the last pointer position: the ground under a still pointer changes while the camera
-     * moves (the shop-collapsed zoom of a deploy, GitHub #602), so the target tile, its legality and the dragged
-     * piece's place (pieceDragMove, tileHover) follow the camera, not only the pointer. No-op unless dragging.
+     * flies, so the target tile, its legality and the dragged piece's place (pieceDragMove, tileHover) follow the
+     * camera, not only the pointer. No-op unless dragging.
      */
     refresh() {
       if (st && st.mode === 'dragging' && st.last) moveDrag(st.last);

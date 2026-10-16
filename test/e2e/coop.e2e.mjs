@@ -389,7 +389,7 @@ async function moveOnBoard(c) {
 
 /**
  * Press on a board unit at `from`, carry it off its tile and back onto `home` (its own tile), release. `home` is aimed at
- * again after the pickup: the own prep board's deploy fold zooms the board then (GitHub #602, client.mjs aimedDrag).
+ * again after the pickup (client.mjs aimedDrag).
  */
 async function offAndBack(c, from, home) {
   const anchor = await groundAnchor(c.page, home);
@@ -413,7 +413,7 @@ async function reorientInPlace(c, dir = 'LEFT', { midShot = null } = {}) {
   const home = await c.tilePoint(unit.row, unit.col);
   if (!from || !home) return false;
   // off the tile and back: a plain drag whose release lands on the unit's own tile (aimed at again once the piece is
-  // picked up: the deploy fold zooms the board then — GitHub #602)
+  // picked up)
   await offAndBack(c, from, home);
   await chooseDirection(c, unit.uid, { row: unit.row, col: unit.col }, dir, { midShot });
   await sleep(500);
@@ -467,14 +467,12 @@ async function sellByTap(c, { shot = 'underframe' } = {}) {
   const unit = (await frontUnits(c, (b) => !b.golden && !b.items))[0];
   if (!unit) return false;
   const before = await c.st();
-  // no drag-to-sell zone: the shop bar folds away while a piece is carried (GitHub #602) and a release over its tab — DOM
-  // UI — puts the piece back; the unit stays on the board
-  const centre = (sel) => c.page.$eval(sel, (el) => { const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; }).catch(() => null);
+  // no drag-to-sell zone: a release over the shop bar — DOM UI — puts the piece back; the unit stays on the board
   const bar = await c.page.$eval('.shopbar__row', (el) => { const r = el.getBoundingClientRect(); return { x: r.left + r.width * 0.45, y: r.top + r.height / 2 }; });
   const from = await c.piecePoint(unit.uid);
-  await c.drag(from, bar, { retarget: () => centre('.shopbar-tab') });
+  await c.drag(from, bar);
   await sleep(500);
-  assert.ok((await c.boardPieces()).some((b) => b.uid === unit.uid), `${c.label}: a release over the folded shop does not sell`);
+  assert.ok((await c.boardPieces()).some((b) => b.uid === unit.uid), `${c.label}: a release over the shop bar does not sell`);
   assert.equal(await c.exists('.sellzone'), false, 'no sell zone');
   assert.ok(await tapUnit(c, unit.uid), `${c.label}: tapping the unit opens its underframe`);
   assert.ok(await c.exists('.uframe__btn--retreat'), 'underframe: 撤退');
@@ -809,7 +807,7 @@ async function dropOnTile(c, uid, tile) {
   return to;
 }
 
-/** The same with touch input (pointerType 'touch': CDP touch events), aimed at `to` again after the pickup (GitHub #602). */
+/** The same with touch input (pointerType 'touch': CDP touch events), aimed at `to` again after the pickup. */
 async function touchDrag(c, from, to, steps = 12) {
   const t = c.page.touchscreen;
   const anchor = await groundAnchor(c.page, to);

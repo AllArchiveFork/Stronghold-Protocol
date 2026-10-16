@@ -401,14 +401,14 @@ describe('in-match UI (mock harness, headless Chrome)', { skip: !ENABLED && 'set
     const { page, problems } = await open('phase=PREP');
     await sleep(1500); // spine models
     const rect = (uid) => page.evaluate((u) => { const r = globalThis.__SP_VIEW__?.pieceScreenRect(u); return r && { x: r.left + r.width / 2, y: r.top + r.height * 0.65 }; }, uid);
-    // (aimed after the pickup: the deploy fold zooms the board as a piece is picked up — GitHub #602, e2e/client.mjs)
+    // (aimed after the pickup, e2e/client.mjs aimedDrag)
     const drag = async (from, to, o = {}) => { await aimedDrag(page, from, to, { steps: 12, pause: 16, settle: 100, ...o }); await sleep(600); };
     const centre = (sel) => page.$eval(sel, (el) => { const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; }).catch(() => null);
     let s = await mockState(page);
     const unit = s.board.find((x) => x.kind === 'chess' && !x.golden && !(x.items || []).length);
     const bar = await centre('.shopbar__cards');
-    // the shop bar folds away while a piece is carried (GitHub #602): released over its tab — DOM UI — the piece goes back
-    await drag(await rect(unit.uid), bar, { retarget: () => centre('.shopbar-tab') });
+    // released over the shop bar — DOM UI — the piece goes back
+    await drag(await rect(unit.uid), bar);
     assert.equal((await mockState(page)).board.length, s.board.length, 'no drag-to-sell');
     const pt = await rect(unit.uid);
     await page.mouse.click(pt.x, pt.y);
@@ -433,7 +433,7 @@ describe('in-match UI (mock harness, headless Chrome)', { skip: !ENABLED && 'set
     await page.mouse.move(here.x, here.y);
     await page.mouse.down();
     for (let i = 1; i <= 8; i++) { await page.mouse.move(here.x + i * 12, here.y - i * 6); await sleep(16); } // off the tile…
-    await cameraSettled(page); // (the deploy fold's zoom, GitHub #602)
+    await cameraSettled(page);
     const back = (await anchorPoint(page, home)) || here;
     for (let i = 1; i <= 8; i++) { await page.mouse.move(here.x + 96 + ((back.x - here.x - 96) * i) / 8, here.y - 48 + ((back.y - here.y + 48) * i) / 8); await sleep(16); } // …and back onto it
     await sleep(100);
@@ -764,7 +764,7 @@ describe('in-match UI (mock harness, headless Chrome)', { skip: !ENABLED && 'set
         const tt = v.tileScreen(row, col);
         return { uid: piece.uid, row, col, from: { x: r.left + r.width / 2, y: r.top + r.height * 0.6 }, to: { x: tt.x, y: tt.y } };
       });
-      // (aimed after the pickup: the deploy fold zooms the boss-field half as a piece is picked up — GitHub #602)
+      // (aimed after the pickup, e2e/client.mjs aimedDrag)
       await aimedDrag(page, plan.from, plan.to, { steps: 14, pause: 16, settle: 120 });
       await swipeWheel(page, 'RIGHT');
       await page.waitForFunction((uid) => globalThis.__MOCK__.S().priv.board.some((b) => b.uid === uid), { timeout: 4000 }, plan.uid);
@@ -1075,7 +1075,7 @@ describe('in-match UI (mock harness, headless Chrome)', { skip: !ENABLED && 'set
     await sleep(1500); // spine models
     const at = (uid, fy) => page.evaluate((u, f) => { const r = globalThis.__SP_VIEW__?.pieceScreenRect(u); return r && { x: r.left + r.width / 2, y: r.top + r.height * f }; }, uid, fy);
     const tileAt = (row, col) => page.evaluate((r, c) => { const x = globalThis.__SP_VIEW__?.raw?.tileScreen?.(r, c); return x && { x: x.x, y: x.y }; }, row, col);
-    // (aimed after the pickup: the deploy fold zooms the board as a piece is picked up — GitHub #602, e2e/client.mjs)
+    // (aimed after the pickup, e2e/client.mjs aimedDrag)
     const drag = async (from, to) => { await aimedDrag(page, from, to, { steps: 12, pause: 16, settle: 120 }); await sleep(600); };
     let s = await mockState(page);
     const targets = s.board.filter((x) => x.kind === 'chess' && !(x.items || []).length).sort((a, b) => a.row - b.row);
@@ -1122,7 +1122,7 @@ describe('in-match UI (mock harness, headless Chrome)', { skip: !ENABLED && 'set
         }
         assert.ok(to, 'found an empty board tile on screen');
       }
-      // (aimed after the pickup on the engine: the deploy fold zooms the board — GitHub #602, e2e/client.mjs)
+      // (aimed after the pickup on the engine, e2e/client.mjs aimedDrag)
       await aimedDrag(page, from, to, { steps: 12, pause: 16, settle: 120 });
       await sleep(500);
       const toastText = await page.$eval('.toast', (el) => el.textContent).catch(() => null);

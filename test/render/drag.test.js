@@ -277,8 +277,9 @@ describe('drag controller', () => {
     assert.deepEqual(h.events.find((e) => e[0] === 'pieceDrop')[1].target, { area: 'outside', clientX: 250, clientY: 950 });
   });
 
-  // GitHub #602 (PR #646): picking a piece up zooms the board to the shop-collapsed camera while the pointer may stand
-  // still — refresh() judges the drag again at the last pointer, so the target, tileHover and the dragged piece follow
+  // a camera flight under a still pointer (0.3.0's deploy fold zoomed the board as a piece was picked up, GitHub #602;
+  // removed 2026-10-16): refresh() judges the drag again at the last pointer, so the target, tileHover and the dragged
+  // piece follow
   test('refresh(): a still pointer over a moving camera gets the tile now under it; no-op unless dragging', () => {
     let shift = 0; // the "camera": the tile under a canvas point moves by `shift` columns
     const events = [];
