@@ -1,0 +1,107 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Stronghold-Protocol edge monitor: collector (coordinator /healthz → Prometheus text), node-exporter, Prometheus and
+# Grafana. Adapted from xinhai-ai/Stronghold-Protocol deploy/monitoring/docker-compose.yml. See README.md.
+#
+#   docker compose --env-file monitoring.env -f compose.monitoring.yaml up -d
+#
+# Every service uses host networking and listens on 127.0.0.1 only (collector 9108, node-exporter 9100, Prometheus
+# 9090, Grafana 3160). Nginx exposes only Grafana's public-dashboard paths; nothing here publishes a port.
+
+name: ark-monitor
+
+x-hardening: &hardening
+  network_mode: host
+  restart: unless-stopped
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  cpu_shares: 128
+  logging:
+    driver: json-file
+    options: { max-size: "10m", max-file: "3" }
+
+services:
+  collector:
+    <<: *hardening
+    build:
+      context: ./collector
+      args:
+        NODE_IMAGE: ${NODE_IMAGE:-node:24.22.0-alpine3.24}
+    image: ${COLLECTOR_IMAGE:-ark-monitor-collector:local}
+    user: node
+    environment:
+      MONITOR_HEALTHZ_URL: ${MONITOR_HEALTHZ_URL:?set MONITOR_HEALTHZ_URL in monitoring.env}
+      MONITOR_LISTEN: 127.0.0.1:9108
+      MONITOR_INTERVAL_MS: "10000"
+      MONITOR_TIMEOUT_MS: "5000"
+    mem_limit: 96m
+    pids_limit: 64
+
+  node-exporter:
+    <<: *hardening
+    image: ${NODE_EXPORTER_IMAGE:-prom/node-exporter:v1.12.1}
+    pid: host
+    command:
+      - --path.rootfs=/host
+      - --web.listen-address=127.0.0.1:9100
+      - --web.disable-exporter-metrics
+      - --collector.disable-defaults
+      - --collector.cpu
+      - --collector.meminfo
+      - --collector.loadavg
+      - --collector.netdev
+      - --collector.filesystem
+      - --collector.stat
+      - --collector.time
+      - --collector.uname
+      - --collector.netdev.device-include=^(ens3|ark-hz0)$$
+      - --collector.filesystem.mount-points-exclude=^/(dev|proc|run|sys|snap|var/lib/docker|var/lib/containerd)($$|/)
+      - --collector.filesystem.fs-types-exclude=^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tracefs|tmpfs|nfs4?|cifs|smb3|fuse\..*)$$
+    volumes:
+      - /:/host:ro,rslave
+    mem_limit: 64m
+    pids_limit: 64
+
+  prometheus:
+    <<: *hardening
+    image: ${PROMETHEUS_IMAGE:-prom/prometheus:v3.15.0}
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=30d
+      - --storage.tsdb.retention.size=5GB
+      - --web.listen-address=127.0.0.1:9090
+      - --log.level=warn
+    volumes:
+      - ./prometheus:/etc/prometheus:ro
+      - prometheus-data:/prometheus
+    depends_on: [collector, node-exporter]
+    mem_limit: 512m
+    pids_limit: 128
+
+  grafana:
+    <<: *hardening
+    image: ${GRAFANA_IMAGE:-grafana/grafana:13.2.4}
+    environment:
+      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:?set GRAFANA_ROOT_URL in monitoring.env}
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana-admin-password
+      GF_PATHS_CONFIG: /etc/grafana/grafana.ini
+      GF_PATHS_PROVISIONING: /etc/grafana/provisioning
+      # the Go runtime collects harder before the container limit (public dashboard bursts; Nginx also caps the
+      # queries in flight at 48)
+      GOMEMLIMIT: 1GiB
+    volumes:
+      - ./grafana/grafana.ini:/etc/grafana/grafana.ini:ro
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/etc/grafana/dashboards:ro
+      - ${GRAFANA_ADMIN_PASSWORD_FILE:?set GRAFANA_ADMIN_PASSWORD_FILE in monitoring.env}:/run/secrets/grafana-admin-password:ro
+      - grafana-data:/var/lib/grafana
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    depends_on: [prometheus]
+    mem_limit: 1536m
+    pids_limit: 256
+
+volumes:
+  prometheus-data:
+  grafana-data:

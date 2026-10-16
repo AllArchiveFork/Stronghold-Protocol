@@ -1,0 +1,39 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# The feedback board (/feedback) on the edge host, next to Nginx. See README.md.
+#
+#   docker compose --env-file feedback.env -f compose.feedback.yaml up -d
+#
+# Host networking, listening on 127.0.0.1:3150 only: Nginx sets the trusted X-Real-IP / X-Ark-Session headers, so
+# nothing else may reach the service. The data directory (SQLite + daily backups) belongs to uid 1000 (`node`); the
+# owner-file directory holds owner.json (the game's SP_OWNER_FILE format) readable by uid 1000.
+
+name: ark-feedback
+
+services:
+  feedback:
+    build: .
+    image: ${FEEDBACK_IMAGE:-ark-feedback:local}
+    network_mode: host
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    user: "1000:1000"
+    environment:
+      FEEDBACK_HOST: 127.0.0.1
+      FEEDBACK_PORT: "3150"
+      FEEDBACK_DB: /data/feedback.sqlite
+      FEEDBACK_BACKUP_DIR: /data/backup
+      FEEDBACK_OWNER_FILE: /run/owner/owner.json
+      FEEDBACK_ORIGIN: ${FEEDBACK_ORIGIN:?set FEEDBACK_ORIGIN in feedback.env}
+    volumes:
+      - ${FEEDBACK_DATA_DIR:?set FEEDBACK_DATA_DIR in feedback.env}:/data
+      - ${FEEDBACK_OWNER_DIR:?set FEEDBACK_OWNER_DIR in feedback.env}:/run/owner:ro
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cpu_shares: 256
+    mem_limit: 256m
+    pids_limit: 64
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }

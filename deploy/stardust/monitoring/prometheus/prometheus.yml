@@ -1,0 +1,57 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Prometheus for the Stronghold-Protocol edge monitor (compose.monitoring.yaml). Adapted from xinhai-ai/Stronghold-Protocol
+# deploy/monitoring/prometheus/prometheus.yml.
+#
+# Every target is a fixed loopback port of the edge host (all containers use host networking, each bound to
+# 127.0.0.1). `instance` is rewritten to a fixed name so no address appears in any label; node-exporter's host name
+# labels are dropped. Retention (30 d / 5 GB) is set on the command line.
+
+global:
+  scrape_interval: 15s
+  scrape_timeout: 10s
+  evaluation_interval: 15s
+
+rule_files:
+  - /etc/prometheus/rules.yml
+
+scrape_configs:
+  # healthz → metrics collector (collector/index.mjs): the coordinator's figures, polled every 10 s
+  - job_name: collector
+    scrape_interval: 10s
+    scrape_timeout: 5s
+    static_configs:
+      - targets: ["127.0.0.1:9108"]
+    relabel_configs:
+      - target_label: instance
+        replacement: coordinator
+
+  # the edge host itself (node-exporter, minimal collectors)
+  - job_name: node
+    static_configs:
+      - targets: ["127.0.0.1:9100"]
+    relabel_configs:
+      - target_label: instance
+        replacement: edge
+    metric_relabel_configs:
+      - action: labeldrop
+        regex: nodename|domainname
+      # a network mount names its server in `device`: never keep such a series
+      - source_labels: [device]
+        regex: ".*[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+.*|.*:.*"
+        action: drop
+
+  # OpenResty Lua exporter on the edge: ark_edge_requests_total{route,status}, ark_edge_bytes_sent_total{route},
+  # ark_edge_connections{state}
+  - job_name: nginx
+    static_configs:
+      - targets: ["127.0.0.1:9145"]
+    relabel_configs:
+      - target_label: instance
+        replacement: edge
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ["127.0.0.1:9090"]
+    relabel_configs:
+      - target_label: instance
+        replacement: prometheus

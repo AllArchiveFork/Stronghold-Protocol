@@ -37,6 +37,8 @@
 | `tools/main-thread-priority.py`、`systemd/ark-main-thread-priority.service` | 普通调度/reset-on-fork 与 Docker 启动事件保护 |
 | [WG-BOOT-RECOVERY.md](WG-BOOT-RECOVERY.md) | WG、关闭护栏及 manager 启动依赖 |
 | [releases/README.md](releases/README.md) | 私有发布记录存放规则，不提供站点运行快照 |
+| [feedback/](feedback/README.md) | 公开反馈板 `/feedback`：玩家提交 Bug/建议，服主（服主密钥）回复并改状态；Node 自带 SQLite |
+| [monitoring/](monitoring/README.md)、`nginx/edge-metrics-*.conf` | 边缘机 Prometheus + Grafana，`/monitor` 只公开一个只读公开面板；入口请求计数 |
 
 ## 本地准备与固定构建
 

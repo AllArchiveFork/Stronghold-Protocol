@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Recording rules: what the public dashboard (grafana/dashboards/stronghold-status.json) needs, precomputed so a
+# public visitor's query reads a few ready series instead of raw counters. No alerting rules: there is no Alertmanager.
+# Keep one `expr:` per line (test/config.test.mjs reads this file without a YAML library).
+
+groups:
+  - name: sp_game
+    rules:
+      # 1 = the coordinator answered its last poll with ok: true; 0 = it did not, or the collector is down
+      - record: sp:server_up
+        expr: (min(sp_up{job="collector"}) * min(sp_ok{job="collector"})) or on() vector(0)
+      # first hellos per second, by outcome (resumed = a reconnect into the same session; fresh = a new session)
+      - record: sp:hello:rate2m
+        expr: sum by (outcome) (rate(sp_hello_total{job="collector"}[2m]))
+      - record: sp:store_writes:rate2m
+        expr: sum(rate(sp_store_writes_total{job="collector"}[2m]))
+      # failed checkpoint store writes plus failed lobby documents, per second
+      - record: sp:checkpoint_failures:rate2m
+        expr: sum(rate(sp_store_write_failures_total{job="collector"}[2m])) + sum(rate(sp_lobby_doc_failures_total{job="collector"}[2m]))
+
+  - name: edge
+    rules:
+      - record: edge:cpu_usage:ratio
+        expr: 1 - avg(rate(node_cpu_seconds_total{job="node",mode="idle"}[2m]))
+      - record: edge:memory_usage:ratio
+        expr: 1 - sum(node_memory_MemAvailable_bytes{job="node"}) / sum(node_memory_MemTotal_bytes{job="node"})
+      # bits per second by interface (node-exporter keeps ens3 = public NIC and ark-hz0 = WireGuard tunnel)
+      - record: edge:network_transmit_bits:rate2m
+        expr: sum by (device) (rate(node_network_transmit_bytes_total{job="node"}[2m])) * 8
+      - record: edge:network_receive_bits:rate2m
+        expr: sum by (device) (rate(node_network_receive_bytes_total{job="node"}[2m])) * 8
+      - record: edge:requests:rate2m
+        expr: sum by (route) (rate(ark_edge_requests_total{job="nginx"}[2m]))
+      # share of responses with a 5xx status; 0 while there are requests but no 5xx series yet
+      - record: edge:requests_5xx:ratio2m
+        expr: (sum(rate(ark_edge_requests_total{job="nginx",status="5xx"}[2m])) or on() vector(0)) / clamp_min(sum(rate(ark_edge_requests_total{job="nginx"}[2m])), 1e-9)

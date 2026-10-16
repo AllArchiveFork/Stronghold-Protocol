@@ -1,0 +1,213 @@
+{
+ "ok": true,
+ "version": 1,
+ "app": "0.3.0",
+ "uptimeSec": 41343,
+ "build": "0a1b2c3d4e5f",
+ "content": {
+  "vanilla": "0000000000000000000000000000000000000000000000000000000000000000",
+  "sets": 0
+ },
+ "sockets": 3346,
+ "sessions": 5383,
+ "rooms": 2249,
+ "matches": 2074,
+ "humans": 3879,
+ "bots": 548,
+ "spectators": 14,
+ "online": 3346,
+ "queued": 12,
+ "maxRooms": 0,
+ "limits": {
+  "maxRooms": 8000,
+  "maxRoomsPerAddr": 24,
+  "maxMatchesPerAddr": 24,
+  "maxBots": 6000,
+  "maxBotsPerAddr": 60,
+  "maintenance": 0,
+  "perAddrPeak": {
+   "rooms": 7,
+   "matches": 6,
+   "bots": 19
+  },
+  "refused": {
+   "maxRooms": 0,
+   "maxRoomsPerAddr": 0,
+   "maxMatchesPerAddr": 0,
+   "maxBots": 0,
+   "maxBotsPerAddr": 0
+  }
+ },
+ "combat": {
+  "backend": "inline",
+  "workers": 0
+ },
+ "trial": {
+  "backend": "inline",
+  "scope": "bot-rehearsal",
+  "workers": 0,
+  "status": "disabled"
+ },
+ "reconnect": {
+  "hello": {
+   "resumed": 45762,
+   "fresh": 6350,
+   "unknownToken": 18033,
+   "inUse": 231
+  },
+  "matchSeats": {
+   "afkOnline": 113,
+   "afkOffline": 0,
+   "expired": 287
+  }
+ },
+ "performance": {
+  "status": "ready",
+  "sampledAt": 1792141846050,
+  "windowMs": 10000.077796004713,
+  "mainThread": {
+   "eventLoopDelayMs": {
+    "p50": 20.070399,
+    "p95": 20.807679,
+    "p99": 21.102591,
+    "max": 37.060607
+   },
+   "eventLoopUtilization": 0.07108139295749012,
+   "memory": {
+    "heapUsedBytes": 277065008,
+    "heapTotalBytes": 511012864,
+    "externalBytes": 7368528,
+    "arrayBuffersBytes": 3591336
+   }
+  },
+  "process": {
+   "cpu": {
+    "userMs": 583.339,
+    "systemMs": 191.024,
+    "totalMs": 774.363,
+    "percent": 7.74356975812106
+   },
+   "rssBytes": 624517120
+  },
+  "phases": {
+   "gc.minor": {
+    "count": 2,
+    "totalMs": 6.311,
+    "maxMs": 3.549,
+    "p50Ms": 3.549,
+    "p99Ms": 3.549,
+    "items": 0,
+    "peakMs": 12.35,
+    "totalCount": 4928
+   },
+   "match.commit": {
+    "count": 3,
+    "totalMs": 3.599,
+    "maxMs": 2.625,
+    "p50Ms": 1,
+    "p99Ms": 2.625,
+    "items": 0,
+    "peakMs": 16.217,
+    "totalCount": 20134
+   },
+   "match.plan": {
+    "count": 3,
+    "totalMs": 0.706,
+    "maxMs": 0.514,
+    "p50Ms": 0.25,
+    "p99Ms": 0.514,
+    "items": 6,
+    "peakMs": 3.519,
+    "totalCount": 20159
+   }
+  }
+ },
+ "net": {
+  "snapDropped": 0,
+  "backpressureClosed": 0,
+  "stateDelta": {
+   "full": 0,
+   "delta": 0,
+   "fullBytes": 0,
+   "deltaBytes": 0,
+   "plainBytesAvoided": 0
+  }
+ },
+ "persistence": {
+  "enabled": true,
+  "saveMs": 10000,
+  "captures": 0,
+  "captureSkips": 0,
+  "docWrites": 4134,
+  "docFailures": 0,
+  "restoredSessions": 0,
+  "restoredRooms": 0,
+  "restoredMatches": 0,
+  "droppedMatches": 0,
+  "deleted": 0,
+  "remote": {
+   "pending": 0,
+   "adopted": 0,
+   "rebuilt": 0,
+   "failed": 0
+  },
+  "store": {
+   "writes": 12402,
+   "writeFailures": 0,
+   "reads": 1,
+   "readFailures": 0,
+   "deletes": 0,
+   "bytesWritten": 1643467590,
+   "lastWriteAt": 1792141845575,
+   "connected": true,
+   "connects": 1,
+   "connectFailures": 0
+  }
+ },
+ "traffic": {
+  "since": "2026-10-15T21:41:45.074Z",
+  "seconds": 41343,
+  "http": {
+   "assets": {
+    "requests": 720528,
+    "bytes": 292788121,
+    "notModified": 0
+   },
+   "audio": {
+    "requests": 0,
+    "bytes": 0,
+    "notModified": 0
+   },
+   "code": {
+    "requests": 110843,
+    "bytes": 290080877,
+    "notModified": 2557
+   },
+   "data": {
+    "requests": 117325,
+    "bytes": 2480182841,
+    "notModified": 15011
+   },
+   "other": {
+    "requests": 1467230,
+    "bytes": 42221869,
+    "notModified": 0
+   },
+   "total": {
+    "requests": 2415926,
+    "bytes": 3105273708
+   }
+  },
+  "ws": {
+   "connections": 0,
+   "wireOut": 0,
+   "wireIn": 0,
+   "payloadOut": 0,
+   "payloadIn": 0,
+   "messagesOut": 0,
+   "messagesIn": 0,
+   "open": 0
+  }
+ },
+ "assetHashes": null
+}

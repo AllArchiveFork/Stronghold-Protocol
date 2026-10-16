@@ -46,9 +46,9 @@ async function stopChild(child) {
   const timer = setTimeout(() => child.kill('SIGKILL'), 2500); await ended; clearTimeout(timer);
 }
 
-test('simple configuration has only three direct targets and exact legacy compatibility', async () => {
+test('simple configuration has only its five direct targets and exact legacy compatibility', async () => {
   const text = await fs.readFile(path.join(configDir, 'ark-proto.conf'), 'utf8');
-  assert.deepEqual([...text.matchAll(/server 127\.0\.0\.1:(\d+);/g)].map(match => Number(match[1])).sort(), [3120, 3130, 3141]);
+  assert.deepEqual([...text.matchAll(/server 127\.0\.0\.1:(\d+);/g)].map(match => Number(match[1])).sort(), [3120, 3130, 3141, 3150, 3160]);
   assert.match(text, /upstream ark_proto_game_backend/);
   assert.doesNotMatch(text, /gateway|rolling|3110|3111|3190|\[A-Za-z0-9\]/i);
   assert.doesNotMatch(text, /proxy_hide_header Location|add_header Location/);

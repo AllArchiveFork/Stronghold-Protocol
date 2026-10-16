@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <meta name="referrer" content="same-origin">
+  <title>反馈 · 卫戍协议</title>
+  <link rel="stylesheet" href="assets/feedback.css?v=__ASSET_VERSION__">
+  <script type="module" src="assets/feedback.js?v=__ASSET_VERSION__"></script>
+</head>
+<body>
+  <header class="top">
+    <div class="top__inner">
+      <div class="top__title">
+        <span class="top__mark" aria-hidden="true"></span>
+        <h1>反馈</h1>
+        <span class="top__sub">卫戍协议</span>
+        <span class="badge badge--admin" id="admin-badge" hidden>管理模式</span>
+      </div>
+      <nav class="top__nav">
+        <a href="/monitor/">服务器状态</a>
+        <a href="/">返回游戏</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section class="intro">
+      <p>Bug、玩法建议、界面问题都可以写在这里。<strong>所有反馈公开可见</strong>，服主会回复并更新处理状态。</p>
+      <button type="button" class="btn btn--primary" id="compose-open">写反馈</button>
+    </section>
+
+    <section class="filters" aria-label="筛选">
+      <div class="filters__row">
+        <label class="search">
+          <span class="sr-only">搜索</span>
+          <input type="search" id="q" maxlength="64" placeholder="搜索标题、内容、回复…" autocomplete="off" enterkeyhint="search">
+        </label>
+        <label class="select">
+          <span class="sr-only">分类</span>
+          <select id="category">
+            <option value="">全部分类</option>
+          </select>
+        </label>
+      </div>
+      <div class="tabs" id="tabs" role="tablist" aria-label="处理状态"></div>
+    </section>
+
+    <section id="pinned" class="pinned" hidden></section>
+    <section id="list" class="list" aria-live="polite"></section>
+    <div class="more">
+      <button type="button" class="btn" id="more" hidden>加载更多</button>
+      <p class="hint" id="list-state"></p>
+    </div>
+  </main>
+
+  <footer class="foot">
+    <span>反馈内容由玩家提交，不代表官方立场。</span>
+    <button type="button" class="linkish" id="admin-toggle">服主登录</button>
+  </footer>
+
+  <div class="modal" id="compose" hidden>
+    <div class="modal__backdrop" data-close></div>
+    <form class="modal__panel panel" id="compose-form" novalidate role="dialog" aria-modal="true" aria-labelledby="compose-title">
+      <div class="modal__head">
+        <h2 id="compose-title">写反馈</h2>
+        <button type="button" class="icon-btn" data-close aria-label="关闭">×</button>
+      </div>
+      <fieldset class="field">
+        <legend>分类</legend>
+        <div class="seg" id="compose-category"></div>
+      </fieldset>
+      <label class="field">
+        <span class="field__label">标题 <span class="count" data-count-for="title"></span></span>
+        <input type="text" name="title" maxlength="80" placeholder="一句话说明问题或建议" autocomplete="off">
+      </label>
+      <label class="field">
+        <span class="field__label">内容 <span class="count" data-count-for="body"></span></span>
+        <textarea name="body" rows="8" maxlength="4000" placeholder="Bug 请写清楚：在哪个界面、做了什么、发生了什么、能否复现。建议请说明想要的效果。"></textarea>
+      </label>
+      <label class="field">
+        <span class="field__label">署名（可不填）</span>
+        <input type="text" name="author" maxlength="24" placeholder="匿名" autocomplete="nickname">
+      </label>
+      <p class="note">提交后所有人可见，请不要填写 QQ、手机号等个人信息。会附带浏览器与系统版本，方便排查。</p>
+      <p class="form-error" id="compose-error" role="alert"></p>
+      <div class="modal__foot">
+        <button type="button" class="btn" data-close>取消</button>
+        <button type="submit" class="btn btn--primary" id="compose-submit">提交</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="modal" id="owner" hidden>
+    <div class="modal__backdrop" data-close></div>
+    <form class="modal__panel modal__panel--sm panel" id="owner-form" novalidate role="dialog" aria-modal="true" aria-labelledby="owner-title">
+      <div class="modal__head">
+        <h2 id="owner-title">服主登录</h2>
+        <button type="button" class="icon-btn" data-close aria-label="关闭">×</button>
+      </div>
+      <label class="field">
+        <span class="field__label">服主密钥</span>
+        <input type="password" name="key" maxlength="128" autocomplete="current-password">
+      </label>
+      <p class="note">与游戏「设置 → 服主验证」是同一把密钥，只保存在本机浏览器。</p>
+      <p class="form-error" id="owner-error" role="alert"></p>
+      <div class="modal__foot">
+        <button type="button" class="btn" data-close>取消</button>
+        <button type="submit" class="btn btn--primary">登录</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="toast" id="toast" role="status" hidden></div>
+  <noscript><p class="wrap hint">反馈页需要启用 JavaScript。</p></noscript>
+</body>
+</html>
