@@ -3,10 +3,10 @@
 本文说明公开素材分发的实现与安全合同，不记录具体部署坐标或上线状态。以下默认60/40（`--modelscope-weight 100` 为全部普通GET走ModelScope）及可选签名重定向是版本化profile的选择规则，不是某环境的流量或验收声明。实际release、数据集、revision、前缀、挂载摘要及取证保存在Git外的私有发布记录；见[记录边界](releases/README.md)。
 
 ## 离线工具的安全合同
-- `prepare-material-lb.py` 输出固定小型 `access.lua`／`header.lua` 和 `routes.json`／`header-data.json`（`--signed-ttl` 时另加 `mssign.lua`）；**不再把全量库存编译为 Lua 表**。大型 Lua 表可能触发 LuaJIT 常量上限，`nginx -t` 不能证明运行时filter可执行。必须用实际全量尺寸执行 JSON 解码、缓存和 HTTP filter。
+- `prepare-material-lb.py` 输出固定小型 `access.lua`／`header.lua` 和 `routes.json`／`header-data.json`（`--signed-ttl` 时另加 `mssign.lua`），以及供 nginx master 预加载库存的 `preload.lua`（见[下文](#master-预加载preloadlua)）；**不再把全量库存编译为 Lua 表**。大型 Lua 表可能触发 LuaJIT 常量上限，`nginx -t` 不能证明运行时filter可执行。必须用实际全量尺寸执行 JSON 解码、缓存和 HTTP filter。
 - 默认单前缀、无例外及原 60/40 行为保留；新版本要同时指定 release、40hex revision、primary prefix；公开材料消费者上限为150000 aliases／64MiB输入（0.3.0官方特效与韩语/本土语言配音使库存约13万alias），OpenI最多五个明确审核、固定且去重的mirror目录，保持单／双／三／四目录兼容并拒绝第六个；已有两目录之外只增加固定0.2.3增量目录、0.2.5战场场景增量目录和0.3.0素材增量目录，不提供自动发现或任意host/root/path。ModelScope现有上限仍为八个明确批准的prefix。多前缀以重复 `--modelscope-allowed-prefix` 明示，清单 `prefixes` 必须同序、去重且 primary 在首位；所有 URL 均绑定同一个 revision 和固定公开 repo/origin。
 - `--openi-only-path` 仅允许 `/assets/skins/char_340_shwaz_snow_1/illustration.png` 这一精确批准的素材例外，且必须与 MS 清单 `openiOnlyPaths` 一致、存在于 OI 库存。MS alias 集合必须正好为 OI 集合减该例外；普通条目的 bytes／SHA／MIME 逐项一致。未知根字段、额外缺项、其他例外或未认可前缀均拒绝。
-- 例外在 routes 中保留为 `false`，只允许该已明示路径直接进入 OI；未知路径的 `nil` 仍拒绝。例外的 header entry 不包含 ModelScope target，因此伪造 MS Location 不能得到公开缓存。JSON 只读取／解码一次，错误数据也缓存为拒绝，避免重复解析大文件。
+- 例外在 routes 中保留为 `false`，只允许该已明示路径直接进入 OI；未知路径的 `nil` 仍拒绝。例外的 header entry 不包含 ModelScope target，因此伪造 MS Location 不能得到公开缓存。JSON 每个 worker 只读取／解码一次（装了 `preload.lua` 则由 master 每次启动／reload 做一次），错误数据也缓存为拒绝，避免重复解析大文件。
 - `uploadVerified=true` 仍要求真实 assigned 远端库存证据，不是执行上传命令成功；复用固定 pin 的完整 metadata 审计与全量正文重下载须分别表述。镜像数量限制、私有门禁、签名寿命、CORS、HEAD／OPTIONS／回退合同没有放宽。
 
 准备、远端供给核验和正式切换必须分别授权。离线输出不自动安装入口profile、重建resolver或重启游戏。公开素材的唯一例外不授权改名重传、借旧pin绕过provider限制，或增加其他例外。
@@ -72,12 +72,32 @@ OpenI目标只接受原Signature V2字段与固定HTTP wrapper `sp_request=cors|
 - 不限速：同一对象同一时间只解析一次（`resty.lock`）。上游 403／429／HTML 挑战页冷却 60 秒，连接失败／5xx 冷却 10 秒；200（非 LFS 对象）或 404 使该对象 10 分钟内直接回退。
 - 安装时把 [mssign-http.conf](material-lb/mssign-http.conf) 放进 http 上下文，把 [mssign-server.conf](material-lb/mssign-server.conf) 放进运行素材 `access.lua` 的 server。子请求不转发客户端头、Cookie 或正文，并校验证书；签名地址只在共享内存，不写日志、不落盘。共享内存在平滑 reload 后保留，冷重启后清空，首批对象各需解析一次。
 
+## Master 预加载（`preload.lua`）
+
+`access.lua`／`header.lua` 在每个 worker 首个公开请求时读取、解码并逐条校验库存。约13万 alias 的完整库存（`routes.json` 约31MB、`header-data.json` 约46MB）在开发机上每次约2.1秒 CPU，其中 `cjson.decode` 只占约0.1秒，其余是校验。这期间该 worker 不处理任何事件，`reuseport` 分到它的新连接在 TLS 握手之前就排队，访问日志里没有记录。reload 后全部新 worker 在首批请求时几乎同时加载，CPU 越少、worker 越多，停顿越长。
+
+- 生成器为每个 profile 另输出 `preload.lua`。其中两段代码由生成器从同一 profile 渲染出的 `access.lua`、`header.lua` 原样截取：`package.loaded` 键、库存路径、校验函数，以及“库存不可读或无效时缓存为 `false`”都相同；另加一行无效时的 ERR 日志 `material preload: invalid … inventory <key>`。截取锚点缺失、重复或顺序不对时生成失败，不会产出偏离的副本。`access.lua`／`header.lua` 本身不变，未装 preload（或 preload 失败）时仍按原样惰性加载；装了则 worker 在 fork 时继承已校验的表，请求路径不再解码。
+- vhost 的 http 上下文只能有一个 `init_by_lua*`（[nginx/ark-proto.conf](nginx/ark-proto.conf) 已含空列表的这一块），与现有 geo 的 `init_worker_by_lua_block` 并存。列表写入当前所有 location 正在用的 profile。切换 profile 时，在同一次编辑中把新 profile 的 `preload.lua` 换进列表，旧项随旧 location 一起删除：
+
+  ```nginx
+  init_by_lua_block {
+      for _, f in ipairs({ "/www/sites/game.example.com/material-lb/EXAMPLE_IMMUTABLE_PROFILE/preload.lua" }) do
+          local ok, err = pcall(dofile, f)
+          if not ok then ngx.log(ngx.ERR, "material preload: ", err) end
+      end
+  }
+  ```
+
+- master 在启动和每次 HUP／`-s reload` 时执行这一块，加载完才 fork 新 worker，期间旧 worker 照常服务。`nginx -s reload` 发完信号就返回，不代表新 worker 已经起来。OpenResty 在 `nginx -t` 和 `-s` 发信号进程中都不执行 `init_by_lua`，所以 `-t` 不检查 preload。首次启动时这些日志写到 stderr，reload 时写到 error_log。文件缺失、语法错误或运行错误只记日志，该 profile 退回惰性加载，reload 不会失败。reload 后要确认新 worker 已启动，且日志里没有 `material preload:`。
+- 内存：master 常驻一份库存（Lua 堆约50–60MiB）。reload 时新旧两份加原始 JSON 同时存在，开发机实测 master 峰值约350MiB RSS。ngx_lua 在每次 `init_by_lua*`／`init_worker_by_lua*` 之后都强制一次完整 GC；worker 启动时的这次 GC 会改写所有继承对象的头部，所以写时复制共享维持不住。开发机实测（16 worker），worker 启动后即有约45MiB 私有内存，有流量后约110MiB PSS；惰性加载的 worker 约165MiB。这次 GC 每个 worker 约20ms CPU，CPU 紧张时 reload 后仍可能有亚秒级短停顿，但不再有逐 worker 数秒的解码停顿。fixture 或开发机数据不能当作生产峰值。
+
 ## 版本化实现与离线准备
 
 - [material-lb/access.lua](material-lb/access.lua)：精确alias白名单、raw target验证、HEAD/OPTIONS、ModelScope份额选择（默认60:40，边界2576980378；100%为4294967296）；GET使用request_id前32随机bits，精度误差小于1/2³²；签名profile先取 `mssign.lua` 的CDN重定向。
 - [material-lb/mssign.lua](material-lb/mssign.lua)、[mssign-http.conf](material-lb/mssign-http.conf)、[mssign-server.conf](material-lb/mssign-server.conf)：可选签名重定向的模板与入口配置片段。
 - [material-lb/header.lua](material-lb/header.lua)：精确重定向目标校验、签名寿命限制、公开缓存（稳定ModelScope地址86400秒、签名CDN地址按剩余寿命）及CORS/Vary；未知信息fail-closed到no-store。
-- [tools/prepare-material-lb.py](tools/prepare-material-lb.py)：离线生成批准profile的routes、header data及loader替换；不联网、不上传、不接触远端、不reload或激活。
+- [material-lb/preload.lua](material-lb/preload.lua)：master 预加载模板，由生成器填入从 `access.lua`／`header.lua` 截取的加载代码；vhost 入口见上文 `init_by_lua_block`。
+- [tools/prepare-material-lb.py](tools/prepare-material-lb.py)：离线生成批准profile的routes、header data、loader替换及master预加载 `preload.lua`；不联网、不上传、不接触远端、不reload或激活。
 - [tools/test-prepare-material-lb.py](tools/test-prepare-material-lb.py)：本地准备器/模板验证入口，不代替实际目标OpenResty与真实浏览器验收。
 
 这些文件版本化固定release/pin与60:40 profile的实现；文档不证明任何输入已经核验。loader安装路径由生成器在固定profile内替换，不等于允许任意provider、权重或游戏release环境变量切换。生成器要求已审批ModelScope manifest的 `uploadVerified=true`；该标记不替代远端库存证据，真实浏览器检查仍是激活前独立门槛。未来材料release须重新审查源manifest、alias、镜像pin、缓存/CORS及真实browser后独立授权；不能把仓库模板或纯同版本静态回退源game-static-locations参考直接覆盖现网。

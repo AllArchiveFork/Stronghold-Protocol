@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
+import contextlib
 import copy
 import importlib.util
 import json
 import http.client
 import os
+import re
 import shutil
 import socket
 import time
@@ -50,6 +52,70 @@ def full_fixture(count=40000):
     openi['entries'] = rows
     models['entries'] = [{**row, 'fileName': TOOL.MODEL_PREFIX + '/' + row['fileName'].split('/', 2)[2]} for row in rows]
     return openi, models
+
+
+def keys_and_paths(source):
+    """package.loaded keys and inventory files a rendered loader uses (header.lua's per-token Vary key aside)."""
+    return re.findall(r'^local key = "([^"]+)"$', source, re.M), re.findall(r'io\.open\("([^"]+)", "rb"\)', source)
+
+
+# The http-level block of MATERIAL-SOURCES.md and nginx/ark-proto.conf, with the profile list as a placeholder.
+VHOST_PRELOAD = '''init_by_lua_block {
+    for _, f in ipairs({ __PRELOADS__ }) do
+        local ok, err = pcall(dofile, f)
+        if not ok then ngx.log(ngx.ERR, "material preload: ", err) end
+    end
+}'''
+
+
+@contextlib.contextmanager
+def openresty(runtime, work, http_body):
+    """A local master with two workers (and an init_worker hook like the vhost's geo one) serving `http_body`."""
+    binary = runtime / 'openresty/nginx/sbin/nginx'
+    loader = runtime / 'ld-linux-x86-64.so.2'
+    libraries = ':'.join(str(runtime / p) for p in ('openresty/openssl3/lib', 'openresty/pcre2/lib', 'openresty/luajit/lib')) + ':' + str(runtime)
+    (work / 'logs').mkdir(exist_ok=True)
+    with socket.socket() as sock:
+        sock.bind(('127.0.0.1', 0)); port = sock.getsockname()[1]
+    (work / 'nginx.conf').write_text(f'''daemon off;
+master_process on;
+worker_processes 2;
+user root;
+error_log {work}/error.log notice;
+pid {work}/nginx.pid;
+events {{ worker_connections 64; }}
+http {{
+access_log off;
+client_body_temp_path {work}/client_temp;
+lua_package_path '{runtime}/openresty/lualib/?.lua;{runtime}/openresty/lualib/?/init.lua;;';
+lua_package_cpath '{work}/lualib/?.so;;';
+init_worker_by_lua_block {{ package.loaded.fixture_worker_hook = true }}
+{http_body.replace('__PORT__', str(port))}
+}}
+''')
+    command = [str(loader), '--library-path', libraries, str(binary), '-p', str(work) + '/', '-c', str(work / 'nginx.conf')]
+    with (work / 'stdout').open('wb') as log:
+        process = subprocess.Popen(command, stdout=log, stderr=log)
+        try:
+            for _ in range(200):
+                try:
+                    with socket.create_connection(('127.0.0.1', port), timeout=0.1): break
+                except OSError:
+                    if process.poll() is not None: raise AssertionError('local OpenResty exited before listen')
+                    time.sleep(0.05)
+
+            def request(path, method='GET', request_id='0' * 32):
+                connection = http.client.HTTPConnection('127.0.0.1', port, timeout=10)
+                try:
+                    connection.request(method, path, headers={'X-Fixture-Request-Id': request_id})
+                    response = connection.getresponse(); body = response.read()
+                    return response.status, {k.lower(): v for k, v in response.getheaders()}, body
+                finally: connection.close()
+            yield request
+        finally:
+            process.terminate()
+            try: process.wait(timeout=10)
+            except subprocess.TimeoutExpired: process.kill(); process.wait(timeout=5)
 
 
 def exception_fixture(full=False, multiple_prefixes=False, count=40000):
@@ -183,6 +249,155 @@ location / {{ return 404; }}
                     try: process.wait(timeout=5)
                     except subprocess.TimeoutExpired: process.kill(); process.wait(timeout=5)
 
+    @unittest.skipUnless(os.environ.get('MATERIAL_OPENRESTY_RUNTIME'), 'opt-in local OpenResty runtime not supplied')
+    def test_preload_actual_master_inheritance_and_unchanged_lazy_fallback(self):
+        runtime = Path(os.environ['MATERIAL_OPENRESTY_RUNTIME'])
+        files = TOOL.render(*fixture(), CONTAINER)
+        (route_key, header_key), _ = keys_and_paths(files['preload.lua'].decode())
+        probes = [(path + query, method, request_id)
+                  for path in ('/assets/test/pixel.png', '/media/voice/test', '/assets/audio/voice/test.mp3')
+                  for query, method, request_id in (('', 'GET', '0' * 32), ('', 'GET', 'f' * 32), ('?sp_source=openi', 'GET', '0' * 32),
+                                                    ('', 'HEAD', '0' * 32), ('?sp_source=openi', 'OPTIONS', '0' * 32))]
+        probes += [('/assets/unknown.png', 'GET', '0' * 32), ('/assets/test/pixel.png', 'POST', '0' * 32),
+                   ('/assets/test/pixel.png?sp_source=modelscope', 'GET', '0' * 32)]
+
+        def serve(work, init, routes=None):
+            (work / 'lualib').mkdir(parents=True)
+            shutil.copyfile(runtime / 'openresty/lualib/cjson.so', work / 'lualib/cjson.so')
+            for name, body in files.items():
+                text = body.decode()
+                if name.endswith('.lua'):
+                    text = text.replace(CONTAINER + '/', str(work) + '/').replace('ngx.var.request_id', 'ngx.var.fixture_request_id')
+                (work / name).write_text(routes if name == 'routes.json' and routes else text)
+            public = f'''set $fixture_request_id $http_x_fixture_request_id;
+access_by_lua_file {work}/access.lua;
+header_filter_by_lua_file {work}/header.lua;
+content_by_lua_block {{ ngx.exit(204) }}'''
+            loaded = f'ngx.say(type(package.loaded["{route_key}"]), " ", type(package.loaded["{header_key}"]), " ", tostring(package.loaded.fixture_worker_hook), " ", ngx.worker.pid())'
+            return openresty(runtime, work, f'''{init}
+server {{
+listen 127.0.0.1:__PORT__ reuseport;
+location /assets/ {{ {public} }}
+location /media/ {{ {public} }}
+location = /_fixture_loaded {{ content_by_lua_block {{ {loaded} }} }}
+}}''')
+
+        def answers(request):
+            result = []
+            for path, method, request_id in probes:
+                status, headers, _ = request(path, method, request_id)
+                result.append((path, method, request_id[0], status) + tuple(
+                    headers.get(name) for name in ('location', 'cache-control', 'access-control-allow-origin', 'vary')))
+            return result
+
+        def states(request):
+            return {tuple(request('/_fixture_loaded')[2].decode().split()) for _ in range(40)}
+
+        with tempfile.TemporaryDirectory(prefix='material-preload-') as directory:
+            root = Path(directory)
+            with serve(root / 'lazy', '') as request:
+                self.assertEqual({state[:3] for state in states(request)}, {('nil', 'nil', 'true')})
+                lazy = answers(request)
+                self.assertEqual({state[:2] for state in states(request)} - {('nil', 'nil'), ('table', 'nil')}, {('table', 'table')})
+            preload = VHOST_PRELOAD.replace('__PRELOADS__', '"' + str(root / 'preload' / 'preload.lua') + '"')
+            with serve(root / 'preload', preload) as request:
+                before = states(request)
+                self.assertEqual({state[:3] for state in before}, {('table', 'table', 'true')})
+                self.assertEqual(len({state[3] for state in before}), 2, 'both forked workers inherit the master tables')
+                self.assertEqual(answers(request), lazy)
+            # At the first start init_by_lua logs to stderr (error_log opens later); at a reload to error_log.
+            logs = lambda work: (work / 'error.log').read_text() + (work / 'stdout').read_text()
+            self.assertNotIn('[error]', logs(root / 'preload'))
+            self.assertIn(('/assets/test/pixel.png', 'GET', '0', 302), [row[:4] for row in lazy])
+            # An invalid inventory is cached as `false` by the preload exactly as the lazy loader does: 500, no decode retry.
+            routes = json.loads(files['routes.json']); routes['ningxiaWeight'] = 1
+            for name, init in (('invalid-lazy', ''), ('invalid-preload', VHOST_PRELOAD.replace(
+                    '__PRELOADS__', '"' + str(root / 'invalid-preload' / 'preload.lua') + '"'))):
+                with serve(root / name, init, json.dumps(routes)) as request:
+                    if init:
+                        self.assertEqual({state[:2] for state in states(request)}, {('boolean', 'table')})
+                    for _ in range(8):
+                        self.assertEqual(request('/assets/test/pixel.png')[0], 500)
+                        self.assertEqual(request('/assets/test/pixel.png?sp_source=openi')[0], 500)
+                    after = {state[0] for state in states(request)}
+                    self.assertIn('boolean', after)
+                    self.assertNotIn('table', after)
+            self.assertIn('material preload: invalid route inventory ' + route_key, logs(root / 'invalid-preload'))
+            # A missing or failing preload only logs; the vhost still starts and the lazy loaders serve unchanged.
+            with serve(root / 'missing', VHOST_PRELOAD.replace('__PRELOADS__', '"' + str(root / 'missing' / 'absent.lua') + '"')) as request:
+                self.assertEqual({state[:2] for state in states(request)}, {('nil', 'nil')})
+                self.assertEqual(answers(request), lazy)
+            self.assertIn('material preload: cannot open', logs(root / 'missing'))
+
+    def test_preload_runs_the_lazy_loaders_verbatim(self):
+        openi, models, options = exception_fixture(multiple_prefixes=True)
+        profiles = {'default': TOOL.render(*fixture(), CONTAINER),
+                    'signed-full-share': TOOL.render(openi, models, CONTAINER, modelscope_weight=100, signed_ttl=720, **options),
+                    'other-directory': TOOL.render(*fixture(), TOOL.CONTAINER_PREFIX + 'other_profile-2')}
+        for name, files in profiles.items():
+            with self.subTest(profile=name):
+                access, header, preload = (files[n].decode() for n in ('access.lua', 'header.lua', 'preload.lua'))
+                self.assertNotIn('__MATERIAL_LB_', preload)
+                # access.lua from its first line through the cached store: definitions, validation, key, path, decode.
+                route_loader = access[:access.index('    package.loaded[key] = db\nend\n') + len('    package.loaded[key] = db\nend\n')]
+                self.assertTrue(route_loader.startswith('local cjson = require "cjson.safe"\nlocal key = "'))
+                self.assertIn('do\n' + route_loader + 'if db == false then', preload)
+                # header.lua's definitions and loader, without its response-header code and method/status gate.
+                definitions = header[header.index('local function decode(value, plus)\n'):header.index('\nlocal method = ngx.req.get_method()') + 1]
+                header_loader = header[header.index('local key = "'):header.index('    package.loaded[key] = data\nend\n') + len('    package.loaded[key] = data\nend\n')]
+                self.assertIn('do\nlocal cjson = require "cjson.safe"\n' + definitions.rstrip('\n') + '\n' + header_loader + 'if data == false then', preload)
+                for source, block in ((access, route_loader), (header, header_loader)):
+                    function = source[source.index('local function valid_data(value)'):]
+                    function = function[:function.index('    return count > 0\nend\n')]
+                    self.assertEqual(preload.count(function), 1)
+                    self.assertIn('if not valid_data(', block)
+                self.assertEqual(keys_and_paths(preload), (keys_and_paths(access)[0] + keys_and_paths(header)[0],
+                                                           keys_and_paths(access)[1] + keys_and_paths(header)[1]))
+                directory = re.search(r'io\.open\("([^"]+)/routes\.json"', access).group(1)
+                self.assertEqual(keys_and_paths(preload)[1], [directory + '/routes.json', directory + '/header-data.json'])
+                suffix = directory[len(TOOL.CONTAINER_PREFIX):].replace('-', '_')
+                self.assertEqual(keys_and_paths(preload)[0], ['ark_material_lb_' + suffix, 'ark_material_lb_header_data_' + suffix])
+                # Master context: no request, response or context API; nothing else is loaded or overwritten.
+                code = '\n'.join(line for line in preload.splitlines() if not line.lstrip().startswith('--'))
+                for api in ('ngx.var', 'ngx.req', 'ngx.header', 'ngx.ctx', 'ngx.exit', 'ngx.redirect', 'ngx.status',
+                            'header[', 'dofile', 'loadstring', 'loadfile', 'mssign', 'collectgarbage'):
+                    self.assertNotIn(api, code)
+                self.assertEqual(preload.count('package.loaded[key] = '), 2)
+                self.assertEqual(preload.count('io.open('), 2)
+                self.assertLess(len(files['preload.lua']), 32768)
+        full = TOOL.render(*full_fixture(), CONTAINER)
+        self.assertEqual(full['preload.lua'], profiles['default']['preload.lua'], 'the inventory stays JSON, not Lua')
+
+    def test_lazy_loaders_unchanged_without_preload(self):
+        files = TOOL.render(*fixture(), CONTAINER)
+        access, header = files['access.lua'].decode(), files['header.lua'].decode()
+        self.assertIn('local db = package.loaded[key]\nif db == nil then\n', access)
+        self.assertIn('if type(db) ~= "table" then return ngx.exit(500) end\n', access)
+        self.assertIn('local data = package.loaded[key]\nif data == nil then\n', header)
+        self.assertIn('if type(data) ~= "table" then return end\n', header)
+        for source in (access, header):
+            self.assertNotIn('preload', source)
+        for name in ('access.lua', 'header.lua'):
+            template = (TOOL.TEMPLATES / name).read_text()
+            self.assertNotIn('preload', template)
+
+    def test_loader_anchors_must_stay_unique_and_ordered(self):
+        self.assertEqual(TOOL.loader('a\nb\nc\n', (('b\n', 'c\n'), ('a\n', 'a\n'))), 'b\nc\na\n')
+        for source in ('a\nb\na\n', 'b\na\n', 'a\n', ''):
+            with self.subTest(source=source):
+                with self.assertRaises(ValueError): TOOL.loader(source, (('a\n', 'b\n'),))
+        template = TOOL.TEMPLATES / 'header.lua'
+        original = TOOL.TEMPLATES
+        with tempfile.TemporaryDirectory() as directory:
+            for name in ('access.lua', 'header.lua', 'mssign.lua', 'preload.lua'):
+                shutil.copyfile(original / name, Path(directory) / name)
+            (Path(directory) / 'header.lua').write_text('-- local function decode(value, plus)\n' + template.read_text())
+            TOOL.TEMPLATES = Path(directory)
+            try:
+                with self.assertRaises(ValueError): TOOL.render(*fixture(), CONTAINER)
+            finally:
+                TOOL.TEMPLATES = original
+
     def test_valid_profile(self):
         openi, models = fixture()
         files = TOOL.render(openi, models, CONTAINER)
@@ -196,7 +411,7 @@ location / {{ return 404; }}
         self.assertIn(b'2576980378', files['access.lua'])
         self.assertIn(b'if method == "OPTIONS" then return end', files['access.lua'])
         header_data = json.loads(files['header-data.json'])
-        self.assertEqual(set(files), {'routes.json', 'header-data.json', 'access.lua', 'header.lua'})
+        self.assertEqual(set(files), {'routes.json', 'header-data.json', 'access.lua', 'header.lua', 'preload.lua'})
         self.assertEqual(set(header_data), {'fallback_base', 'oss_authority', 'oss_path_prefix', 'entries'})
         self.assertEqual(header_data['fallback_base'], TOOL.FALLBACK)
         self.assertEqual(header_data['oss_authority'], TOOL.OSS_ORIGIN.removeprefix('https://'))
@@ -428,7 +643,7 @@ location / {{ return 404; }}
     def test_full_modelscope_share_and_signed_profile(self):
         openi, models, options = exception_fixture(multiple_prefixes=True)
         files = TOOL.render(openi, models, CONTAINER, modelscope_weight=100, signed_ttl=720, **options)
-        self.assertEqual(set(files), {'routes.json', 'header-data.json', 'access.lua', 'header.lua', 'mssign.lua'})
+        self.assertEqual(set(files), {'routes.json', 'header-data.json', 'access.lua', 'header.lua', 'mssign.lua', 'preload.lua'})
         routes = json.loads(files['routes.json'])
         self.assertEqual((routes['modelscopeWeight'], routes['openiWeight'], routes['ningxiaWeight']), (100, 0, 0))
         access, signer = files['access.lua'], files['mssign.lua']

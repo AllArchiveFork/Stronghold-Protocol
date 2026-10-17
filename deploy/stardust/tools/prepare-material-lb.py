@@ -2,6 +2,8 @@
 """Prepare a matched material profile without activating it; C1 remains the default.
 
 ModelScope share 60 (default, 60/40 with OpenI) or 100; optional --signed-ttl adds mssign.lua (signed CDN redirects).
+preload.lua loads the inventories once in the nginx master (init_by_lua, MATERIAL-SOURCES.md); access.lua/header.lua
+keep loading them lazily per worker when it is not installed.
 """
 
 import argparse
@@ -37,6 +39,12 @@ OPENI_MANIFEST_KEYS = {'schemaVersion', 'release', 'fallbackBase', 'dataset', 'a
 MODEL_MANIFEST_KEYS = {'schemaVersion', 'release', 'fallbackBase', 'repo', 'revision', 'prefix',
                        'apiOrigin', 'deliveryStrategy', 'uploadVerified', 'entries', 'mirrorReleases',
                        'prefixes', 'openiOnlyPaths'}
+# preload.lua runs these regions of the rendered access.lua/header.lua verbatim (first and last line of each), so the
+# master preload and the lazy per-worker loader share their keys, file paths, validation and cached `false`.
+CJSON = 'local cjson = require "cjson.safe"\n'
+ACCESS_LOADER = ((CJSON, '    package.loaded[key] = db\nend\n'),)
+HEADER_LOADER = ((CJSON, CJSON), ('local function decode(value, plus)\n', '    return count > 0\nend\n'),
+                 ('local key = "', '    package.loaded[key] = data\nend\n'))
 
 
 def model_prefix_pin(value):
@@ -92,6 +100,16 @@ def entries(manifest, models, *, release=RELEASE, model_prefix=MODEL_PREFIX, mod
         files[row['fileName']] = values
         result[row['requestPath']] = row
     return result
+
+
+def loader(source, regions):
+    """The verbatim (start, end) regions of a rendered Lua file; each anchor must occur once, start before end."""
+    parts = []
+    for start, end in regions:
+        require(source.count(start) == 1 and source.count(end) == 1 and source.index(start) <= source.index(end),
+                'loader anchors changed')
+        parts.append(source[source.index(start):source.index(end) + len(end)])
+    return ''.join(parts)
 
 
 def render(openi, models, container_dir, *, release=RELEASE, model_revision=MODEL_REVISION, model_prefix=MODEL_PREFIX,
@@ -174,9 +192,13 @@ def render(openi, models, container_dir, *, release=RELEASE, model_revision=MODE
     header = header.replace('__MATERIAL_LB_OSS_PATH_PREFIX__', q(prefix)).replace(
         '__MATERIAL_LB_MIRRORS__', '{' + ', '.join('[' + q(mirror) + '] = true'
             for mirror in openi.get('mirrorReleases', [release])) + '}')
+    preload = (TEMPLATES / 'preload.lua').read_text().replace(
+        '__MATERIAL_LB_ACCESS_LOADER__', loader(access, ACCESS_LOADER)).replace(
+        '__MATERIAL_LB_HEADER_LOADER__', loader(header, HEADER_LOADER))
     files = {'routes.json': (json.dumps(data, separators=(',', ':')) + '\n').encode(),
              'access.lua': access.encode(), 'header.lua': header.encode(),
-             'header-data.json': (json.dumps(header_data, separators=(',', ':')) + '\n').encode()}
+             'header-data.json': (json.dumps(header_data, separators=(',', ':')) + '\n').encode(),
+             'preload.lua': preload.encode()}
     if signed_ttl:
         namespace, repository = MODEL_REPO.split('/')
         files['mssign.lua'] = (TEMPLATES / 'mssign.lua').read_text().replace(

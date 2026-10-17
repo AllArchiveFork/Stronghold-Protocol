@@ -26,10 +26,11 @@ const lua = process.env.NGINX_HAS_LUA === '1';
 const presenceBlock = /    location = \/_server\/presence \{\n        content_by_lua_block \{[\s\S]*?\n        \}\n    \}/;
 const geoInit = /\n# Mainland-China allowlist[^\n]*\n#[^\n]*\ninit_worker_by_lua_block \{\n[\s\S]*?\n\}\n/;
 const geoCheck = /\n    set_by_lua_block \$ark_proto_geo_deny \{[^\n]*\}\n    if \(\$ark_proto_geo_deny\) \{[^\n]*\}/;
-/** Stock Nginx cannot run the mainland-China allowlist (Lua); the formal vhost is then tested without it. */
+const materialPreload = /\n# Material profiles[^\n]*\n(?:#[^\n]*\n)*init_by_lua_block \{\n[\s\S]*?\n\}\n/;
+/** Stock Nginx cannot run Lua (mainland-China allowlist, material preload); the formal vhost is then tested without it. */
 function withoutGeo(text) {
-  assert.match(text, geoInit); assert.match(text, geoCheck);
-  return text.replace(geoInit, '\n').replace(geoCheck, '');
+  assert.match(text, geoInit); assert.match(text, geoCheck); assert.match(text, materialPreload);
+  return text.replace(geoInit, '\n').replace(materialPreload, '\n').replace(geoCheck, '');
 }
 async function freePort() {
   const server = net.createServer(); await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -55,6 +56,10 @@ test('simple configuration has only its five direct targets and exact legacy com
   assert.match(text, /location = \/vendor\/hooks\.module\.js \{[\s\S]*?proxy_pass http:\/\/ark_proto_game_backend;/);
   assert.match(text, /location \/_release\/ \{ return 404; \}/);
   assert.match(text, presenceBlock);
+  // One http-level init_by_lua: the material profile preloads (MATERIAL-SOURCES.md), each failure only logged.
+  assert.equal(text.match(/^\s*init_by_lua\w*/gm).length, 1);
+  assert.match(text, materialPreload);
+  assert.match(text, /\n    for _, f in ipairs\(\{[^\n]*\}\) do\n        local ok, err = pcall\(dofile, f\)\n        if not ok then ngx\.log\(ngx\.ERR, "material preload: ", err\) end\n    end\n\}\n/);
   // The TLS server answers only its own authority: a request for another host on this connection is misdirected (421).
   assert.match(text.slice(text.indexOf('    listen 443 ssl;')), /^    listen 443 ssl;\n    listen \[::\]:443 ssl;\n    server_name ark-proto\.stardust\.matce\.cn;\n(?:    #[^\n]*\n)*    if \(\$host != "ark-proto\.stardust\.matce\.cn"\) \{ return 421; \}\n/);
   const entry = await fs.readFile(path.join(configDir, 'entry-location.conf'), 'utf8');
