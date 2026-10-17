@@ -225,7 +225,10 @@ export class EffectDispatcher {
   forecastLayers(ps, hook = 'onPrepEnd', ev = { round: this.m.round, preview: true }) {
     const isolated = new EffectDispatcher(this.m, this.registry);
     const ledger = new LayerLedger(ps.playerId);
-    isolated.preview = { rng: this.m.rngMeta.clone(), data: new Map(), players: new Map([[ps.playerId, ps]]), ledger, dispatcher: isolated };
+    // the detached game-data view (preview.js dataView) is kept for the match: copying the data again for every forecast
+    // took ~50 ms of the node's main thread per player action (rel20). Its records are copies, never the match's own.
+    this._forecastData ??= new Map();
+    isolated.preview = { rng: this.m.rngMeta.clone(), data: this._forecastData, players: new Map([[ps.playerId, ps]]), ledger, dispatcher: isolated };
     isolated.dispatch(ps, hook, structuredClone(ev), { quiet: true });
     return ledger.result();
   }

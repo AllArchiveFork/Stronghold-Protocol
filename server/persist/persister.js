@@ -238,6 +238,7 @@ export class LobbyPersister {
       const spent = this.now() - t0;
       if (loaded.ok) {
         if (attempt > 1) this.log.info?.(`[persist] the store answered at startup (attempt ${attempt}, ${seconds(spent)} s)`);
+        if (loaded.value) this.log.info?.(`[persist] saved lobby read: ${loaded.value.rooms.length} room(s), ${loaded.value.sessions.length} session(s) in ${seconds(this.now() - t0)} s`);
         return loaded;
       }
       if (!TRANSIENT_FAILURES.has(loaded.error)) {

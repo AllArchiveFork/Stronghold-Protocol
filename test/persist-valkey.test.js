@@ -45,6 +45,64 @@ test('RESP: commands encode as arrays of bulk strings; replies parse across chun
   assert.equal(out[5][1], null);
 });
 
+test('RESP: nested arrays and errors split at every byte; a large reply in small chunks parses in linear time', () => {
+  const wire = Buffer.from('*3\r\n*2\r\n$1\r\nx\r\n-ERR in\r\n*0\r\n$-1\r\n:7\r\n');
+  const p = new ReplyParser(), out = [];
+  for (let i = 0; i < wire.length; i++) out.push(...p.feed(wire.subarray(i, i + 1)));
+  assert.equal(out.length, 2);
+  assert.equal(out[0][0][0].toString(), 'x');
+  assert.equal(out[0][0][1].code, 'REPLY');
+  assert.deepEqual(out[0][1], []);
+  assert.equal(out[0][2], null);
+  assert.equal(out[1], 7);
+  // a full lobby's HGETALL (tens of MB): re-reading the buffer on every chunk once took > 3 s (the command deadline)
+  const n = 6000, value = 'v'.repeat(4000), parts = [`*${n * 2}\r\n`];
+  for (let i = 0; i < n; i++) parts.push(`$${String(i).length}\r\n${i}\r\n$${value.length}\r\n${value}\r\n`);
+  const big = Buffer.from(parts.join(''));
+  const q = new ReplyParser(), got = [];
+  const t0 = performance.now();
+  for (let i = 0; i < big.length; i += 4096) got.push(...q.feed(big.subarray(i, i + 4096)));
+  const ms = performance.now() - t0;
+  assert.equal(got.length, 1);
+  assert.equal(got[0].length, n * 2);
+  assert.equal(got[0][n * 2 - 2].toString(), String(n - 1));
+  assert.equal(got[0][n * 2 - 1].length, value.length);
+  assert.ok(ms < 1500, `${(big.length / 1e6).toFixed(0)} MB in 4 KB chunks took ${ms.toFixed(0)} ms`);
+});
+
+/** A fake store on a loopback port: answers the connection's PING, then `reply(socket)` for the next command. */
+async function fakeStore(reply) {
+  const server = net.createServer((socket) => {
+    let commands = 0;
+    socket.on('data', () => { if (commands++ === 0) socket.write('+PONG\r\n'); else reply(socket); });
+    socket.on('error', () => {});
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  return { url: `redis://127.0.0.1:${server.address().port}`, close: () => new Promise((r) => { server.close(r); server.closeAllConnections?.(); }) };
+}
+
+test('the command deadline is about progress: a large reply still arriving is waited for, a silent stream is dropped', async () => {
+  const timers = [];
+  const slow = await fakeStore((socket) => { // 10 pieces, 60 ms apart: 540 ms in all, over the 200 ms deadline
+    const body = Buffer.from('$10\r\n0123456789\r\n');
+    for (let i = 0; i < body.length; i += 2) timers.push(setTimeout(() => socket.write(body.subarray(i, i + 2)), (i / 2) * 60));
+  });
+  const a = new ValkeyClient({ url: slow.url, log: quiet, commandTimeoutMs: 200 });
+  const t0 = Date.now();
+  assert.equal((await a.command('GET', 'k')).toString(), '0123456789');
+  assert.ok(Date.now() - t0 >= 400);
+  await a.close();
+  await slow.close();
+  const silent = await fakeStore(() => {});
+  const b = new ValkeyClient({ url: silent.url, log: quiet, commandTimeoutMs: 200 });
+  const t1 = Date.now();
+  await assert.rejects(b.command('GET', 'k'), (e) => e.code === 'TIMEOUT');
+  assert.ok(Date.now() - t1 < 1000);
+  await b.close();
+  await silent.close();
+  for (const t of timers) clearTimeout(t);
+});
+
 test('URL and configuration: schemes, credentials, database; off without SP_REDIS_URL', () => {
   assert.deepEqual(parseValkeyUrl('redis://u:p%40ss@10.0.0.5:6380/2'), { host: '10.0.0.5', port: 6380, tls: false, username: 'u', password: 'p@ss', db: 2 });
   assert.equal(parseValkeyUrl('valkeys://store.internal').tls, true);

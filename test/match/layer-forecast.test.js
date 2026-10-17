@@ -153,3 +153,19 @@ test('预计叠层 in m.private: own seat during PREP only, memoized on its inpu
     m.phase = PHASE.PREP;
   } finally { m.dispose(); }
 });
+
+test('预计叠层: the detached game-data view is made once per match, not for every forecast (rel20 hotfix)', () => {
+  const { m, ps } = setup();
+  try {
+    give(m, ps, 'chess_char_1_06_a', 'board', [9, 4]);
+    give(m, ps, 'chess_char_1_13_a', 'board', [9, 5]);
+    ps.layers = { deputShip: 4 };
+    ps.recompute();
+    const first = m.dispatcher.forecastLayers(ps);
+    assert.equal(m.dispatcher._forecastData.size, 1);
+    const view = [...m.dispatcher._forecastData.values()][0];
+    assert.deepEqual(m.dispatcher.forecastLayers(ps), first);
+    assert.equal(m.dispatcher._forecastData.size, 1);
+    assert.equal([...m.dispatcher._forecastData.values()][0], view);
+  } finally { m.dispose(); }
+});
