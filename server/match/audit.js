@@ -27,7 +27,8 @@
 //                 maps consistent, 6 (co-op) / 3 (solo) cards
 //   联防          decided after the COMBAT_END pause from the players still in: runs iff co-op with ≥ 1 leaker and
 //                 ≥ 1 perfect player; helpers = unite.js helperOrder (PRTS: units > active bond > layers > standing
-//                 units > seat, research 08 §5); leakers = players with counted leaks
+//                 units, research 08 §5; then active bonds > Σ layers > seat, owner 2026-10-17); leakers = players
+//                 with counted leaks
 //   settle        no unite ⇒ loss = min(cap, counted leaks); after 联防 a leaker loses ≤ cap (its leaked enemies'
 //                 offspring count too), everybody else ≤ min(cap, own counted leaks); LP ≤ 0 ⇔ eliminated
 //   final assault fields follow the saved per-match pairs, team LP = Σ alive LP, boss pool = bossPoolHp(); hidden core only

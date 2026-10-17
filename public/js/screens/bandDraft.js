@@ -372,8 +372,8 @@ export function BandDraftScreen() {
   const cardList = useMemo(() => cardOperators(data.list('chess')), [gd.ready]);
   const portraits = useMemo(() => ({
     pool: cardList.filter((c) => (c.rarity ?? 0) >= 5).sort((a, b) => (a.charId < b.charId ? -1 : 1)),
-    byChar: new Map(cardList.map((c) => [c.charId, c])), m: data.get('assets'), myId, myCard: myCard.charId,
-  }), [cardList, myId, myCard.charId]);
+    byChar: new Map(cardList.map((c) => [c.charId, c])), m: data.get('assets'), myId, myCard: myCard.charId, myLook: myCard.look,
+  }), [cardList, myId, myCard.charId, myCard.look]);
   const seatOf = (pid) => (Array.isArray(roomSeats) && roomSeats.find((x) => x && x.playerId === pid)) || null;
   const cardOf = (p) => (p.playerId === myId ? myCard : seatOf(p.playerId)?.card || null);
   const artOf = (p) => (p.isBot ? null : seatPortrait(seatOf(p.playerId) || { playerId: p.playerId }, portraits));

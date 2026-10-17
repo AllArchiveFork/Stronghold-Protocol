@@ -21,8 +21,8 @@ import { data } from '../data.js';
 import { peekStatsRecords, aggregateStats, countsTowardStats, selfRowOf, roundsOf, FULL_KEEP } from './stats.js';
 import { TrophyBadge } from './trophies.js';
 import { NameCardLayer, NameCardPicker } from './namecards.js';
-import { useMyCard, trophyTotal, setCardBackground, setCardAvatar } from './playerCard.js';
-import { cardOperators, cardAvatarUrl } from './seatArt.js';
+import { useMyCard, trophyTotal, setCardBackground, setCardAvatar, setAvatarLook } from './playerCard.js';
+import { cardOperators, cardAvatarUrl, lookOptions } from './seatArt.js';
 import { AvatarPicker } from './opPicker.js';
 import { Emblem } from './emblem.js';
 import { OpCard, levelOf } from '../screens/settle.js';
@@ -299,7 +299,7 @@ function Plate({ me, card, s, p, done, total, gd, onAvatar, onBg }) {
   const lv = levelOf(s.exp);
   const opRec = card.charId && gd.ready ? gd.list('chess').find((c) => c.charId === card.charId) : null;
   // 头像 (room.card avatar), else the 名片干员's avatar, else the name's first letter
-  const face = cardAvatarUrl(card.avatar, gd.m) || (opRec ? chessAvatarUrl(gd.m, opRec) : null);
+  const face = cardAvatarUrl(card.avatar, gd.m, card.avatarLook) || (opRec ? chessAvatarUrl(gd.m, opRec) : null);
   return html`<div class="ach-plate">
     <div class=${cx('ach-card', card.bg && 'has-nc')}>
       <${NameCardLayer} card=${card.bg} />
@@ -484,7 +484,9 @@ export function AchievementPanel({ me, onClose }) {
       <span class="ach__foot">${t('本机记录 · 保存在这台设备的浏览器里 · 每局结束后更新')}</span>
     </div>`}
     ${picking === 'bg' ? html`<${NameCardPicker} current=${card.bg} onPick=${setCardBackground} onClose=${() => setPicking(null)} />` : null}
-    ${picking === 'avatar' ? html`<${AvatarPicker} current=${card.avatar} list=${cardList} m=${gd.m} onPick=${(id) => { setCardAvatar(id); setPicking(null); }}
+    ${picking === 'avatar' ? html`<${AvatarPicker} current=${card.avatar} list=${cardList} m=${gd.m}
+      looks=${{ kind: 'avatar', current: card.avatarLook, onLook: (look) => { setAvatarLook(look); setPicking(null); } }}
+      onPick=${(id) => { setCardAvatar(id); if (!id || lookOptions(gd.m, id, 'avatar').length < 2) setPicking(null); }}
       onClose=${() => setPicking(null)} />` : null}
   </div>`;
 }

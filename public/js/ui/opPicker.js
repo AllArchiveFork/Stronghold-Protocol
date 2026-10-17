@@ -1,20 +1,22 @@
 // 干员选择器 (2026-10-14): the room's 名片干员 picker and the 头像 picker (the room's own seat plate, 统计数据's card) —
-// search, rarity, the operators' avatars; the first tile clears the pick.
+// search, rarity, the operators' avatars; the first tile clears the pick. `looks` (feedback #9 / #24): the picked
+// operator's art to show — 精二 / 精一 / its skins (ui/seatArt.js lookOptions) — in a row above the grid.
 import { useState } from '../../vendor/hooks.module.js';
 import { html, Icon, Modal } from './components.js';
 import { chessAvatarUrl } from './assetUrls.js';
-import { cardAvatarUrl } from './seatArt.js';
+import { cardAvatarUrl, lookOptions } from './seatArt.js';
 import { CARD_SYNC } from './playerCard.js';
 import { t } from '../../../shared/i18n.js';
 
 /**
  * @param {{ title: any, micro: string, current: string, list: any[], m: any, faceOf?: (c: any) => (string | null),
- *   autoLabel: any, autoTitle?: string, autoIcon?: string, note?: any, onPick: (charId: string) => void, onClose: Function }} props
+ *   autoLabel: any, autoTitle?: string, autoIcon?: string, note?: any, onPick: (charId: string) => void, onClose: Function,
+ *   looks?: null | { kind: 'avatar'|'portrait', current: string, onLook: (look: string) => void } }} props
  *   `list`: ui/seatArt.js cardOperators; `faceOf`: a tile's picture (default the record's avatar); `current` '' = the
  *   first tile (autoLabel), which picks ''.
  */
 export function OperatorPicker({ title, micro, current, list, m, faceOf = (c) => chessAvatarUrl(m, c), autoLabel, autoTitle, autoIcon = 'refresh',
-  note = null, onPick, onClose }) {
+  note = null, onPick, onClose, looks = null }) {
   const [q, setQ] = useState('');
   const [star, setStar] = useState(0);
   const needle = q.trim().toLowerCase();
@@ -28,6 +30,7 @@ export function OperatorPicker({ title, micro, current, list, m, faceOf = (c) =>
           class=${star === v ? 'is-on' : ''} onClick=${() => setStar(v)}>${label}</button>`)}
       </div>
     </div>
+    ${looks ? html`<${LookBar} m=${m} charId=${current} looks=${looks} />` : null}
     <div class="cardpick__grid">
       <button type="button" class=${`cardpick__op cardpick__op--auto${!current ? ' is-on' : ''}`} onClick=${() => onPick('')} title=${autoTitle}>
         <span class="cardpick__img"><${Icon} name=${autoIcon} /></span><span class="cardpick__name">${autoLabel}</span></button>
@@ -39,13 +42,27 @@ export function OperatorPicker({ title, micro, current, list, m, faceOf = (c) =>
   <//>`;
 }
 
+/** The picked operator's looks (精二 / 精一 / skins): nothing when it has only one. */
+function LookBar({ m, charId, looks }) {
+  const opts = charId ? lookOptions(m, charId, looks.kind) : [];
+  if (opts.length < 2) return null;
+  const on = opts.some((o) => o.id === looks.current) ? looks.current : '';
+  return html`<div class="cardpick__looks" role="radiogroup" aria-label=${t('外观')}>
+    <span class="cardpick__looks-label">${t('外观')}</span>
+    ${opts.map((o) => html`<button key=${o.id || 'e2'} type="button" role="radio" aria-checked=${on === o.id ? 'true' : 'false'}
+      class=${`cardpick__look${on === o.id ? ' is-on' : ''}${looks.kind === 'portrait' ? ' is-tall' : ''}`} title=${t(o.name)} onClick=${() => looks.onLook(o.id)}>
+      <span class="cardpick__img">${o.src ? html`<img src=${o.src} alt="" loading="lazy" draggable=${false} />` : null}</span>
+      <span class="cardpick__name">${t(o.name)}</span></button>`)}
+  </div>`;
+}
+
 /**
  * The 头像 picker: an operator's official avatar stands for the doctor (room.card avatar); 默认 = none (the strategy icon,
  * else the name's first letter).
- * @param {{ current: string, list: any[], m: any, onPick: (charId: string) => void, onClose: Function }} props
+ * @param {{ current: string, list: any[], m: any, onPick: (charId: string) => void, onClose: Function, looks?: any }} props
  */
-export function AvatarPicker({ current, list, m, onPick, onClose }) {
-  return html`<${OperatorPicker} title=${t('头像')} micro="AVATAR" current=${current} list=${list} m=${m} faceOf=${(c) => cardAvatarUrl(c.charId, m)}
+export function AvatarPicker({ current, list, m, onPick, onClose, looks = null }) {
+  return html`<${OperatorPicker} title=${t('头像')} micro="AVATAR" current=${current} list=${list} m=${m} faceOf=${(c) => cardAvatarUrl(c.charId, m)} looks=${looks}
     autoLabel=${t('默认')} autoTitle=${t('不使用头像：显示策略图标或名字首字')} autoIcon="user"
     note=${CARD_SYNC ? t('选择后，同盟里的博士都会看到这个头像') : t('目前只有你自己看得到；服务器下次更新后，同盟里的其他博士也能看到你的选择')}
     onPick=${onPick} onClose=${onClose} />`;

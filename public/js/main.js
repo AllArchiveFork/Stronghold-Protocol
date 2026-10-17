@@ -50,6 +50,7 @@ import { LobbyScreen, rememberRoom, parseRoomParam, joinRoom } from './screens/l
 import { RoomScreen, TrustedNotice } from './screens/room.js';
 import { GameScreen } from './screens/game.js';
 import { audio, installAudio } from './audio.js';
+import { roomCue, cueGate } from './ui/roomCues.js';
 import { settingsStore } from './ui/settings.js';
 import { matchMusic } from './ui/lobbyMusic.js';
 import { GuideHost } from './ui/guide.js';
@@ -175,7 +176,12 @@ function backToLobby() {
 /** The unofficial plugins a server counts in welcome / /healthz `content.plugins` (absent: none — DESIGN §32 P1a). */
 const pluginCount = (content) => (content && Number.isInteger(content.plugins) && content.plugins > 0 ? content.plugins : 0);
 
+// the first room state after a welcome re-sends the room as it was (reconnect / restored page): no room cue for it
+let roomCueQuiet = false;
+const roomCueGate = cueGate();
+
 function onWelcome(msg) {
+  roomCueQuiet = true;
   clearTimeout(claimRetryTimer);
   claimRetryTimer = null;
   claimRetrying = false;
@@ -238,6 +244,9 @@ function onRoomState(msg) {
     return;
   }
   const prevRoom = store.get().room;
+  const cue = roomCue(prevRoom, room, myId, { quiet: roomCueQuiet });
+  roomCueQuiet = false;
+  if (cue && roomCueGate(cue)) audio.sfx(cue, { volume: 0.7 });
   // A (new) match starts: forget the previous match's state so stale results never show.
   if (room.inMatch && !(prevRoom && prevRoom.inMatch && prevRoom.code === room.code)) store.set({ match: emptyMatch() });
   store.set({ room });
@@ -256,6 +265,19 @@ const CLOSE_REASON = {
   'node-restarted': N_('对局服务器已重启，本局模拟已中断'), 'node-unavailable': N_('对局服务器连接中断，本局模拟已结束'),
   // 挂机移出 while offline: the next connection hears it here instead of m.removed (server Match _removeIdle)
   afk: N_('连续多个回合没有任何操作，你已被移出对局'),
+};
+
+/**
+ * The outcome lines of the match's votes (m.notice): 重刷本局 (setupVote.js) and 投票移出 (kickVote.js) — the vote panels
+ * vanish when a vote ends, so its result is told here. [text, toast kind] or null.
+ */
+const VOTE_NOTICE = {
+  rerollPassed: () => [t('重刷投票通过，开局信息已重新随机'), 'success'],
+  rerollFailed: (m) => [m.reason === 'timeout' ? t('重刷投票超时，未通过') : t('重刷投票未通过'), 'info'],
+  rerollCancelled: () => [t('重刷投票已取消'), 'info'],
+  kickPassed: (m) => [t('{name} 已被投票移出对局', { name: typeof m.name === 'string' && m.name ? m.name : t('博士') }), 'info'],
+  kickFailed: (m) => [m.reason === 'timeout' ? t('移出投票超时，未通过') : t('移出投票未通过'), 'info'],
+  kickCancelled: (m) => [m.reason === 'reconnected' ? t('该玩家已重新连接，移出投票取消') : t('移出投票已取消'), 'info'],
 };
 
 function wireNet() {
@@ -358,9 +380,10 @@ function wireNet() {
       try { recordQuit(before); } catch (err) { console.warn('[stats] quit record failed', err); }
     }
     backToLobby();
-    toast(msg.reason === 'afk' ? t('连续 {n} 回合没有任何操作，你已被移出对局', { n: rounds }) : t('你已被移出对局'), 'warn', { ttl: 10000 });
+    toast(msg.reason === 'afk' ? t('连续 {n} 回合没有任何操作，你已被移出对局', { n: rounds }) : msg.reason === 'kicked' ? t('你掉线期间被队友投票移出了对局') : t('你已被移出对局'), 'warn', { ttl: 10000 });
   });
   net.on('m.notice', (msg) => {
+    if (VOTE_NOTICE[msg.kind]) { const n = VOTE_NOTICE[msg.kind](msg); if (n) toast(n[0], n[1], { ttl: 5000 }); return; }
     if (msg.kind !== 'afkRemoved') return;
     const rounds = Number.isInteger(msg.rounds) && msg.rounds > 0 ? msg.rounds : 2;
     toast(t('{name} 连续 {n} 回合没有任何操作，已被移出对局', { name: typeof msg.name === 'string' && msg.name ? msg.name : t('博士'), n: rounds }), 'info', { ttl: 6000 });

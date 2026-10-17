@@ -108,6 +108,10 @@ test('receipt sink member.removed: node / epoch authority, strict shape, one lob
   t.after(() => f.sink.close());
   assert.deepEqual(f.ops['member.removed'](event()), { accepted: true });
   assert.deepEqual(f.calls, [['assignment-1', 'p2', 'afk', 2]]);
+  // a passed 投票移出 takes the same path (rounds: the seat's offline rounds)
+  assert.deepEqual(f.ops['member.removed'](event({ reason: 'kicked', rounds: 3 })), { accepted: true });
+  assert.deepEqual(f.calls.at(-1), ['assignment-1', 'p2', 'kicked', 3]);
+  f.calls.pop();
   for (const bad of [{ reason: 'idle' }, { rounds: 0 }, { rounds: 1.5 }, { sessionId: '' }, { extra: true }]) {
     assert.throws(() => f.ops['member.removed'](event(bad)), rpcCode('BAD_REQUEST'), JSON.stringify(bad));
   }
@@ -134,6 +138,8 @@ test('sendMemberRemoved crosses the real HMAC RPC to the sink, retrying a lost r
   const removal = { assignmentId: 'assignment-1', generation: 4, playerId: 'p2', reason: 'afk', rounds: 2 };
   assert.deepEqual(await sendMemberRemoved({ client, nodeGeneration: 'node-gen', removal }), { accepted: true });
   assert.deepEqual(f.calls, [['assignment-1', 'p2', 'afk', 2], ['assignment-1', 'p2', 'afk', 2]], 'a retry reaches the idempotent lobby again');
+  assert.deepEqual(await sendMemberRemoved({ client, nodeGeneration: 'node-gen', removal: { ...removal, reason: 'kicked' } }), { accepted: true });
+  assert.deepEqual(f.calls.at(-1), ['assignment-1', 'p2', 'kicked', 2]);
   await assert.rejects(sendMemberRemoved({ client, nodeGeneration: 'node-gen', removal: { ...removal, reason: 'other' } }), rpcCode('BAD_REQUEST'));
   await assert.rejects(sendMemberRemoved({ client, nodeGeneration: 'node-gen', removal: { ...removal, rounds: 0 } }), rpcCode('BAD_REQUEST'));
 });

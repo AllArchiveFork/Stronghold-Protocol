@@ -145,6 +145,14 @@ function refreshPrivate() {
   const p = S.priv;
   p.deployCount = p.board.filter((x) => x.kind === 'chess').length;
   p.bonds = computeBonds(p);
+  // ?variant=forecast — 预计叠层 (feedback #25, server/match/layerForecast.js): +2 on every active bond from 助力, +1 more
+  // on the first from an operator's 特质, a random source not counted
+  if (VARIANTS.has('forecast')) {
+    const act = p.bonds.filter((b) => b.active);
+    p.layerForecast = { random: true, randomSources: [{ kind: 'band', id: 'band_bldsk' }], partial: false,
+      bonds: Object.fromEntries(act.map((b, i) => [b.bondId, { n: i ? 2 : 3, sources: [{ kind: 'bond', id: 'deputShip', n: 2 },
+        ...(i ? [] : [{ kind: 'garrison', id: p.board.find((x) => x && x.kind === 'chess')?.id || 'x', n: 1 }])] }])) };
+  }
   p.canReady = !p.personalChoice && !p.temp.some(Boolean);
   const upg = [5, 8, 11, 12, 13];
   p.shop.maxLevel = 6;
@@ -243,6 +251,9 @@ function buildState() {
     ready: [false, true, false, false][i], bonds: [], fieldId: `n:${p.playerId}`, status: ['acting', 'ready', 'acting', 'acting'][i],
   }));
   players[3].connected = false;
+  // ?variant=kick — the offline seat is under the offline AI takeover (投票移出 button, ui/kickVote.js); kickvote — a vote
+  // against it is open, proposed by Doctor·B
+  if (VARIANTS.has('kick') || VARIANTS.has('kickvote')) Object.assign(players[3], { autoplay: true, offlineTakeover: true });
   // ?variant=players20 — an experimental 20-seat room (pub.playerCapacity 20): AI seats, a long name, an offline, a dead and
   // a rescue-pending teammate, a few without a band yet
   if (VARIANTS.has('players20')) players.push(...extraPlayers(players.length, 20));
@@ -260,6 +271,8 @@ function buildState() {
       playerIds: players.filter((p) => Math.floor(p.seat / 4) === g).map((p) => p.playerId) })) } : null),
   };
   if (VARIANTS.has('boss') || VARIANTS.has('bossR')) pub.round = pub.bossRound;
+  if (VARIANTS.has('kickvote')) pub.kickVote = { id: 1, proposerId: 'p3', targetId: 'p4',
+    voters: ['p1', 'p3'], agreed: ['p3'], rejected: [], need: 2, deadline: Date.now() + 24000 };
   S = { stage, pub, priv, layers: {}, battle: null, pool, requests: [] };
 }
 

@@ -22,7 +22,7 @@ test('/healthz reconnect.hello counts every first hello of a socket by its outco
   const report = async () => (await (await fetch(`${srv.url}/healthz`)).json()).reconnect;
   assert.deepEqual(await report(), {
     hello: { resumed: 0, fresh: 0, unknownToken: 0, inUse: 0 },
-    matchSeats: { afkOnline: 0, afkOffline: 0, expired: 0 },
+    matchSeats: { afkOnline: 0, afkOffline: 0, kicked: 0, expired: 0 },
   });
 
   const a = await connect();

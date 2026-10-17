@@ -103,7 +103,7 @@ test('combat limits and the boss overtime are REAL seconds (code) and the docs s
   assert.match(PLAYING, /120 秒倒计时结束后战斗\*\*继续\*\*/);
 });
 
-test('联防 helpers follow unite.helperOrder (units > active bond > standing > seat; LP plays no part) and the docs name it', () => {
+test('联防 helpers follow unite.helperOrder (units > active bond > standing > active bonds > Σ layers > seat; LP plays no part) and the docs name it', () => {
   const player = (playerId, seat, lp, units, bond = false) => ({
     playerId, seat, lp, deployCount: units, board: new Map(), layers: {},
     bonds: bond ? { bond_x: { active: true, layers: 5 } } : {},
@@ -127,6 +127,27 @@ test('联防 helpers follow unite.helperOrder (units > active bond > standing > 
   const capped = reached('C', 2, 990, { bond_x: 50 }); // 999, not 1040
   const under = reached('D', 3, 995, null);
   assert.deepEqual(helperOrder(m, [under, capped], new Map()).map((p) => p.playerId), ['C', 'D']);
+  // the owner's tie-break of 2026-10-17 (feedback #13): when PRTS's keys tie (8 units, a bond active, the same
+  // standing count), the number of active bonds and then Σ active layers decide before the seat — for the choice and
+  // for the pair. coop4-FUNNY-6 round 11: seats 2 and 3 tie on 7 standing and 3 bonds; 165 layers beat 144.
+  const mid = (playerId, seat, bonds) => ({
+    playerId, seat, lp: 10, deployCount: 8, board: new Map(), layers: {},
+    bonds: Object.fromEntries(bonds.map((n, i) => [`bond_${i}`, { active: true, layers: n }])),
+  });
+  const s0 = mid('s0', 0, [40, 40]);          // 2 bonds, 80 layers
+  const s1 = mid('s1', 1, [10, 10, 10]);      // 3 bonds, 30 layers
+  const s2 = mid('s2', 2, [20, 20, 20]);      // 3 bonds, 60 layers
+  assert.deepEqual(helperOrder(m, [s0, s1, s2], new Map()).map((p) => p.playerId), ['s2', 's1'],
+    'the choice: more active bonds before more layers, then Σ layers before the seat');
+  assert.deepEqual(helperOrder(m, [s2, s0], new Map()).map((p) => p.playerId), ['s0', 's2'],
+    'the pair still ranks Σ layers (PRTS 层数最高) before the bond count');
+  const e0 = mid('e0', 0, [30, 30]);          // 2 bonds, 60 layers
+  const e1 = mid('e1', 1, [20, 20, 20]);      // 3 bonds, 60 layers
+  assert.deepEqual(helperOrder(m, [e0, e1], new Map()).map((p) => p.playerId), ['e1', 'e0'],
+    'the pair: equal layers and standing → the bond count before the seat');
+  const t0 = mid('t0', 0, [20, 20]);
+  const t1 = mid('t1', 1, [20, 20]);
+  assert.deepEqual(helperOrder(m, [t1, t0], new Map()).map((p) => p.playerId), ['t0', 't1'], 'a full tie → seat');
   assert.ok(!/highest LP, then seat/.test(DESIGN), 'DESIGN §6.1 no longer picks helpers by LP');
   assert.match(DESIGN, /helperOrder/);
   assert.match(META, /unite\.js helperOrder/);

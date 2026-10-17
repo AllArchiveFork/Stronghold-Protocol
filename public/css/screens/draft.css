@@ -41,8 +41,10 @@
   animation: tr-left 420ms var(--tr-ease) backwards; animation-delay: calc(180ms + var(--i, 0) * 70ms); }
 .dorder__card { position: relative; height: 100%; display: flex; align-items: center; gap: .16rem; min-width: 0; padding: 0 .16rem 0 .2rem; overflow: hidden;
   background: linear-gradient(90deg, #1d2223, #262b2c); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .08); }
-.dorder__art { position: absolute; inset: 0 0 0 28%; background-size: cover; background-position: 50% 16%; opacity: .62; pointer-events: none;
-  -webkit-mask: linear-gradient(90deg, transparent, #000 45%); mask: linear-gradient(90deg, transparent, #000 45%); }
+/* the 名片干员 half-body (1:2) in a box about 1.6 rows wide at the card's right end, so the row shows the face (the full
+   card width scaled it up until only the hair and forehead were left) */
+.dorder__art { position: absolute; top: 0; right: 0; bottom: 0; width: 2rem; max-width: 72%; background-size: cover; background-position: 50% 12%; opacity: .7; pointer-events: none;
+  -webkit-mask: linear-gradient(90deg, transparent, #000 40%); mask: linear-gradient(90deg, transparent, #000 40%); }
 .dorder__face { position: relative; flex: none; }
 .dorder .pavatar { --pa: .9rem; box-shadow: 0 0 0 .03rem #e6e9e9; border: 0; }
 .dorder__me { position: absolute; left: -.14rem; top: -.14rem; width: .32rem; height: .32rem; display: grid; place-items: center; background: var(--mint-500); color: #062019; box-shadow: 0 0 0 .02rem #062019; }

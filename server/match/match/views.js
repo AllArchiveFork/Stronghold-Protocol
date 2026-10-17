@@ -84,7 +84,13 @@ export class MatchViews {
         proposerId: this.setupVote.proposerId,
         voters: this.setupVote.voters.slice(),
         agreed: [...this.setupVote.agreed],
+        // 0.3.0 (setupVote.js): the yes votes it needs, the no votes, its end (server clock ms)
+        rejected: [...this.setupVote.rejected],
+        need: this.setupVote.need,
+        deadline: this.setupVote.deadline,
       } : null,
+      // 投票移出 an offline AI-托管 teammate (kickVote.js): null or { id, proposerId, targetId, voters, agreed, rejected, need, deadline }
+      kickVote: this.kickVoteView(),
       factions: this.factions.slice(),
       disabledBonds: [...new Set([...this.disabledBonds, ...this.staticInactiveBonds])].sort(),
       drawnDisabledBonds: this.disabledBonds.slice(),
@@ -141,6 +147,8 @@ export class MatchViews {
         fieldId: this.fieldOf(ps),
         status: this.statusOf(ps),
         autoplay: ps.autoplay,
+        // the AI plays the seat because it stayed offline (MatchPlatform._checkOffline): a 投票移出 target (kickVote.js)
+        ...(ps.offlineAutoplay && ps.autoplay && !ps.connected ? { offlineTakeover: true } : {}),
         // the LP this round's own battle will cost at settlement so far (COMBAT / 联防 only, omitted when 0)
         ...this._pendingLpView(ps),
       })),

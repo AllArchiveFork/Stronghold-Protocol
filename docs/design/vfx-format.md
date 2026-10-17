@@ -4,6 +4,14 @@ Part of [DESIGN.md](../DESIGN.md) (the index; section numbers are global).
 
 **Changelog** (for runtimes reading the files; newest first)
 
+* **2026-10-17 — the catalogue's skins (index.json `skins[<skin id>]`, §33.12 Skin)**; no version change, fields and
+  prefabs added only: a used-set run also reads `skinpack/<charId>.ab` for every skin of `shared/skin-catalogue.js`
+  (`--fx-skins`) whose operator the index has, and writes `skins[<catalogue id>]` (`char_1040_blaze2_nlc_1`) with the
+  skin's own points, `replace` (the skin's `_replaceEffectPairs`: default key → skin key) and `fakeProjectiles`; the
+  swapped-in prefabs (`blaze2_attack_01_hit_nlc#1` …) and the fake projectiles' graphic / logic projectiles join the
+  set. Everything an earlier index had is unchanged (`units` byte for byte, `skins[<unit id>]` are still the default
+  skins); a reader of an earlier index draws every skin with the default effects. `--fx-skin-bundles` adds newer
+  bundles for skins the client lacks.
 * **2026-10-15 — the skin points' rotation (index.json `skins`, §33.12 Skin)**; no version change, fields added only:
   every point has `rot` (its local rotation, quaternion x y z w) and every point with a `bone` has `followRot` (its
   BoneFollower's `followBoneRotation`). 54 of the used set's 1,118 bone-followed points do not take their bone's
@@ -137,6 +145,9 @@ types, the enum constants with their values; method bodies are native code and n
 .venv/bin/python tools/local-extract/extract.py --only fx --fx-set used          every effect the mode's units use
 .venv/bin/python tools/local-extract/extract.py --only fx --fx-keys k1,k2        named prefabs only (a dev aid)
                                                  [--fx-jobs N]  worker processes (default up to 8)
+                                                 [--fx-skins <skin-catalogue.js> | off]   the used set's skins (§33.12
+                                                                Skin; default shared/skin-catalogue.js)
+                                                 [--fx-skin-bundles <AB root>]   newer bundles for those skins only
 ```
 
 A run can be staged away from the live folders: `--out <dir>/public/assets/local --manifest
@@ -713,7 +724,8 @@ a sound — the runtime's audio may play it), and the long tail (55 classes in t
 ```
 { format: 'fx-index', version: 3, set: 'sample' | 'used' | 'keys', source: { root, client },
   units: { id: Unit }, projectiles: { key: Projectile }, skills: { skillId: Skill },
-  skins: { id: Skin }, generic: { hit, die, birth, status, keys }, prefabs: { key: PrefabSummary } }
+  skins: { id: Skin },                         unit id → its default skin; catalogue skin id → that skin (below)
+  generic: { hit, die, birth, status, keys }, prefabs: { key: PrefabSummary } }
 ```
 
 `version` is 2 since Phase 1c and 3 since Phase 1d (the changelog lists what each added; an older reader finds every
@@ -1003,6 +1015,41 @@ no bone moves keeps `rot` too (the identity but for 3: `enemy_2025_syufo`'s HitP
 `token_10012_rosmon_shield`'s Special0, 90° about z). Operators' points come from `chararts/<id>.ab` (`defaultskin`)
 placed under the charpack's `Graphic`; enemies' and tokens' from their own prefab. Point names vary by skin:
 `HitPoint`, `HeadPoint`, `HeadAnchor`, `Muzzle` / `MuzzlePoint`, `Special0` / `SpecialPoint0` (… `1`, `2`).
+
+**The catalogue's skins** (2026-10-17; the used set only, `--fx-skins`): `skins` also holds one entry per skin of
+`shared/skin-catalogue.js` whose operator is in `units` and whose battle prefab the client has, keyed by the
+catalogue's `id` (not lower-cased: `char_1033_swire2_ambienceSynesthesia_4`):
+
+```
+{ source ('skinpack/<charId>.ab <container>'), graphic, points,       as the default skin's (above), from the skin's
+                                                                      battle prefab …/skins/character/<charId>/
+                                                                      <officialId with @ → _>.prefab
+  char (the operator: units[char]), officialId ('char_1040_blaze2@nlc#1'),
+  replace: { fromKey: toKey },                 the skin's _replaceEffectPairs (lower case)
+  fakeProjectiles: [{ origin, graphic, logic, muzzle }] }   its _fakeProjectileConfigs when _useFakeProjectile, else []
+```
+
+`char` marks such an entry (a unit's default skin, `skins[<unit id>]`, has none; `units[char].skin` still names the
+default). `replace` is how the client dresses a skin (*metadata*: the skin prefab's root behaviour, next to
+`_faceSwitcher`): whenever the operator wearing it would play effect `fromKey` — a mode attack's cast / hit row, a
+skill's or talent's use, a projectile's flying or hit effect, its deploy effect (`common_char_birth_01` is a
+`fromKey` of most skins) — it plays `toKey` instead; a key it does not name stays. Every `toKey` is exported
+(`prefabs[toKey]`); a pair whose target the client lacks is left out (the extractor logs it) and the default effect
+plays. Skin keys hold `#` (`blaze2_attack_01_hit_nlc#1`): their files are `fx_file`'s safe form + CRC32
+(`prefabs/blaze2_attack_01_hit_nlc_1-<crc>.json`, §33.1) — look keys up through the file list, never build the path.
+`fakeProjectiles`: the skin draws its own shot for projectile `origin` — **assumed** from the names (no method body
+read): `graphic` is the projectile drawn (its `main`, `onHit` … in `projectiles`, flying from the skin's `muzzle`
+point, a MountPointType name of `_fakeMuzzlePoint`, §33.11 FollowMountPoint), `logic` the invisible one whose arrival
+is the hit (its effects, if any, play too); `graphic` / `logic` are in `projectiles`, `origin` is the unit's own. A
+config whose origin or graphic projectile the client lacks is left out (logged). The skins' swaps are display only:
+the sim never sees them.
+
+`--fx-skin-bundles <dir>` (an AB root of the same layout, e.g. a later hot update's `skinpack/<charId>.ab` and
+`battle/prefabs/effects/<code>.ab` for skins newer than the client) is read for the catalogue's skins only: its skinpack
+before the client's, and its effect prefabs whose keys the client lacks (the new skins' swap targets and the keys they
+name). Every key the client has — the default effects, an older skin's targets — stays the client's, so the default
+output does not change with it (a later bundle re-encodes textures: 79 default prefabs of the five operators of
+2026-10-14 would otherwise get new texture keys); `source.client` stays the client's version.
 
 **generic**: `{ hit: { phys, arts, heal, enemy, fire, cut, ranger }, die: { char, enemy }, birth: { char },
 status: { <sim status>: key }, keys: [every generic key exported] }` — the keys the client binds in code (no data file

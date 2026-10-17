@@ -1829,6 +1829,15 @@ button.ally-card:disabled { filter: grayscale(.7) brightness(.7); cursor: defaul
 .cardpick__name { width: 100%; font-size: max(calc(.13 * var(--t)), 10px); text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cardpick__star { position: absolute; right: 3px; top: 3px; padding: 0 3px; font-size: max(calc(.11 * var(--t)), 8px); font-weight: 800; color: #111; background: #e8e8e8; }
 .cardpick__star.r6 { background: #ffcf5a; } .cardpick__star.r5 { background: #f2e06b; }
+/* the picked operator's looks (精二 / 精一 / skins; feedback #9 / #24, ui/opPicker.js LookBar) */
+.cardpick__looks { display: flex; align-items: flex-end; gap: .08rem; margin-bottom: .12rem; padding: .06rem .08rem; overflow-x: auto; scrollbar-width: thin;
+  background: rgba(0, 0, 0, .3); border: 1px solid var(--line-2); }
+.cardpick__looks-label { flex: none; align-self: center; font-size: max(calc(.14 * var(--t)), 11px); color: var(--text-lo); }
+.cardpick__look { flex: none; display: flex; flex-direction: column; align-items: center; gap: 2px; width: max(.72rem, 52px); padding: 3px; font: inherit;
+  color: var(--text-md); background: rgba(255, 255, 255, .04); border: 1px solid var(--line-2); cursor: pointer; }
+.cardpick__look.is-on { border-color: var(--mint-400); box-shadow: 0 0 0 1px var(--mint-400); color: var(--text-hi); }
+.cardpick__look.is-tall .cardpick__img { aspect-ratio: 3 / 4; }
+.cardpick__look.is-tall .cardpick__img img { object-position: 50% 8%; }
 .cardpick__note { display: flex; align-items: center; gap: .06rem; margin: .12rem 0 0; font-size: max(calc(.15 * var(--t)), 10px); color: var(--text-lo); }
 .cardpick__note .icon { flex: none; width: 1.1em; height: 1.1em; }
 
@@ -2596,6 +2605,16 @@ button.ach-card__ava:hover, button.ach-card__ava:focus-visible { border-color: v
 .rseat__ava:hover .rseat__ava-pen, .rseat__ava:focus-visible .rseat__ava-pen { opacity: 1; }
 .rseat__ava-pen .icon { width: 75%; height: 75%; }
 .nc-pick__card { display: flex; flex-direction: column; text-align: left; }
+/* a skin's card (feedback #24): the picker shows its half-body art (lazy), the plate its full illustration */
+.nc-pick__art--skin img { position: absolute; right: 0; top: 0; width: 50%; height: 100%; object-fit: cover; object-position: 50% 14%; pointer-events: none;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 45%); mask-image: linear-gradient(90deg, transparent, #000 45%); }
+.nc-pick__art--skin .nc-pick__name { position: relative; display: flex; flex-direction: column; }
+.nc-pick__art--skin .nc-pick__name small { font-size: 11px; font-weight: 500; color: #a9b4b0; }
+.nc-pick__theme--skins { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.nc-pick__search { flex: 0 1 200px; min-width: 0; height: 26px; padding: 0 8px; font: inherit; font-size: 13px; font-weight: 400; color: #e6ecea;
+  background: rgba(0, 0, 0, .4); border: 1px solid rgba(255, 255, 255, .18); outline: none; }
+.nc-layer--skin { background: var(--nc-shade, linear-gradient(90deg, rgba(8, 11, 11, .86), rgba(8, 11, 11, .45) 50%, rgba(8, 11, 11, .1))),
+  var(--nc) center 24% / cover no-repeat, #101514; }
 .nc-pick__art { position: relative; display: flex; align-items: center; gap: .08rem; width: 100%; aspect-ratio: 600 / 186; padding: 0 12px; border-radius: 2px; overflow: hidden;
   color: #eef3f1; font-size: 13px; font-weight: 700; background: #101514; }
 .nc-pick__card--none .nc-pick__art { justify-content: center; color: #9aa6a2; border: 1px dashed rgba(255, 255, 255, .18); }
@@ -2695,6 +2714,7 @@ button.ach-card__ava:hover, button.ach-card__ava:focus-visible { border-color: v
 
 /* touch screens: inputs at 16px, so iOS does not zoom the page on focus */
 :is(.sp-touch, .sp-coarse) :is(.ally-key input, .cardpick__search input, .sw-search input) { font-size: 16px; }
+:is(.sp-touch, .sp-coarse) .nc-pick__search { font-size: 16px; }
 /* the 密钥加入 dialog's key field: 16 px at least, so iOS does not zoom the page on focus */
 .lobby-screen .join-row .field--code .field__input { font-size: max(calc(.34 * var(--t)), 16px); }
 

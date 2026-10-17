@@ -422,17 +422,21 @@ export function unitStatsEntry(u, s = null) {
 export const DIRS = Object.freeze(['UP', 'RIGHT', 'DOWN', 'LEFT']);
 const isDir = (v) => DIRS.includes(v);
 
-// ---- display card (fork lobby, 2026-10-14): room.card { charId?, avatar?, bg?, trophies? } ---------------------------
+// ---- display card (fork lobby, 2026-10-14): room.card { charId?, avatar?, bg?, trophies?, look?, avatarLook? } ----------
 
 /**
  * `room.card`: the player's display card, shown to the room on its seat (room.state seats[].card) — `charId`: the card's
  * portrait operator, `avatar`: the operator whose official avatar stands for the player ('' clears either; the server
  * also requires a real operator of its game data), `bg`: a namecard background id
  * ('' clears; format only, the client maps ids to art), `trophies`: a self-reported cumulative trophy count (0 clears;
- * cosmetic only, never used by a match). A field the message leaves out keeps its stored value.
+ * cosmetic only, never used by a match). `look` / `avatarLook` (GitHub feedback #9 / #24): the art of the portrait / the
+ * avatar operator — '' its 精二 art (as before), 'e1' its 精一 art, or a skin id of that operator (the server checks it
+ * belongs to it: shared/skins.js skinFor). `bg` may be `skin:<skin id>`, the skin's full illustration.
+ * A field the message leaves out keeps its stored value.
  */
 export const CARD_LIMITS = Object.freeze({ idLength: 48, trophies: 1_000_000 });
 const isCardCharId = (v) => v === '' || (isStr(v, CARD_LIMITS.idLength) && /^char_[0-9a-z_]+$/.test(v));
+const isCardLook = (v) => v === '' || v === 'e1' || (isStr(v, CARD_LIMITS.idLength) && /^char_[0-9a-z_]+$/.test(v));
 const isCardBg = (v) => v === '' || (isStr(v, CARD_LIMITS.idLength) && /^[a-z0-9][a-z0-9_:\-\/]*$/i.test(v));
 
 const target = (v) => {
@@ -490,7 +494,7 @@ export const C2S = {
   'room.skins': { choices: isSkinChoices },
   // the display card (CARD_LIMITS above; server/lobby.js setCard): stored per session, copied to the player's seat
   'room.card': { charId: isCardCharId, avatar: isCardCharId, bg: isCardBg, trophies: (v) => isInt(v, 0, CARD_LIMITS.trophies),
-    $optional: ['charId', 'avatar', 'bg', 'trophies'] },
+    look: isCardLook, avatarLook: isCardLook, $optional: ['charId', 'avatar', 'bg', 'trophies', 'look', 'avatarLook'] },
   // spectator seats (remake feature, community report #26; MAX_SPECTATORS): take one of a co-op room's spectator seats —
   // in its lobby or while its match runs — never a player seat; the host frees one by playerId (the spectator gets
   // room.closed { reason: 'kicked' }). room.leave / g.leave leave a spectator seat like a player seat.
@@ -516,6 +520,10 @@ export const C2S = {
   // match
   'g.infoReady': { setupRevision: (v) => isInt(v, 0, 2 ** 31), $optional: ['setupRevision'] },
   'g.rerollVote': { voteId: (v) => isInt(v, 1, 2 ** 31), agree: isBool },
+  // 投票移出 (server/match/match/kickVote.js): propose removing an offline teammate under AI takeover (SP_DRAFT / PREP),
+  // and answer the open vote (m.public kickVote.id); the proposer's agree:false withdraws it
+  'g.kickVote': { targetId: isId },
+  'g.kickBallot': { voteId: (v) => isInt(v, 1, 2 ** 31), agree: isBool },
   'g.band': { bandId: isId },
   'g.bandSkip': {},
   // the strategy highlighted in the draft screen (user playtest #4 item 4): a turn that runs out takes it while it is

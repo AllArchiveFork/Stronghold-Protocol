@@ -2439,5 +2439,50 @@ export const SKIN_CATALOGUE = Object.freeze([
     "officialId": "char_498_inside@summer#22",
     "wikiIndex": 2,
     "charName": "隐现" // i18n-ignore: exact Wiki image-title lookup, not UI text
+  },
+  {
+    "id": "char_1033_swire2_nlc_1",
+    "charId": "char_1033_swire2",
+    "name": N_("盛世之象"),
+    "brand": N_("合作款"),
+    "officialId": "char_1033_swire2@nlc#1",
+    "wikiIndex": 2,
+    "charName": "琳琅诗怀雅" // i18n-ignore: exact Wiki image-title lookup, not UI text
+  },
+  {
+    "id": "char_1040_blaze2_nlc_1",
+    "charId": "char_1040_blaze2",
+    "name": N_("夜行烛火"),
+    "brand": N_("合作款"),
+    "officialId": "char_1040_blaze2@nlc#1",
+    "wikiIndex": 2,
+    "charName": "烛煌" // i18n-ignore: exact Wiki image-title lookup, not UI text
+  },
+  {
+    "id": "char_1042_phatm2_sightseer_4",
+    "charId": "char_1042_phatm2",
+    "name": N_("真我自扼"),
+    "brand": N_("错位巡礼"),
+    "officialId": "char_1042_phatm2@sightseer#4",
+    "wikiIndex": 1,
+    "charName": "酒神" // i18n-ignore: exact Wiki image-title lookup, not UI text
+  },
+  {
+    "id": "char_2025_shu_nlc_1",
+    "charId": "char_2025_shu",
+    "name": N_("源远流长"),
+    "brand": N_("合作款"),
+    "officialId": "char_2025_shu@nlc#1",
+    "wikiIndex": 2,
+    "charName": "黍" // i18n-ignore: exact Wiki image-title lookup, not UI text
+  },
+  {
+    "id": "char_4204_mantra_sightseer_4",
+    "charId": "char_4204_mantra",
+    "name": N_("万籁俱寂"),
+    "brand": N_("错位巡礼"),
+    "officialId": "char_4204_mantra@sightseer#4",
+    "wikiIndex": 1,
+    "charName": "真言" // i18n-ignore: exact Wiki image-title lookup, not UI text
   }
 ].map(skin => Object.freeze(skin)));

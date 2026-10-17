@@ -205,7 +205,9 @@ A `choice:<effectId>` registry handler overrides the default application (§2.4)
   (normal / 联防: re-simulated from t = 0) or, on a boss field, to the partner's replica (DESIGN §14). 掉线由 AI 接管
   (owner, 2026-10-14): a seat still offline as its 2nd prep in a row ends (`OFFLINE_TAKEOVER_ROUNDS`, `_checkOffline`)
   gets AI 托管 from the next phase on (ticker to everyone); `onReconnect` turns that AI 托管 off again (a ticker, a toast
-  to the player) — one the player chose itself stays; untimed matches just wait. The session stays resumable for the
+  to the player) — one the player chose itself stays; untimed matches just wait. While the AI plays such a seat, the
+  connected humans may vote it out in SP_DRAFT / PREP (投票移出, `match/kickVote.js`, §32.14.45): a passed vote
+  removes it like the `onLeave` below (`m.removed {reason:'kicked'}`, then `room.closed {reason:'kicked'}` on its resume). The session stays resumable for the
   rest of the match while another player of it is online (lobby.js `refreshMatchWindows`), else for 10 min (net.js
   `reconnectWindowMs`, counted from when the last player went offline); a **solo** run's for the official `constants.singleReconnectTime`
   (86 400 s = 24 h, lobby.js `soloResumeWindowMs`) — nothing in a solo run is timed, so it simply waits. `onReconnect`
@@ -411,7 +413,7 @@ Every handler method is `(ctx, ev)`; `ev` is shared by all handlers of one dispa
 | `onIncome` | ROUND_START, before the income is credited | `{ round, income, pending }` — write `ev.income` / `ev.pending` (e.g. 老鲤 withholds R1–R2 income until R3) |
 | `onRoundStart` | ROUND_START, after income / shop roll | `{ round }` |
 | `onPrepStart` | PREP opens (after 机变) | `{ round }` |
-| `onPrepEnd` | prep end, before funds are cleared | `{ round }` |
+| `onPrepEnd` | prep end, before funds are cleared; the engine's own handlers also run in the 预计叠层 preview during PREP (§5, `layerForecast`, `ev.preview`); a plugin's handler is never called by that preview | `{ round, preview? }` |
 | `onGain` | a chess / item was acquired (buy, reward, grant, merge result) | `{ piece, kind:'chess'|'item', source }` |
 | `onSold` | a chess was sold (after refund of copies) | `{ piece, gain }` — **write `ev.gain`** to change the funds paid |
 | `onRefresh` | manual refresh | `{ slots, free, price }` (slots mutable, or use `ctx.setShopSlot`) |
@@ -853,8 +855,10 @@ without carry and other battle kinds retain normal devour damage; later redeploy
 Planned after the normal combats, at the end of the COMBAT_END pause from the players still in (`Match._afterCombat`, so a
 player who quit during the last field or the pause is neither a helper nor a leaker whose enemies re-enter; unite.js):
 helpers = `unite.js helperOrder` (research 08 §5, PRTS 卫戍协议/帮助 §联防阶段): ≤ `unite.maxHelpers` (2) perfect players
-chosen by most units on the field (downed included) > an active bond > most standing units > seat; the pair ordered by
-units > active bond > Σ active layers > standing > seat (LP plays no part), the first one on the right-hand field
+chosen by most units on the field (downed included) > an active bond > most standing units > most active bonds >
+Σ active layers > seat; the pair ordered by units > active bond > Σ active layers > standing > most active bonds > seat
+(LP plays no part; the bond count and the Σ layers before the seat are the owner's tie-break of 2026-10-17, feedback #13),
+the first one on the right-hand field
 (colOffset +8, where escaped_multi enters), the other colOffset 0; the escaped template of that size routes the leaked
 enemies by slot class on the round's battlefield — the match stage opened to both halves (`GEO.UNITE_RECT`, cols 0–20),
 its terrain, crates, water, devices, runes and band map characters included, as in 0.1.x (the owner's decision of
@@ -921,6 +925,21 @@ PREP ready/acting · COMBAT/boss combat/done · UNITE helping/done · others don
 `m.private` = DESIGN §8.3 exactly (sent per player whenever it changed). `nextEnemies` = the current round's wave
 (+ the player's bounty enemies, tag `bounty`; boss rounds: the player's boss field, tag `boss` — the leader's entry with its
 spawn tile `start`, where the boss-field prep shows it —, + its bounties).
+
+`m.private.layerForecast` (预计叠层, feedback #25, the owner's decisions of 2026-10-17; `server/match/layerForecast.js`):
+during PREP only, the layers the recipient's own <休整期结束时> dispatch (`onPrepEnd`: SERVER_PREP_FIN 特质, 助力's +2 / +4
+to every active bond, the strategy's, items' and effects' handlers) would add if the prep ended now —
+`{ bonds: { [bondId]: { n, sources: [{ kind, id, n }] } }, random, randomSources: [{ kind, id }], partial }`. Plugins are
+never called by it: only the engine's own handlers run (`MetaRegistry.isOfficial`, marked by `createRegistry` before any
+plugin / DSL spec registers); a skipped handler of the hook sets `partial: true` (「插件效果未计入」). It is a recording
+preview (`EffectDispatcher.forecastLayers`): the isolated preview context of §1.5 / `preview.js` (writes are no-ops, the
+RNG a clone of `rngMeta`) with the player's `addLayers` on a ledger (`requireActive` and the 999 cap honoured) and
+`layers` / `bond` / `bonds` reading the stored layers plus the ledger, so 助力 then 层数最多 comes out in the dispatcher's
+order; `triggerGarrisons` (塞雷娅 / 白面鸮's copies) runs through the same preview; onLayers milestones and recompute do
+not run. A handler call that draws the preview RNG and adds layers is a random source: not counted, `random: true`
+(策略 `prep_finish_char_bond_add_layer`). Not counted either: gains caused by teammates' prep-end effects and cascades
+at the deadline (onLayers / onGain). Computed only for connected, alive humans, memoized per player on the inputs a
+prep-end handler reads; never in m.public, a teammate's scout view or a checkpoint (no Match / PlayerState field).
 
 Bond layers in the views (DESIGN §20.15, active fork): normal server battles commit cumulative gains to `ps.layers`
 and dispatch milestone rewards live through `Match._syncNormalLayers` / `_applyBattleLayerGains`. Worker updates are
@@ -1003,8 +1022,9 @@ round was over. The official 1 s `broadcastBeginDelay` is not modelled.
   Tests: `test/match/balance.test.js` (tuning layer, model), `test/match/followups.test.js`.
 
 ## 7. Assumptions (all documented in module headers)
-* Unite helper choice: `unite.js helperOrder` (§4; selection units > active bond > standing units > seat, the pair
-  units > active bond > Σ active layers > standing > seat; the ranks marked 存疑 in PRTS). Unite enemies re-enter with
+* Unite helper choice: `unite.js helperOrder` (§4; selection units > active bond > standing units > active bonds >
+  Σ active layers > seat, the pair units > active bond > Σ active layers > standing > active bonds > seat; the ranks
+  marked 存疑 in PRTS, the two before the seat the owner's tie-break of 2026-10-17). Unite enemies re-enter with
   their original stats on the official 联防 spawn timing (waves.js `buildUniteWave`, DATA.md §15 #22).
 * A manual refresh while frozen keeps the new slots frozen until the next round start.
 * A level-up opens the new level's extra slots at once — empty, with no card drawn into them (official footage, GitHub
@@ -1051,11 +1071,20 @@ remain documented, not presented as this deployment's default. See
 
 ## Opening rerolls and bot reactions (0.2.3)
 
-`match/setupVote.js` owns the INFO_CHECK vote and transactional opening replacement; `Lobby.rerollSetup` checks host
-permission for `room.rerollSetup {setupRevision}` and `room.cancelReroll {voteId}`. Participants send
-`g.rerollVote {voteId, agree}`; `g.infoReady {setupRevision?}` accepts an omitted revision only before the first reroll.
-`m.public` includes `setupRevision` and `rerollVote` (null or `{id, proposerId, voters, agreed}`). Old vote/revision
-requests cannot affect a new opening. See DESIGN §28.21 for cancellation and timer behavior.
+`match/setupVote.js` owns the INFO_CHECK vote and transactional opening replacement; `Lobby.rerollSetup` checks who
+may send `room.rerollSetup {setupRevision}` (the host of a private room, any seated human of a matchmade one) and keeps
+`room.cancelReroll {voteId}` the host's. Participants send `g.rerollVote {voteId, agree}` (the proposer's no withdraws);
+`g.infoReady {setupRevision?}` accepts an omitted revision only before the first reroll. `m.public` includes
+`setupRevision` and `rerollVote` (null or `{id, proposerId, voters, agreed, rejected, need, deadline}`). Voters = the
+humans connected at the proposal; need = `ceil(0.75 × voters)`, the proposer counted; it passes at need and fails once
+`voters − rejected < need`; a voter that disconnects or leaves is dropped and need recomputed from the voters left; 20 s
+timeout; one proposal per player per revision, at most 3 rerolls per match. Old vote/revision requests cannot affect a
+new opening. See DESIGN §28.21 / §32.14.45 for cancellation, notices and timer behavior.
+
+`match/kickVote.js` owns 投票移出 (§32.14.45): `g.kickVote {targetId}` / `g.kickBallot {voteId, agree}` in SP_DRAFT /
+PREP against a seat under 掉线由 AI 接管, a majority `⌊n/2⌋ + 1` of the other connected humans, 30 s, cancelled at prep
+end or the target's return; `m.public.kickVote`; a passed vote removes the seat like a g.leave (`_removeIdle(ps,
+'kicked')`).
 
 `botEmotes.js` is isolated from bot decisions and RNG. It sends the existing `m.emote` only in mixed matches, under
 normal cooldown/whitelist rules; `SP_BOT_EMOTES=0` disables it. The cooperation score in `bot.js` and these cosmetic

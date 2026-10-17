@@ -213,6 +213,8 @@ async function main() {
     // facing left (&face=L): the dummy stands on the left and the attacker faces it (an operator's deploy direction LEFT)
     const left = o.left ?? state.left, dist = o.dist ?? 3;
     demo.src = fake(1, unitKey, UNIT_TILE.col, UNIT_TILE.row, /^enemy_/.test(unitKey));
+    // &skin=<catalogue skin id>: the attacker wears that skin (index.json skins: its points, swapped effects, own shots)
+    if (q.get('skin')) demo.src.info.skinId = q.get('skin');
     demo.tgt = fake(2, o.target || 'enemy_1007_slime', UNIT_TILE.col + (left ? -dist : dist), UNIT_TILE.row, !/^enemy_/.test(unitKey));
     demo.src.visFacing = left ? -1 : 1;
     demo.tgt.visFacing = left ? 1 : -1;

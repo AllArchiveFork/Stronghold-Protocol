@@ -113,7 +113,7 @@ async function fixture(t, options = {}) {
 }
 
 // Real loopback HTTP/WS; no pool creation, external service or production traffic.
-test('guarded setup reroll RPC and direct human votes mutate one real actor, never spectator or stale epochs', async t => {
+test('guarded setup reroll RPC and direct human votes mutate one real actor, never spectator or stale epochs; a drop recounts', async t => {
   const real = [];
   class RealMatch extends Match { constructor(opts) { super({ ...opts, now: f.now }); real.push(this); } }
   const data = { chess: { chess_fixture: { chessId: 'chess_fixture', visible: true, tier: 1, bonds: [] } } };
@@ -137,10 +137,12 @@ test('guarded setup reroll RPC and direct human votes mutate one real actor, nev
   assert.deepEqual(await f.rpc.call('cancelSetupReroll', { ...member, voteId: vote }), { ok: true });
   assert.equal(real[0].setupRevision, 0); assert.equal(real[0].setupVote, null);
   f.advance(300);
-  assert.deepEqual(await f.rpc.call('requestSetupReroll', { ...member, setupRevision: 0 }), { ok: true });
+  // one proposal per player per setup revision; the other player may propose (setupVote.js)
+  assert.deepEqual(await f.rpc.call('requestSetupReroll', { ...member, setupRevision: 0 }), { error: ERR.ALREADY, detail: 'reroll-proposed' });
+  assert.deepEqual(await f.rpc.call('requestSetupReroll', { ...member, sessionId: 'p2', setupRevision: 0 }), { ok: true });
   const nextVote = real[0].setupVote.id;
-  p2.send({ t: 'g.rerollVote', voteId: nextVote, agree: true, rid: 93 });
-  await p2.wait('ok', m => m.rid === 93);
+  p1.send({ t: 'g.rerollVote', voteId: nextVote, agree: true, rid: 93 });
+  await p1.wait('ok', m => m.rid === 93);
   await p1.wait('m.public', m => m.setupRevision === 1);
   assert.equal(real[0].setupRevision, 1);
   p2.send({ t: 'g.infoReady', setupRevision: 0, rid: 94 });
@@ -148,9 +150,14 @@ test('guarded setup reroll RPC and direct human votes mutate one real actor, nev
   f.advance(300);
   assert.deepEqual(await f.rpc.call('requestSetupReroll', { ...member, setupRevision: 1 }), { ok: true });
   p2.ws.terminate(); await p2.closed;
-  await p1.wait('m.public', m => m.setupRevision === 1 && m.rerollVote === null && m.players.some(p => p.playerId === 'p2' && !p.connected));
-  assert.equal(real[0].setupVote, null, 'actual game-channel disconnect cancels consent');
-  assert.equal((await f.rpc.call('requestSetupReroll', { ...member, setupRevision: 1 })).error, ERR.NOT_READY);
+  // the actual game-channel disconnect drops p2 from the vote: one voter left, need 1, the proposer's yes passes it
+  await p1.wait('m.public', m => m.setupRevision === 2 && m.rerollVote === null && m.players.some(p => p.playerId === 'p2' && !p.connected));
+  assert.equal(real[0].setupVote, null);
+  f.advance(300);
+  assert.deepEqual(await f.rpc.call('requestSetupReroll', { ...member, setupRevision: 2 }), { ok: true });
+  assert.equal(real[0].setupRevision, 3, 'the only connected human rerolls at once');
+  f.advance(300);
+  assert.deepEqual(await f.rpc.call('requestSetupReroll', { ...member, setupRevision: 3 }), { error: ERR.ALREADY, detail: 'reroll-limit' });
   assert.equal(s1.log.some(m => m.t === 'm.private' || m.t === 'm.unitStats'), false);
   assert.equal(real.length, 1);
 });

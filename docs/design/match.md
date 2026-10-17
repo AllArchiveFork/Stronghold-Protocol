@@ -13,15 +13,19 @@ LOBBY(room) → INFO_CHECK (co-op 25 s; solo and any single-human match untimed 
                     prep (§6.2 temp overflow), unfrozen shop slots rerolled, frozen kept, <进入休整期时> effects)
      [SP_DRAFT]    (if r ∈ spRounds: 机变 draft; co-op: random order (「AI 队友最后选择」, off by default: humans first, the same partition as the strategy draft), 30 s first picker / 16 s others; solo 3 cards; solo / single human untimed;
                     a card is picked with two taps, §18.2)
-     PREP          (co-op: timer from config, ends when all alive humans+bots ready; solo / single human: untimed, ends on ready)
+     PREP          (co-op: timer from config, ends when all alive humans+bots ready; solo / single human: untimed, ends on ready;
+                    the own m.private carries 预计叠层 `layerForecast` — the layers the own <休整期结束时> effects add if the prep
+                    ended now, random sources left out and flagged: server/match/layerForecast.js, feedback #25, §32.14.46)
      PREP_END      (<休整期结束时> effects; unfrozen shop cleared; Ready is blocked while a personal choice or temp overflow is pending;
                     at the deadline personal choices are auto-picked first, then
                     the temp pieces due at this prep are resolved (chess sold back, items destroyed, summon stacks removed — they come back at the next round start, §20.1) — pieces that arrived
                     after Ready or during the <休整期结束时> effects wait for the next prep (§6.2 tempDue))
      COMBAT        (one Battle per alive player, all in parallel, 2×; watchers get snapshots; solo: pausable, §14 Solo pause)
      UNITE         (co-op only, if ≥1 leaked & ≥1 perfect: ≤2 perfect helpers in `unite.js helperOrder` order (research 08 §5 / PRTS 帮助:
-                    most units on the field > an active bond > most standing units > seat; the pair ordered by units > active bond >
-                    Σ active layers > standing > seat, the first one on the right-hand field) fight the union of leaks; no layer gains — with
+                    most units on the field > an active bond > most standing units > most active bonds > Σ active layers > seat;
+                    the pair ordered by units > active bond > Σ active layers > standing > most active bonds > seat, the first one
+                    on the right-hand field; the bond count / Σ layers before the seat: owner 2026-10-17, feedback #13)
+                    fight the union of leaks; no layer gains — with
                     the layers their own combat reached (the round's pending gains, PRTS "以其阵地当前的状态" [ASSUMED]);
                     a helper's operator knocked out at the end of its own combat enters down — carryState { down: true },
                     PRTS "上一阶段为退场状态的干员强制退场", its full redeploy timer — confirmed by the user (§19.3))
@@ -187,7 +191,7 @@ adjusted count and reset scope stay limited to its own operators; the DIY export
 
 ---
 
-### Cooperative buying, reactions and opening rerolls (§28.15–16, §28.21)
+### Cooperative buying, reactions, opening rerolls and 投票移出 (§28.15–16, §28.21, §32.14.45)
 
 [ASSUMED] Bot purchasing applies one soft 18-point penalty to non-elite, non-DIY tier V/VI shared-pool cards whose
 active bonds overlap another living teammate's opening strategy. Human and AI teammates are treated equally; it
@@ -203,15 +207,33 @@ bot reply. Settlement uses that round's results (kills then damage, stable seat 
 chess merge reacts once and resets at settlement. Gifts are classified by trusted source playerId, never display name.
 These hooks consume no gameplay RNG and schedule no game actions.
 
-[ASSUMED] During INFO_CHECK the host may request an opening reroll; all connected human participants must explicitly
-agree, including autoplay humans. Bots and spectators do not vote; one human refreshes immediately. A vote pauses the
-confirmation timer and blocks Ready. Rejection, host cancellation, disconnect or leaving cancels it and restores the
-remaining time / prior Ready state. Success preserves the room, seats, settings and connections, redraws the complete
-opening, resets Ready, and starts the full original timer (single-human matches remain untimed). Fixed stage/bans
-remain fixed and random results can repeat. A separate seed-derived stream leaves shop/draft RNG untouched; requests
-have a 300 ms anti-burst guard, revision and vote identities. All new setup data and player DIY stocks are prepared
-before mutation; data preparation failure leaves the old opening intact. This is a remake convenience, not an official
-mode rule. Unrelated result-screen changes from PR #408 are not included.
+[ASSUMED] During INFO_CHECK a player may request an opening reroll (重刷本局): any seated human of a matchmade room
+(野排, `room.source === 'matchmaking'`), only the host of a private one (`Lobby.rerollSetup`). The voters are the humans
+connected at the proposal, autoplay humans included; bots, spectators and offline humans neither vote nor block. It
+needs `ceil(0.75 × voters)` yes votes, the proposer's counted (2→2, 3→3, 4→3, 8→6, 20→15), passes as soon as that is
+reached and fails as soon as `voters − rejected` falls below it. A voter that disconnects or leaves is dropped from the
+vote and the threshold recomputed from the voters left — the vote goes on and may pass or fail on that recount; a human
+connecting later does not join it. A vote lasts 20 s (× timerScale). It pauses the confirmation timer and blocks Ready;
+rejection, timeout, the proposer withdrawing (its own no) or the host's `room.cancelReroll` restores the remaining time /
+prior Ready state. One proposal per player per setup revision, at most 3 rerolls per match. Success preserves the room,
+seats, settings and connections, redraws the complete opening, resets Ready, and starts the full original timer
+(single-human matches remain untimed). Fixed stage/bans remain fixed and random results can repeat. A separate
+seed-derived stream leaves shop/draft RNG untouched; requests have a 300 ms anti-burst guard, revision and vote
+identities. All new setup data and player DIY stocks are prepared before mutation; data preparation failure leaves the
+old opening intact. The vote and the proposal marks are transient: a checkpoint restore drops them and keeps the paused
+confirmation time. This is a remake convenience, not an official mode rule (owner's rules of 2026-10-17, §32.14.45).
+Unrelated result-screen changes from PR #408 are not included.
+
+[ASSUMED] 投票移出 (GitHub feedback #12, owner's rules of 2026-10-17, `match/kickVote.js`): in SP_DRAFT / PREP the
+connected humans may vote out a teammate whose seat the AI plays because it stayed offline (掉线由 AI 接管: alive,
+offline, `offlineAutoplay`; an AI 托管 chosen while connected does not qualify). Voters are the connected humans that
+have not left, the target excluded, at the proposal; a strict majority `⌊n/2⌋ + 1` passes it, the proposer's yes
+counted; a voter that disconnects or leaves is dropped and the majority recomputed. The vote lasts 30 s and is
+cancelled at the prep's end, when the target reconnects or is gone, or when the proposer withdraws. One vote at a time
+per match; a failed vote blocks another on the same target for the rest of the round; 300 ms burst guard per player.
+A passed vote removes the seat exactly like 中途退出 — the AFK rule's removal path with reason `kicked` (copies back to
+the pool, out of the Final Assault pairing, Boss HP rescaled); the player hears `room.closed {reason:'kicked'}` on its
+next resume. All room types; transient across checkpoints. A remake rule, not an official one.
 
 The shared DIY detail preview (stats, range, trait, talents, potential, cultivation and matching normal/elite skill descriptions) follows roster loadout resolution. Jessica shield placement is limited to her four orthogonal neighbors. The two Ptilopsis prep-gift copy exceptions are defined in §29.3 and META; no generic change to all copied conditions is implied.
 

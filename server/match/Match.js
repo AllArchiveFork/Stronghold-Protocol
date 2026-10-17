@@ -66,7 +66,8 @@
 //                                              LOBBY and (asynchronously, next macrotask) calls dispose().
 //                                              `summary` is free-form JSON (kept as room.lastSummary).
 //   opts.onRemove(playerId, { reason, rounds }) → void   (optional) the match removed a human for good (the AFK rule,
-//                                              reason 'afk', right after it sent the player m.removed): the platform
+//                                              reason 'afk'; a passed 投票移出, reason 'kicked', rounds = the seat's
+//                                              offline rounds — right after it sent the player m.removed): the platform
 //                                              detaches the seat exactly like a g.leave, whose onLeave(playerId) follows
 //                                              at once or later (the match quits the seat itself either way)
 //
@@ -198,6 +199,9 @@
 //     check counts from the match start: strategy draft, 机变). At afkRemoveRounds the seat is removed like a departed
 //     human: m.removed { reason: 'afk', rounds } to it, m.notice { kind: 'afkRemoved', playerId, name, rounds } to
 //     everyone else in the match (spectator seats included), opts.onRemove, onLeave (MatchPlatform._checkIdle).
+//   * 投票移出 (the owner's rule of 2026-10-17, kickVote.js): in SP_DRAFT / PREP the connected humans may vote out a seat
+//     under the offline takeover above (g.kickVote / g.kickBallot, majority); a passed vote removes it like the AFK
+//     rule — m.removed { reason: 'kicked' }, m.notice kickPassed instead of afkRemoved, opts.onRemove, onLeave.
 //
 // Code layout: this file keeps the constructor (options, seats, the per-match setup, the state fields); the methods
 // live in server/match/match/, one module per concern, and are installed on Match.prototype below in a fixed order,
@@ -214,6 +218,8 @@
 //   intents.js       the g.* / b.* router, emotes, AI 托管, g.unitStats, g.bondPlan
 //   pause.js         the solo pause
 //   phases.js        INFO_CHECK, BAND_DRAFT (the strategy draft), BATTLE_CHECK, ROUND_START
+//   setupVote.js     the INFO_CHECK opening reroll vote (重刷本局) and its transactional setup replacement
+//   kickVote.js      投票移出: the vote to remove a teammate under the offline takeover
 //   spDraft.js       SP_DRAFT (机变) and the rolls the meta effects ask for (bounties, item ids, pools)
 //   prep.js          PREP: its start, the AI seats' sliced preps, Ready, the deadline, its end
 //   combat.js        battle construction, COMBAT (both modes), the per-field results, then 联防 or SETTLE
@@ -256,6 +262,7 @@ import { MatchIntents } from './match/intents.js';
 import { MatchPause } from './match/pause.js';
 import { MatchPhases } from './match/phases.js';
 import { MatchSetupVote } from './match/setupVote.js';
+import { MatchKickVote } from './match/kickVote.js';
 import { MatchSpDraft } from './match/spDraft.js';
 import { MatchPrep } from './match/prep.js';
 import { MatchCombat } from './match/combat.js';
@@ -504,6 +511,13 @@ export class Match {
     this.setupVote = null;
     this._setupVoteSeq = 0;
     this._lastSetupVoteAt = -Infinity;
+    /** playerId → the setup revision it last proposed a reroll for (one proposal per player per revision; setupVote.js) */
+    this._setupProposals = new Map();
+    // 投票移出 (kickVote.js): the open vote, its id sequence, targetId → the round a vote on it failed, playerId → last proposal ms
+    this.kickVote = null;
+    this._kickVoteSeq = 0;
+    this._kickFailed = new Map();
+    this._kickVoteAt = new Map();
     this._turnTimer = null;
     this._pubDirty = false;
     this._pubTimer = null;
@@ -561,7 +575,7 @@ export class Match {
 }
 
 // the method modules, in this order (a name defined twice is an error, never a silent override)
-for (const part of [MatchPlatform, MatchInfra, MatchMessaging, MatchViews, MatchWatch, MatchIntents, MatchPause, MatchPhases, MatchSetupVote, MatchSpDraft, MatchPrep, MatchCombat, MatchClientCombat, MatchLocalReplica, MatchRehearsal, MatchReports, MatchUnite, MatchBoss, MatchSettle, MatchExtensions]) {
+for (const part of [MatchPlatform, MatchInfra, MatchMessaging, MatchViews, MatchWatch, MatchIntents, MatchPause, MatchPhases, MatchSetupVote, MatchKickVote, MatchSpDraft, MatchPrep, MatchCombat, MatchClientCombat, MatchLocalReplica, MatchRehearsal, MatchReports, MatchUnite, MatchBoss, MatchSettle, MatchExtensions]) {
   for (const key of Reflect.ownKeys(part.prototype)) {
     if (key === 'constructor') continue;
     if (Object.prototype.hasOwnProperty.call(Match.prototype, key)) throw new Error(`Match.${String(key)} is defined twice`);

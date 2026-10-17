@@ -2,12 +2,15 @@
 // here the backgrounds come from material this server already has, no new art): the four simulation loading pictures
 // (assets.json ui['loading/loading_ac_*']) and the faction emblems (ui['campLogo/logo_*'], white on the faction's
 // colour). A card id is `loading:<key>` or `camp:<key>`; an unknown id (an older or newer client's) shows nothing.
+// `skin:<skin id>` (feedback #24, the owner's decision of 2026-10-17): an operator skin's full illustration (assets.json
+// skins[id].illustration, ~4 MB — only the plates that use it load it; the picker shows the skins' half-body art).
 // The pick is kept in the browser (NAMECARD_PREF) and travels with room.card (ui/playerCard.js) so teammates see it.
 // Styles: css/screens/lobby.css (.has-nc / .nc-layer / .nc-pick).
-import { useEffect } from '../../vendor/hooks.module.js';
+import { useEffect, useState } from '../../vendor/hooks.module.js';
 import { html, Icon } from './components.js';
 import { data, useData } from '../data.js';
 import { t, N_ } from '../../../shared/i18n.js';
+import { OPERATOR_SKINS } from '../../../shared/skins.js';
 
 export const NAMECARD_PREF = 'room.namecard';
 
@@ -48,16 +51,23 @@ export const NAMECARDS = Object.freeze([
   ...CAMPS.map((c) => Object.freeze({ id: `camp:${c.key}`, kind: 'camp', name: c.name, tint: c.tint, assetKey: `campLogo/logo_${c.key}` })),
 ]);
 const BY_ID = new Map(NAMECARDS.map((c) => [c.id, c]));
+/** The skins' cards: { id: 'skin:<skin id>', kind: 'skin', name, skinId, charId }. */
+const SKIN_CARDS = new Map(OPERATOR_SKINS.map((s) => [`skin:${s.id}`, Object.freeze({ id: `skin:${s.id}`, kind: 'skin', name: s.name, skinId: s.id, charId: s.charId })]));
 
 /** The card of an id, or null (unknown / empty). @param {unknown} id */
 export function namecardOf(id) {
-  return typeof id === 'string' ? BY_ID.get(id) || null : null;
+  return typeof id === 'string' ? BY_ID.get(id) || SKIN_CARDS.get(id) || null : null;
 }
 
-/** The picture of a card in the loaded asset index, or null. */
-export function namecardSrc(card, m = data.get('assets')) {
-  const src = card && m?.ui && typeof m.ui === 'object' ? m.ui[card.assetKey] : null;
-  return typeof src === 'string' && src && !/["\\)]/.test(src) ? src : null;
+const safeUrl = (src) => (typeof src === 'string' && src && !/["\\)]/.test(src) ? src : null);
+
+/** The picture of a card in the loaded asset index, or null (a skin: its full illustration, `half` its half-body art). */
+export function namecardSrc(card, m = data.get('assets'), half = false) {
+  if (card?.kind === 'skin') {
+    const s = m?.skins && typeof m.skins === 'object' && Object.hasOwn(m.skins, card.skinId) ? m.skins[card.skinId] : null;
+    return safeUrl(half ? s?.portrait : s?.illustration);
+  }
+  return safeUrl(card && m?.ui && typeof m.ui === 'object' ? m.ui[card.assetKey] : null);
 }
 
 /**
@@ -76,6 +86,8 @@ export function NameCardLayer({ card }) {
 /** 名片底图 picker: 不使用底图 and every card; picking closes it. Esc / the backdrop close it too. */
 export function NameCardPicker({ current, onPick, onClose }) {
   useData('assets');
+  const m = data.get('assets');
+  const [q, setQ] = useState('');
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } };
     addEventListener('keydown', onKey);
@@ -85,6 +97,16 @@ export function NameCardPicker({ current, onPick, onClose }) {
   const card = (c) => html`<button key=${c.id} type="button" class=${`nc-pick__card${current === c.id ? ' is-on' : ''}`} onClick=${() => pick(c.id)} title=${t(c.name)}>
     <span class="nc-pick__art has-nc"><${NameCardLayer} card=${c.id} /><span class="nc-pick__name">${t(c.name)}</span></span>
     ${current === c.id ? html`<span class="nc-pick__on">${t('使用中')}</span>` : null}</button>`;
+  // the skins in the art index, searchable by skin, brand or operator name; tiles show the half-body art (lazy)
+  const needle = q.trim().toLowerCase();
+  const charName = (s) => String(s.charName || '');
+  const skins = OPERATOR_SKINS.filter((s) => m?.skins?.[s.id]?.illustration)
+    .filter((s) => !needle || [t(s.name), t(s.brand || ''), charName(s)].some((x) => x.toLowerCase().includes(needle)));
+  const skinCard = (s) => { const id = `skin:${s.id}`, src = namecardSrc(namecardOf(id), m, true);
+    return html`<button key=${id} type="button" class=${`nc-pick__card nc-pick__card--skin${current === id ? ' is-on' : ''}`} onClick=${() => pick(id)} title=${`${charName(s)} · ${t(s.name)}`}>
+      <span class="nc-pick__art nc-pick__art--skin">${src ? html`<img src=${src} alt="" loading="lazy" draggable=${false} />` : null}
+        <span class="nc-pick__name">${t(s.name)}<small>${charName(s)}</small></span></span>
+      ${current === id ? html`<span class="nc-pick__on">${t('使用中')}</span>` : null}</button>`; };
   return html`<div class="nc-pick" role="presentation" onMouseDown=${(e) => { if (e.target === e.currentTarget) onClose(); }}>
     <div class="nc-pick__panel" role="dialog" aria-modal="true" aria-label=${t('名片底图')}>
       <header class="nc-pick__head"><strong>NAME CARD</strong><span class="nc-pick__title">${t('名片底图')}</span>
@@ -96,6 +118,9 @@ export function NameCardPicker({ current, onPick, onClose }) {
         ${NAMECARDS.filter((c) => c.kind === 'loading').map(card)}
         <h4 class="nc-pick__theme">${t('阵营徽记')}</h4>
         ${NAMECARDS.filter((c) => c.kind === 'camp').map(card)}
+        <h4 class="nc-pick__theme nc-pick__theme--skins">${t('干员皮肤立绘')}
+          <input type="search" class="nc-pick__search" value=${q} placeholder=${t('搜索皮肤或干员')} onInput=${(e) => setQ(e.currentTarget.value)} /></h4>
+        ${skins.map(skinCard)}
       </div>
       <footer class="nc-pick__foot"><small>${t('名片底图显示在同盟席位的名牌后面，同盟里的博士都能看到')}</small></footer>
     </div>

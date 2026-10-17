@@ -108,7 +108,7 @@ describe('0.2.3 follow-up client features', { skip: !ENABLED }, () => {
       }
     } finally { await ctx.close(); }
   });
-  test('co-op opening reroll shows a unanimous vote, clears stale readiness and can be rejected', { timeout: 45000 }, async () => {
+  test('co-op opening reroll shows a ¾ vote, clears stale readiness and can be rejected', { timeout: 45000 }, async () => {
     const ctx = await browser.createBrowserContext();
     try {
       const host = await pageIn(ctx), guest = await pageIn(ctx);

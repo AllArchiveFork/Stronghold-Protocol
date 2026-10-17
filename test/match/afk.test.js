@@ -75,7 +75,7 @@ test('the substantive intents are exactly the ones named by the rule, all of the
     'g.move', 'g.refresh', 'g.revive', 'g.reward', 'g.sell']);
   for (const t of AFK_ACTIONS) assert.ok(Object.hasOwn(C2S, t), t);
   for (const t of ['g.ready', 'g.emote', 'g.watch', 'g.unitStats', 'g.pause', 'g.infoReady', 'g.art', 'g.bandFocus', 'g.autoplay',
-    'g.rerollVote', 'g.bondPlan', 'g.leave', 'b.progress', 'b.result']) assert.ok(!AFK_ACTIONS.has(t), t);
+    'g.rerollVote', 'g.kickVote', 'g.kickBallot', 'g.bondPlan', 'g.leave', 'b.progress', 'b.result']) assert.ok(!AFK_ACTIONS.has(t), t);
   // the Match option: default 2, 0 turns the rule off, anything else keeps the default
   const base = { mode: 'coop', difficulty: 'NORMAL', seats: [{ seat: 0, playerId: 'p_0', name: 'P0', isBot: false, connected: true }], data: DATA,
     scheduler: new VirtualScheduler(), send: () => true, broadcast: () => {}, onEnd: () => {} };

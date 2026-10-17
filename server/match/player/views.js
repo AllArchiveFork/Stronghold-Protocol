@@ -7,6 +7,7 @@ import { PHASE } from '../../../shared/constants.js';
 import { boardOrder, pieceDir } from '../board.js';
 import { bondList, offBondCounts } from '../bondsMeta.js';
 import { bountyText, bountyCard } from '../choices.js';
+import { layerForecast } from '../layerForecast.js';
 
 export class PlayerViews {
   pieceView(p, rc = null) {
@@ -65,6 +66,8 @@ export class PlayerViews {
     for (const { r, c, piece } of boardOrder(this.board)) board.push(this.pieceView(piece, [r, c]));
     // a boss round's prep: the partner's board on its half of the boss field (Match.bossMateView, item 51)
     const bossMate = typeof this.m.bossMateView === 'function' ? this.m.bossMateView(this) : null;
+    // 预计叠层 (PREP only, the own seat only): the layers the own <休整期结束时> effects add at the deadline
+    const forecast = layerForecast(this.m, this);
     return {
       t: 'm.private',
       playerId: this.playerId,
@@ -132,6 +135,10 @@ export class PlayerViews {
       // board pieces as UnitInfo on its half of the boss field (mirrored on the right half, as the battle places them);
       // the own prep view draws them beside the own half, read-only. Absent otherwise.
       ...(bossMate ? { bossMate } : {}),
+      // 预计叠层 (feedback #25, server/match/layerForecast.js): during PREP `{ bonds: { [bondId]: { n, sources: [{ kind,
+      // id, n }] } }, random, randomSources: [{ kind, id }], partial }` — the layers this player's own prep-end effects add if the
+      // prep ended now; random sources are left out (`random` true when one would add layers). Absent outside PREP.
+      ...(forecast ? { layerForecast: forecast } : {}),
       stats: {
         dmgDealt: Math.round(this.stats.dmgDealt), kills: this.stats.kills, leaks: this.stats.leaks, gold: this.stats.gold,
         refreshes: this.stats.refreshes, merges: this.stats.merges,

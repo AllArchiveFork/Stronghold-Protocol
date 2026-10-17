@@ -26,9 +26,10 @@ const ERROR_CODES = new Set(['BAD_REQUEST', 'EVENT_CONFLICT', 'STALE_ASSIGNMENT'
   'INTERNAL', 'NOT_FOUND', 'METHOD', 'CONTENT_TYPE']);
 const META_KEYS = ['assignmentId', 'nodeGeneration', 'actorGeneration', 'parts', 'totalBytes', 'sha256'];
 const CHUNK_KEYS = [...META_KEYS, 'index', 'data'];
-// member.removed: a Match removed a player (the AFK rule, server/match/Match.js afkRemoveRounds)
+// member.removed: a Match removed a player (the AFK rule, server/match/Match.js afkRemoveRounds; 'kicked': a passed
+// 投票移出, server/match/match/kickVote.js — rounds = the seat's offline rounds)
 const REMOVED_KEYS = ['assignmentId', 'nodeGeneration', 'actorGeneration', 'sessionId', 'reason', 'rounds'];
-const REMOVAL_REASONS = new Set(['afk']);
+const REMOVAL_REASONS = new Set(['afk', 'kicked']);
 const plain = v => !!v && typeof v === 'object'
   && (Object.getPrototypeOf(v) === Object.prototype || Object.getPrototypeOf(v) === null);
 const keys = (v, allowed) => plain(v) && Reflect.ownKeys(v).length === allowed.length

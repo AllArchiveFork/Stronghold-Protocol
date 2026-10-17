@@ -409,6 +409,11 @@
 .bslot__count small { color: var(--text-dim); font-size: .11rem; }
 .bslot__count.is-max { border-color: var(--mint-700); color: var(--mint-400); }
 .bslot.is-active .bslot__count { border-color: var(--mint-700); }
+/* 预计叠层 (feedback #25, ui/bondStrip.js): the layers the own prep-end effects will add, opposite the count */
+.bslot__fc {
+  position: absolute; top: -.04rem; left: .02rem; font-size: .13rem; font-weight: 700; color: var(--bg-0); pointer-events: none;
+  background: var(--mint-400); padding: 0 .04rem; line-height: 1.35; box-shadow: 0 0 .08rem rgba(23, 249, 183, .55);
+}
 .bslot.is-open .bond__core { box-shadow: 0 0 0 2px var(--mint-400), 0 0 .2rem rgba(23, 249, 183, .6); }
 /* a bond the mode never activates, with members (the server's `off` entry): the briefing's grey ✕ disc, the chips'
    struck name, 本局禁用 under it instead of the count */

@@ -27,6 +27,8 @@
 // (rotation, resize across the phone breakpoint) and refolds when it changes. Emotes of a folded roster or a list fly as
 // danmaku (ui/danmaku.js). An experimental room's rows are grouped by chess pool (m.public poolGroups) so teammates can
 // check who draws from the same pool.
+// 投票移出 (ui/kickVote.js, GitHub feedback #12): the row of a teammate the AI plays because they stayed offline has a
+// 投票移出 button in SP_DRAFT / PREP; the open vote is shown in the notice slot above the rows.
 
 import { useEffect, useReducer, useRef, useState } from '../../vendor/hooks.module.js';
 import { PHASE } from '../../../shared/constants.js';
@@ -37,6 +39,7 @@ import { STATUS_META, sortedPlayers, teamFrameIds, activeBubbles } from './gameL
 import { MissTag, uniteRemaining } from './hud.js';
 import { localAsset } from '../data.js';
 import { ReviveAction, RevivalNotice } from './revival.js';
+import { KickAction, KickVoteNotice } from './kickVote.js';
 import { t } from '../../../shared/i18n.js';
 import { uniteRelayKey } from '../battle/observe.js';
 import { PHONE_QUERY, rosterPools, rosterStartsOpen, teamDensity, teamEmoteMode, teamPanelLayout } from './teamLayout.js';
@@ -251,6 +254,7 @@ function TeamRow({ p, pub, myId, watching, onWatch, observe, halves, clicks, sel
         ${watched && !self ? html`<span class="team__eye" title=${t('正在查看')}><${GIcon} name="eye" /></span>` : null}
       </div>
       <${ReviveAction} pub=${pub} myId=${myId} target=${p} compact=${list} />
+      <${KickAction} pub=${pub} myId=${myId} target=${p} compact=${list} />
       ${open ? html`<button type="button" class="btn btn--primary btn--sm team__ob"
         onClick=${() => { clicks.setOpenPid(null); onWatch(p); }}><span class="btn__label">${t('前往查看')}</span></button>` : null}
       ${back ? html`<button type="button" class="btn btn--secondary btn--sm team__back"
@@ -313,7 +317,7 @@ export function TeamPanel({ pub, myId, watching, onWatch, roster, emoteTtl = 300
     if (noticeRef.current) observer?.observe(noticeRef.current);
     window.addEventListener('resize', measure);
     return () => { observer?.disconnect(); window.removeEventListener('resize', measure); };
-  }, [measured, players.length, pools ? pools.length : 0, pub?.revival?.windowOpen]);
+  }, [measured, players.length, pools ? pools.length : 0, pub?.revival?.windowOpen, !!pub?.kickVote]);
   if (!players.length) return null;
   // a boss round: the viewer's pair framed in green from the round's start (item 51 — the official bg_team_border,
   // tinted like the official green; a plain green ring without the local art)
@@ -329,7 +333,7 @@ export function TeamPanel({ pub, myId, watching, onWatch, roster, emoteTtl = 300
         <${Icon} name="users" /><span>${t('同盟成员')}</span><b class="num">${players.length}</b><${Icon} name="chevronRight" />
       </button>
     </div>
-    <div ref=${noticeRef} class="team__notice"><${RevivalNotice} pub=${pub} /></div>
+    <div ref=${noticeRef} class="team__notice"><${RevivalNotice} pub=${pub} /><${KickVoteNotice} pub=${pub} /></div>
     <div class="team__players" id="team-roster" hidden=${!rosterOpen}>${pools
       ? pools.map((pool) => html`<section key=${pool.id ?? 'rest'} class=${cx('team__pool', pool.mine && 'is-mine')}><${PoolHead} pool=${pool} />${pool.players.map(row)}</section>`)
       : players.map(row)}</div>

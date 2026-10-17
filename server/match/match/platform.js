@@ -1,7 +1,7 @@
 // server/match/match/platform.js — Match methods: the platform interface of the server/match/Match.js header
 // (server/lobby.js ⇄ Match) — start, handle (validation, error isolation, flush; the intents themselves: intents.js
 // _handle), setLoadout (INFO_CHECK only), onDisconnect / onReconnect and the full resync of one human, onLeave and 中途退出
-// = elimination (_quit), the AFK rule (挂机移出: _checkIdle at each prep end, _removeIdle), the AI taking over a seat
+// = elimination (_quit), the AFK rule (挂机移出: _checkIdle at each prep end, _removeIdle — also a passed 投票移出), the AI taking over a seat
 // offline too long (掉线由 AI 接管: _checkOffline at each prep end, released by onReconnect), dispose.
 // Installed on Match.prototype by server/match/Match.js (a method container: never instantiated; `this` is the match).
 
@@ -99,8 +99,10 @@ export class MatchPlatform {
     if (!ps || ps.isBot || this.disposed) return;
     this.guard(() => {
       ps.connected = false;
-      // A disconnected human's silence is never consent to a new setup.
-      this.cancelSetupVote();
+      // A disconnected human's silence is never consent: it is dropped from an open vote, which is recounted
+      // (setupVote.js, kickVote.js).
+      this._dropSetupVoter(playerId);
+      this._kickVoteMemberGone(playerId);
       // a paused solo battle resumes (the server takes the field over; nobody is left to resume it)
       this._resume();
       if (this.clientCombat) this._authorityLost(ps, 'disconnect');
@@ -120,6 +122,8 @@ export class MatchPlatform {
       // 掉线由 AI 接管: back in the match, the player plays the seat again (an AI 托管 of its own choice stays on)
       const released = ps.offlineAutoplay && ps.autoplay && !this.ended;
       ps.offlineAutoplay = false;
+      // a kick vote against this seat ends with the takeover (kickVote.js)
+      this._kickVoteMemberGone(playerId, true);
       if (released) {
         this.setAutoplay(ps, false);
         this.log.info?.(`[match ${this.roomCode}] seat ${ps.seat} back online: AI takeover released (R${this.round})`);
@@ -165,10 +169,11 @@ export class MatchPlatform {
     this.guard(() => {
       this._cancelBotPrep(ps);
       ps.left = true;
-      this.cancelSetupVote();
+      this._dropSetupVoter(playerId);
       ps.connected = false;
       ps.autoplay = false;
       ps.offlineAutoplay = false;
+      this._kickVoteMemberGone(playerId);
       this.watchers.delete(playerId);
       this.localViews.delete(playerId);
       if (this.ended) return;
@@ -287,20 +292,22 @@ export class MatchPlatform {
   }
 
   /**
-   * Remove an idle human exactly like a g.leave: the player is told first (m.removed — its client shows it and returns
-   * to the lobby), everyone else still in the match, spectator seats included, gets m.notice afkRemoved, then the
-   * platform detaches the seat (opts.onRemove: the lobby's removeMember, whose onLeave quits it here). A platform without
-   * the hook, or one that hears of it later (the cluster coordinator), leaves the quit to onLeave below.
+   * Remove a human exactly like a g.leave — an idle one (reason 'afk', the AFK rule) or one voted out (reason 'kicked',
+   * kickVote.js; `rounds` = its offline rounds, clamped to 1..100): the player is told first (m.removed — its client
+   * shows it and returns to the lobby), everyone else still in the match, spectator seats included, gets the m.notice
+   * (afkRemoved, or the vote's kickPassed), then the platform detaches the seat (opts.onRemove: the lobby's
+   * removeMember, whose onLeave quits it here). A platform without the hook, or one that hears of it later (the
+   * cluster coordinator), leaves the quit to onLeave below.
    */
-  _removeIdle(ps) {
-    const rounds = this.afkRemoveRounds;
-    this.log.info?.(`[match ${this.roomCode}] seat ${ps.seat} removed after ${ps.afkRounds} idle rounds (R${this.round})`);
-    this.sendTo(ps.playerId, { t: 'm.removed', reason: 'afk', rounds });
-    const notice = { t: 'm.notice', kind: 'afkRemoved', playerId: ps.playerId, name: ps.name, rounds };
+  _removeIdle(ps, reason = 'afk', notice = null) {
+    const rounds = reason === 'afk' ? this.afkRemoveRounds : Math.min(100, Math.max(1, ps.offlineRounds | 0));
+    if (reason === 'afk') this.log.info?.(`[match ${this.roomCode}] seat ${ps.seat} removed after ${ps.afkRounds} idle rounds (R${this.round})`);
+    this.sendTo(ps.playerId, { t: 'm.removed', reason, rounds });
+    notice ||= { t: 'm.notice', kind: 'afkRemoved', playerId: ps.playerId, name: ps.name, rounds };
     for (const p of this.order) if (p !== ps && !p.isBot && !p.left) this.sendTo(p.playerId, notice);
     for (const id of this.spectators.keys()) this.sendTo(id, notice);
     if (typeof this.opts.onRemove === 'function') {
-      try { this.opts.onRemove(ps.playerId, { reason: 'afk', rounds }); } catch (e) { this.reportError('onRemove', e); }
+      try { this.opts.onRemove(ps.playerId, { reason, rounds }); } catch (e) { this.reportError('onRemove', e); }
     }
     if (!ps.left) this.onLeave(ps.playerId);
   }

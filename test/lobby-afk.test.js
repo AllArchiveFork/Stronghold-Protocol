@@ -81,7 +81,7 @@ describe('the AFK rule over the in-process platform', () => {
     assert.equal(state.code, code);
     assert.ok(m.players.get(guest.id).left);
     assert.equal(m.round, 1);
-    assert.deepEqual(srv.lobby.departureStats(), { afkOnline: 1, afkOffline: 0, expired: 0 }, '/healthz reconnect.matchSeats');
+    assert.deepEqual(srv.lobby.departureStats(), { afkOnline: 1, afkOffline: 0, kicked: 0, expired: 0 }, '/healthz reconnect.matchSeats');
     await host.waitFor('m.public', (p) => p.phase === 'COMBAT' && p.players.find((x) => x.playerId === guest.id)?.status === 'left', 5000);
     // the guest is out of the room: no more match frames, its leave is a no-op, it may open a new room at once
     await guest.expectNone('m.notice');
@@ -116,6 +116,33 @@ describe('the AFK rule over the in-process platform', () => {
     assert.ok(state.inMatch);
     await back.expectNone('room.closed');
     assert.ok(m.players.get(guest.id).connected && !m.players.get(guest.id).left, 'back in its own seat');
+    m.finish({ victory: false, reason: 'defeat' });
+  });
+
+  test('投票移出: a seat under the offline takeover voted out departs like a leaver; its resume hears room.closed kicked', async () => {
+    const { host, guest, m } = await startedRoom();
+    const token = guest.token;
+    await guest.terminate();
+    open.delete(guest);
+    // the host keeps playing (afkRemoveRounds 1); offline at two prep ends, the AI plays the guest's seat
+    await host.waitFor('m.public', (p) => p.phase === 'PREP' && p.round === 2, 10000);
+    await ok(host, { t: 'g.freeze' });
+    await host.request({ t: 'g.ready', ready: true });
+    const prep = await host.waitFor('m.public', (p) => p.phase === 'PREP' && p.round === 3
+      && p.players.find((x) => x.playerId === guest.id)?.autoplay, 10000);
+    assert.equal(prep.kickVote, null);
+    const before = srv.lobby.departureStats();
+    // the only other human: need ⌊1/2⌋ + 1 = 1, the proposal passes at once
+    await ok(host, { t: 'g.kickVote', targetId: guest.id });
+    assert.deepEqual(await host.waitFor('m.notice', (x) => x.kind === 'kickPassed'),
+      { t: 'm.notice', kind: 'kickPassed', voteId: 1, targetId: guest.id, name: 'Guest', agreed: 1, need: 1 });
+    assert.ok(m.players.get(guest.id).left);
+    assert.deepEqual(srv.lobby.departureStats(), { ...before, kicked: before.kicked + 1 });
+    await host.waitFor('room.state', (s) => s.inMatch && seatOf(s, guest.id)?.connected === false);
+    const back = await player('Guest', token);
+    assert.equal(back.id, guest.id, 'the same session resumed');
+    assert.equal((await back.waitFor('room.closed', () => true, 5000)).reason, 'kicked');
+    await err(back, { t: 'g.leave' }, ERR.NOT_IN_ROOM);
     m.finish({ victory: false, reason: 'defeat' });
   });
 

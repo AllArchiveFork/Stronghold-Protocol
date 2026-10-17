@@ -635,7 +635,8 @@ export class ClusterLobby extends Lobby {
    * its players' game input waits), and in the background it is taken over where it still runs (adopt — its node did
    * not restart) or rebuilt by a node from its checkpoint, retried while no node is ready yet (RESTORE_WAIT_MS). Then
    * every member already back gets its game channel (resume); the others bind as they return. A match that cannot
-   * come back closes its room ('node-restarted'). `departed`: seats that leave it once it is back.
+   * come back closes its room ('node-restarted'). `departed`: seats that leave it once it is back; they, and any seat or
+   * observer gone while it is being placed, claim nothing for it (placeRestored).
    * @returns {boolean} accepted (a malformed reference is refused at once)
    */
   restoreRemoteMatch(room, ref, departed = []) {
@@ -672,10 +673,13 @@ export class ClusterLobby extends Lobby {
     let adopt = safeId(ref.nodeId) && safeId(ref.nodeGeneration) ? { nodeId: ref.nodeId, nodeGeneration: ref.nodeGeneration } : null;
     let handle = null, failure = null;
     while (!handle && plan.valid()) {
-      // taken over: the same assignment; rebuilt: a new one from the old one's checkpoint (platform.restore)
-      const spec = { ...structuredClone(plan.spec), assignmentId: adopt ? ref.assignmentId : randomBytes(16).toString('hex') };
+      // taken over: the same assignment; rebuilt: a new one from the old one's checkpoint (platform.restore). A departed
+      // seat keeps its place in the roster but not its session (it may be in another match by now), and only the room's
+      // current observers come with it: the directory's one assignment per session.
+      const spec = { ...structuredClone(plan.spec), spectators: room.spectators.map(s => s.playerId),
+        assignmentId: adopt ? ref.assignmentId : randomBytes(16).toString('hex') };
       try {
-        handle = await this.platform.restore(spec, { adopt, checkpointId: ref.assignmentId });
+        handle = await this.platform.restore(spec, { adopt, checkpointId: ref.assignmentId, departed: this.restoredDeparted(room, spec, departed) });
         plan.spec = spec;
       } catch (error) {
         const code = error?.code;
@@ -696,7 +700,10 @@ export class ClusterLobby extends Lobby {
     this.assignments.set(plan.spec.assignmentId, plan);
     this.restoreStats[handle.adopted ? 'adopted' : 'rebuilt']++;
     this.log.info(`[lobby] ${room.code} match #${room.matchCount} ${handle.adopted ? 'taken over' : 'restored'} on ${handle.nodeId}`);
-    for (const id of departed) if (plan.proxy.members.has(id)) plan.proxy.onLeave(id);
+    // its node still has them as of the checkpoint: every departed seat leaves (the node's leave finds a member already
+    // gone), and an observer who went while it was being placed is removed
+    for (const id of this.restoredDeparted(room, plan.spec, departed)) plan.proxy.onLeave(id);
+    for (const id of plan.spec.spectators) if (!room.spectatorOf(id)) plan.proxy.removeSpectator(id);
     if (room.disposed || room.match !== plan.proxy) return true;
     // the members already back get their game channel now; the others when they return (onReconnect → resume)
     for (const id of plan.proxy.members) {
@@ -705,6 +712,12 @@ export class ClusterLobby extends Lobby {
     }
     this.broadcastState(room);
     return true;
+  }
+
+  /** A restored match's human seats that are no longer in it: departed before the restart, or since. */
+  restoredDeparted(room, spec, departed) {
+    const active = new Set(room.activeHumans().map(s => s.playerId));
+    return spec.seats.filter(s => !s.isBot && (departed.includes(s.playerId) || !active.has(s.playerId))).map(s => s.playerId);
   }
 
   /**

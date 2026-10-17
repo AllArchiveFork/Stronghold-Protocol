@@ -9,6 +9,7 @@ import { SessionRegistry } from '../server/net.js';
 import { validateC2S, CARD_LIMITS } from '../shared/protocol.js';
 import { ERR, MATCHMAKING_VERSION } from '../shared/constants.js';
 import { DATA } from './match/harness.js';
+import { OPERATOR_SKINS as SKINS } from '../shared/skins.js';
 
 const quiet = { info() {}, warn() {}, error() {}, debug() {} };
 const OPS = [...new Set(Object.values(DATA.chess).map((c) => c.charId).filter(Boolean))].sort();
@@ -178,4 +179,27 @@ test('the card never enters a match: local seats and the cluster DTO carry none,
   assert.equal(calls[0].context.isCurrent(), false, 'a real seat change still invalidates it');
   calls[0].resolve(null);
   assert.ok((await pending).error);
+});
+
+test('look / avatarLook (feedback #9 / #24): 精一 or a skin of that very operator; an operator change drops an orphaned look', (t) => {
+  const ok = (msg) => assert.equal(validateC2S({ t: 'room.card', ...msg }), null, JSON.stringify(msg));
+  const bad = (msg, field) => assert.equal(validateC2S({ t: 'room.card', ...msg }), `bad field ${field}`, JSON.stringify(msg));
+  ok({ look: '' }); ok({ look: 'e1' }); ok({ avatarLook: 'char_103_angel_wild_1' }); ok({ bg: 'skin:char_103_angel_wild_1' });
+  bad({ look: 'e2' }, 'look'); bad({ avatarLook: '/assets/x.png' }, 'avatarLook'); bad({ look: 1 }, 'look');
+  const withSkin = SKINS.find((s) => OPS.includes(s.charId));
+  assert.ok(withSkin, 'an operator of the data with a skin');
+  const other = OPS.find((id) => id !== withSkin.charId);
+  const f = fixture(t);
+  const s = f.player();
+  assert.deepEqual(f.card(s, { charId: withSkin.charId, look: withSkin.id, avatar: withSkin.charId, avatarLook: 'e1' }), { ok: true });
+  assert.deepEqual({ ...s.card }, { charId: withSkin.charId, look: withSkin.id, avatar: withSkin.charId, avatarLook: 'e1' });
+  assert.equal(f.card(s, { charId: other, look: withSkin.id }).error, ERR.BAD_MSG, 'another operator\'s skin');
+  assert.equal(f.card(s, { avatarLook: 'char_unknown_skin_1' }).error, ERR.BAD_MSG);
+  assert.deepEqual({ ...s.card }, { charId: withSkin.charId, look: withSkin.id, avatar: withSkin.charId, avatarLook: 'e1' }, 'nothing stored on a refusal');
+  // a new portrait operator: the skin look no longer fits and is dropped; 'e1' fits every operator and stays
+  assert.deepEqual(f.card(s, { charId: other, avatar: other }), { ok: true });
+  assert.deepEqual({ ...s.card }, { charId: other, avatar: other, avatarLook: 'e1' });
+  // a look without its operator is not kept; '' clears
+  assert.deepEqual(f.card(s, { avatar: '', avatarLook: 'e1' }), { ok: true });
+  assert.deepEqual({ ...s.card }, { charId: other });
 });

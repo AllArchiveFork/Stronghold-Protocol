@@ -8,7 +8,7 @@ import { h } from '../../vendor/preact.module.js';
 import { useEffect, useReducer } from '../../vendor/hooks.module.js';
 import htm from '../../vendor/htm.module.js';
 import { ERR_TEXT } from '../../../shared/constants.js';
-import { t } from '../../../shared/i18n.js';
+import { t, N_ } from '../../../shared/i18n.js';
 import { recordError } from '../diag.js';
 
 // no shared static vnodes (see components.js hFresh: htm's static cache would retain unmounted DOM)
@@ -88,6 +88,13 @@ export function dismissToast(id) {
   }, 200));
 }
 
+/** Server failure details with their own text (the match's votes: server/match/match/setupVote.js, kickVote.js). */
+const DETAIL_TEXT = {
+  'reroll-proposed': N_('本次开局信息你已发起过一次重刷投票'),
+  'reroll-limit': N_('本局的重刷次数已用完'),
+  'kick-failed-this-round': N_('本回合对该玩家的移出投票未通过，请下回合再试'),
+};
+
 /**
  * Text for an error-ish value: NetError / {code,msg} / Error / string — in the current language (the Chinese texts are
  * msgids: ERR_TEXT, net.js CLIENT_ERR_TEXT, a server `msg`; anything else is shown as it is).
@@ -99,6 +106,7 @@ export function describeError(err) {
   if (typeof err === 'string') return t(Object.hasOwn(ERR_TEXT, err) ? ERR_TEXT[err] : err);
   // a nickname reserved for the server's owner: the NetError's own text (net.js NAME_RESERVED_TEXT)
   if (err.code === 'NAME_REJECTED' && err.detail === 'reserved' && typeof err.message === 'string' && err.message) return t(err.message);
+  if (typeof err.detail === 'string' && Object.hasOwn(DETAIL_TEXT, err.detail)) return t(DETAIL_TEXT[err.detail]);
   if (err.code && Object.hasOwn(ERR_TEXT, err.code)) return t(ERR_TEXT[err.code]);
   if (typeof err.message === 'string' && err.message) return t(err.message);
   if (typeof err.msg === 'string' && err.msg) return t(err.msg);

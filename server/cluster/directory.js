@@ -98,14 +98,19 @@ export class ClusterDirectory {
   /**
    * Reserve a node for an assignment: the least loaded usable one, or — `nodeId` (a restored match taken over where it
    * still runs, server/cluster/platform.js restore) — exactly that node when it is usable (NO_NODE otherwise).
+   * `departed`: roster seats a restored match no longer holds (they left it before the restart, as detachPlayer did):
+   * they stay in its roster but claim no session — that session may already belong to another assignment.
    */
-  prepare({ roomCode, sessionIds, build, protocol, mode = 'coop', experimental = EXPERIMENTAL_DEFAULTS, assignmentId = randomBytes(16).toString('hex'), nodeId = null }) {
+  prepare({ roomCode, sessionIds, build, protocol, mode = 'coop', experimental = EXPERIMENTAL_DEFAULTS, assignmentId = randomBytes(16).toString('hex'), nodeId = null,
+    departed = [] }) {
     // Explicit coordinator admission: validate the approved room policy, not a
     // caller-supplied bare capacity. Bind that immutable policy to this nonce.
     const options = experimentalOptions(experimental), capacity = roomCapacity(mode, options);
     if (!['solo', 'coop'].includes(mode) || !room(roomCode) || !identifier(build) || !identifier(assignmentId) || !integer(protocol, 1)
       || !Array.isArray(sessionIds) || sessionIds.length < 1 || sessionIds.length > capacity
-      || !sessionIds.every(identifier) || new Set(sessionIds).size !== sessionIds.length) throw new TypeError('invalid assignment');
+      || !sessionIds.every(identifier) || new Set(sessionIds).size !== sessionIds.length
+      || !Array.isArray(departed) || !departed.every(id => sessionIds.includes(id)) || new Set(departed).size >= sessionIds.length) throw new TypeError('invalid assignment');
+    const claimed = sessionIds.filter(id => !departed.includes(id));
     const now = this.time();
     this.sweep(now);
     const previous = this.assignments.get(assignmentId);
@@ -118,7 +123,7 @@ export class ClusterDirectory {
     }
     if (this.closed.has(assignmentId)) throw new AllocationError('STALE_ASSIGNMENT');
     if (this.rooms.has(roomCode)) throw new AllocationError('ROOM_BUSY');
-    if (sessionIds.some(id => this.sessions.has(id))) throw new AllocationError('SESSION_BUSY');
+    if (claimed.some(id => this.sessions.has(id))) throw new AllocationError('SESSION_BUSY');
     const candidates = [...this.nodes.values()].filter(node => this.usable(node, build, protocol, now) && (nodeId === null || node.nodeId === nodeId));
     const loads = new Map(candidates.map(node => [node.nodeId, this.load(node)]));
     // (a match taken over where it runs is already part of that node's load)
@@ -133,7 +138,7 @@ export class ClusterDirectory {
     this.assignments.set(assignmentId, assignment);
     this.pending.set(assignmentId, assignment);
     this.rooms.set(roomCode, assignmentId);
-    for (const id of sessionIds) this.sessions.set(id, assignmentId);
+    for (const id of claimed) this.sessions.set(id, assignmentId);
     return this.view(assignment);
   }
 

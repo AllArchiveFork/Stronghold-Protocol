@@ -92,6 +92,8 @@ export const MATCH_FIELDS = Object.freeze({
     'localViews', 'unitePlan', '_normalAliveCount', '_uniteRelay', 'uniteResultView', '_uniteLeftKey', '_uniteBounds',
     'teamLp', 'bossPool', '_turnToken', '_botPath', '_botTraits', '_workerBotPrepOwner', '_botEmotesMerges', 'overtimeApplied',
     'bossOvertimeStartReal', '_finalEnding', '_bossStartAt', 'lastResultMsg', '_uniteBudget', 'onCheckpoint', 'replayRound',
+    // the reroll proposal marks and the kick vote (setupVote.js, kickVote.js): a restore drops them
+    '_setupProposals', 'kickVote', '_kickVoteSeq', '_kickFailed', '_kickVoteAt',
   ]),
 });
 
@@ -391,7 +393,7 @@ export function restoreMatch(m, doc, { createRngFromState, log = null, replay = 
   for (const h of [...m._timers]) m.cancel(h);
   m._timers.clear();
   Object.assign(m, {
-    paused: false, _pausedAt: 0, overtimeAt: 0, deadline: 0, setupVote: null, _phaseTimer: null, _infoAdvanceTimer: null,
+    paused: false, _pausedAt: 0, overtimeAt: 0, deadline: 0, setupVote: null, kickVote: null, _phaseTimer: null, _infoAdvanceTimer: null,
     _turnTimer: null, _pubTimer: null, _pubDirty: false, _lastPubAt: -Infinity, _lastPubJson: '', _prepEndQueued: false,
     _turnToken: 0, _progressTimer: null, _bossPubTimer: null, _bossClock: null, _bossClockOn: false, _poolTimer: null,
     pacer: null, runner: null, fields: [], unitePlan: null, teamLp: null, bossPool: null, _botPath: null, lastResultMsg: null,

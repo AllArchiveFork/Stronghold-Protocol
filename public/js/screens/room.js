@@ -27,6 +27,7 @@
 // CONTENT_NOT_READY), and a plugin mode the host chose shows beside the difficulty.
 // Texts go through t() (docs/I18N.md).
 
+import { audio } from '../audio.js';
 import { useEffect, useMemo, useRef, useState } from '../../vendor/hooks.module.js';
 import { DIFFICULTIES, DIFFICULTY_NAMES, DIFFICULTY_COLORS, MAX_SEATS, MAX_SPECTATORS } from '../../../shared/constants.js';
 import { roomCapacity } from '../../../shared/playerCapacity.js';
@@ -44,8 +45,8 @@ import { hasScriptConsent, rememberScriptConsent } from '../content.js';
 import { net } from '../net.js';
 import { store, useStore, shallowEqual, emptyMatch, isSpectating } from '../store.js';
 import { data, useData } from '../data.js';
-import { CARD_PREF, cardOperators, seatPortrait, cardAvatarUrl } from '../ui/seatArt.js';
-import { CARD_SYNC, useMyCard, setCardOperator, setCardAvatar, setCardBackground, cardMessage, seatCardMatches } from '../ui/playerCard.js';
+import { CARD_PREF, cardOperators, seatPortrait, cardAvatarUrl, lookOptions } from '../ui/seatArt.js';
+import { CARD_SYNC, useMyCard, setCardOperator, setCardAvatar, setCardBackground, setCardLook, setAvatarLook, cardMessage, seatCardMatches } from '../ui/playerCard.js';
 import { OperatorPicker, AvatarPicker } from '../ui/opPicker.js';
 import { NameCardLayer, NameCardPicker } from '../ui/namecards.js';
 import { TrophyBadge } from '../ui/trophies.js';
@@ -257,8 +258,8 @@ function SeatCard({ seat, index, room, facts, myId, myCard, busy, gd, queued, on
       ${isMe ? html`<span class="rseat__me" title=${t('你')}><${Icon} name="info" /></span>` : null}
       ${isMe && onPickAvatar
         ? html`<button type="button" class="rseat__ava" onClick=${onPickAvatar} title=${t('更换头像')} aria-label=${t('更换头像')}>
-            <${AvatarFrame} size="sm" name=${seat.name} src=${cardAvatarUrl(card?.avatar, portraits.m)} seat=${index} self=${true} /><span class="rseat__ava-pen" aria-hidden="true"><${Icon} name="edit" /></span></button>`
-        : html`<${AvatarFrame} size="sm" name=${seat.name} src=${seat.isBot ? null : cardAvatarUrl(card?.avatar, portraits.m)} seat=${index} bot=${seat.isBot} self=${isMe} />`}
+            <${AvatarFrame} size="sm" name=${seat.name} src=${cardAvatarUrl(card?.avatar, portraits.m, card?.avatarLook)} seat=${index} self=${true} /><span class="rseat__ava-pen" aria-hidden="true"><${Icon} name="edit" /></span></button>`
+        : html`<${AvatarFrame} size="sm" name=${seat.name} src=${seat.isBot ? null : cardAvatarUrl(card?.avatar, portraits.m, card?.avatarLook)} seat=${index} bot=${seat.isBot} self=${isMe} />`}
       <span class="rseat__who">
         ${seat.isBot ? null : html`<${TrophyBadge} count=${Number.isSafeInteger(card?.trophies) ? card.trophies : null} class="tbadge--inline" />`}<b class=${`rseat__name${owner ? ' sp-owner-name' : ''}`}>${seat.name || t('博士')}</b>
         <${OwnerBadge} seat=${seat} />
@@ -374,14 +375,14 @@ export function RoomScreen() {
   const [picking, setPicking] = useState(null); // 'op' | 'avatar' | 'bg'
   const portraits = useMemo(() => ({
     pool: cardList.filter((c) => (c.rarity ?? 0) >= 5).sort((a, b) => (a.charId < b.charId ? -1 : 1)),
-    byChar: new Map(cardList.map((c) => [c.charId, c])), m, myId: me.playerId, myCard: myCard.charId,
-  }), [cardList, m, me.playerId, myCard.charId]);
+    byChar: new Map(cardList.map((c) => [c.charId, c])), m, myId: me.playerId, myCard: myCard.charId, myLook: myCard.look,
+  }), [cardList, m, me.playerId, myCard.charId, myCard.look]);
   // tell the server (teammates see the card) once it knows room.card; a server that refuses it keeps the card local
   const cardRefused = useRef(false);
   const mineCard = room ? roomFacts(room, me.playerId).mine?.card : null;
   const known = (id) => (id && portraits.byChar.has(id) ? id : '');
   const cardMsg = cardMessage({ ...myCard, charId: known(myCard.charId), avatar: known(myCard.avatar) });
-  const cardKey = `${cardMsg.charId}|${cardMsg.avatar}|${cardMsg.bg}|${cardMsg.trophies}`;
+  const cardKey = `${cardMsg.charId}|${cardMsg.avatar}|${cardMsg.bg}|${cardMsg.trophies}|${cardMsg.look}|${cardMsg.avatarLook}`;
   useEffect(() => {
     if (!CARD_SYNC || cardRefused.current || !room || room.inMatch || conn.status !== 'online' || myCard.trophies == null) return;
     if (!roomFacts(room, me.playerId).mine || seatCardMatches(mineCard, cardMsg)) return;
@@ -411,7 +412,12 @@ export function RoomScreen() {
     }
   };
 
-  const toggleReady = () => run('ready', () => net.request('room.ready', { ready: !myReady }));
+  // 准备 plays the official PLAYER_READY, cancelling it the plain button-up (feedback #10)
+  const toggleReady = () => run('ready', async () => {
+    const ready = !myReady;
+    await net.request('room.ready', { ready });
+    audio.sfx(ready ? 'ready' : 'back', { volume: 0.8 });
+  });
   const start = () => run('start', () => net.request('room.start', {}));
   const queueReason = partyQueueReason(room, me.playerId, online);
   const joinQueue = () => run('queue', () => net.request('queue.join', { difficulty: room.difficulty, party: true }));
@@ -584,8 +590,11 @@ export function RoomScreen() {
     ${picking === 'op' ? html`<${OperatorPicker} title=${t('名片干员')} micro="SEAT CARD" current=${myCard.charId} list=${cardList} m=${m}
       autoLabel=${t('默认')} autoTitle=${t('按博士编号自动分配')}
       note=${CARD_SYNC ? t('选择后，同盟里的博士都会看到这张立绘') : t('目前只有你自己看得到；服务器下次更新后，同盟里的其他博士也能看到你的选择')}
-      onPick=${(id) => { setCardOperator(id); setPicking(null); }} onClose=${() => setPicking(null)} />` : null}
-    ${picking === 'avatar' ? html`<${AvatarPicker} current=${myCard.avatar} list=${cardList} m=${m} onPick=${(id) => { setCardAvatar(id); setPicking(null); }} onClose=${() => setPicking(null)} />` : null}
+      looks=${{ kind: 'portrait', current: myCard.look, onLook: (look) => { setCardLook(look); setPicking(null); } }}
+      onPick=${(id) => { setCardOperator(id); if (!id || lookOptions(m, id, 'portrait').length < 2) setPicking(null); }} onClose=${() => setPicking(null)} />` : null}
+    ${picking === 'avatar' ? html`<${AvatarPicker} current=${myCard.avatar} list=${cardList} m=${m}
+      looks=${{ kind: 'avatar', current: myCard.avatarLook, onLook: (look) => { setAvatarLook(look); setPicking(null); } }}
+      onPick=${(id) => { setCardAvatar(id); if (!id || lookOptions(m, id, 'avatar').length < 2) setPicking(null); }} onClose=${() => setPicking(null)} />` : null}
     ${picking === 'bg' ? html`<${NameCardPicker} current=${myCard.bg} onPick=${setCardBackground} onClose=${() => setPicking(null)} />` : null}
     ${protoShown ? html`<${RoomProtocol} room=${room} busy=${busy} onClose=${() => setPicker(false)} onPick=${setDifficulty} leaving=${protoLeaving} />` : null}
   </div>`;

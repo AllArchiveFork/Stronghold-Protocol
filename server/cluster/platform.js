@@ -325,10 +325,12 @@ export class RemoteGamePlatform {
    * way the assignment is published at once (no channel to wait for: each member binds as it comes back, through
    * resume). Throws an AllocationError / RPC error code: NO_NODE, NOT_READY or a transport code (the caller may retry),
    * STALE_ASSIGNMENT (adopt: the actor is gone), NO_CHECKPOINT, RESTORE_REFUSED, CONTEXT (it cannot come back).
+   * `departed`: its human seats that had left it (revoked, as before the restart): they claim no session in the
+   * directory — another match may hold it by now — and get no game channel; the caller sends their leave once it is back.
    * @param {object} input assignment DTO with its assignmentId, the current build / protocol and spectators
-   * @param {{ adopt?: { nodeId: string, nodeGeneration: string } | null, checkpointId?: string }} [opts]
+   * @param {{ adopt?: { nodeId: string, nodeGeneration: string } | null, checkpointId?: string, departed?: string[] }} [opts]
    */
-  async restore(input, { adopt = null, checkpointId = null } = {}) {
+  async restore(input, { adopt = null, checkpointId = null, departed = [] } = {}) {
     if (this.closed) throw new AllocationError('PLATFORM_CLOSED');
     let spec;
     try { spec = copyAssignmentSpec(input); }
@@ -339,14 +341,16 @@ export class RemoteGamePlatform {
     // a node that has not answered yet may still run it: ask again (a configured node that is gone is NODE_LOST later)
     if (adopt && !adopting) throw new AllocationError(this.nodes.has(adopt.nodeId) && this.nodes.get(adopt.nodeId).generation === null ? 'NOT_READY' : 'STALE_ASSIGNMENT');
     if (!adopting && !safeId(checkpointId)) throw new TypeError('invalid checkpoint');
+    const humans = spec.seats.filter(s => !s.isBot).map(s => s.playerId);
+    if (!Array.isArray(departed) || !departed.every(id => humans.includes(id))) throw new TypeError('invalid remote match');
     const assignment = this.directory.prepare({ assignmentId: spec.assignmentId, roomCode: spec.roomCode,
-      sessionIds: spec.seats.filter(s => !s.isBot).map(s => s.playerId), build: this.build, protocol: this.protocol,
+      sessionIds: humans, departed, build: this.build, protocol: this.protocol,
       mode: spec.mode, experimental: spec.experimental, nodeId: adopting ? adopt.nodeId : null });
     const node = this.nodes.get(assignment.nodeId);
     const ctx = { spec, node, generation: assignment.generation, controller: new AbortController(), isCurrent: () => true, state: 'preparing',
-      remoteCreated: false, cleanup: null, revokedMembers: new Map(), removals: new Map(), terminal: false, restored: true,
-      members: new Map(spec.seats.filter(s => !s.isBot).map(s => [s.playerId, 'player'])) };
-    for (const id of spec.spectators) if (!ctx.members.has(id)) ctx.members.set(id, 'spectator');
+      remoteCreated: false, cleanup: null, revokedMembers: new Map(departed.map(id => [id, 'player'])), removals: new Map(), terminal: false, restored: true,
+      members: new Map(humans.filter(id => !departed.includes(id)).map(id => [id, 'player'])) };
+    for (const id of spec.spectators) if (!ctx.members.has(id) && !ctx.revokedMembers.has(id)) ctx.members.set(id, 'spectator');
     this.contexts.set(spec.assignmentId, ctx);
     try {
       let value;

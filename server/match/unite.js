@@ -3,8 +3,9 @@
 // Trigger (co-op only): after the normal combats, ≥ 1 alive player leaked (a counted leak ⇒ not perfect) and
 // ≥ 1 alive player was perfect. Helpers (PRTS 卫戍协议/帮助 §联防阶段): up to config.unite.maxHelpers (2) perfect
 // players chosen by most units on the field (downed included) > has an active bond (存疑) > most undowned units, then
-// seat; with 2 helpers the one ranked first by most units > active bond > Σ active bond layers (存疑) > most undowned
-// units "率先迎敌" on the RIGHT-hand field (colOffset +8, where the escaped_multi routes enter), the other keeps the
+// (owner 2026-10-17, feedback #13 [ASSUMED]) most active bonds > most Σ active bond layers > seat; with 2 helpers the one
+// ranked first by most units > active bond > Σ active bond layers (存疑) > most undowned units > most active bonds > seat
+// "率先迎敌" on the RIGHT-hand field (colOffset +8, where the escaped_multi routes enter), the other keeps the
 // left half (colOffset 0); a lone helper plays escaped_single on its own field. The field is the round's battlefield —
 // the match stage with its terrain, crates, water, devices and runes — opened to both halves (GEO.UNITE_RECT, cols
 // 0–20; the stage's right half is its left half + 8 columns), every helper's pieces on their prep tiles
@@ -152,11 +153,13 @@ export function planUniteRelay(m, plan, result, fieldSpawns = null) {
 export function helperStats(m, ps, results) {
   const units = ps.deployCount;
   let active = false;
+  let activeBonds = 0;
   let layers = 0;
   const pending = ps.pendingLayerGains;
   for (const [id, b] of Object.entries(ps.bonds || {})) {
     if (!b || !b.active) continue;
     active = true;
+    activeBonds++;
     const stored = Number(ps.layers && ps.layers[id]) || Number(b.layers) || 0;
     const gain = pending && Number(pending[id]);
     const add = Number.isFinite(gain) && gain > 0 ? layerGainRoom(stored, Math.floor(gain)) : 0;
@@ -170,19 +173,25 @@ export function helperStats(m, ps, results) {
     standing = 0;
     for (const u of r.unitsEnd) if (u && opUids.has(u.uid) && u.alive) standing++;
   }
-  return { units, active, layers, standing };
+  return { units, active, activeBonds, layers, standing };
 }
 
 /**
  * The ≤ maxHelpers helpers, first = the one that meets the enemies first (right-hand field): selection by units >
- * active bond > standing units > seat, then the pair ordered by units > active bond > layers > standing > seat.
+ * active bond > standing units > number of active bonds > Σ active layers > seat, then the pair ordered by units >
+ * active bond > layers > standing > number of active bonds > seat (Σ layers already ranks the pair before standing,
+ * so repeating it after the bond count changes nothing). The two keys before the seat are the owner's tie-break
+ * (2026-10-17, feedback #13): mid-game every perfect player fields 8 units with a bond active, so PRTS's keys tie
+ * and the seat alone used to decide — the official tie-break after them is unknown [ASSUMED]. No RNG.
  */
 export function helperOrder(m, perfects, results) {
   const st = new Map(perfects.map((ps) => [ps.playerId, helperStats(m, ps, results)]));
   const S = (ps) => st.get(ps.playerId);
-  const select = perfects.slice().sort((a, b) => S(b).units - S(a).units || (S(b).active - S(a).active) || S(b).standing - S(a).standing || a.seat - b.seat)
+  const select = perfects.slice().sort((a, b) => S(b).units - S(a).units || (S(b).active - S(a).active) || S(b).standing - S(a).standing
+    || S(b).activeBonds - S(a).activeBonds || S(b).layers - S(a).layers || a.seat - b.seat)
     .slice(0, m.gd.unite.maxHelpers);
-  return select.sort((a, b) => S(b).units - S(a).units || (S(b).active - S(a).active) || S(b).layers - S(a).layers || S(b).standing - S(a).standing || a.seat - b.seat);
+  return select.sort((a, b) => S(b).units - S(a).units || (S(b).active - S(a).active) || S(b).layers - S(a).layers || S(b).standing - S(a).standing
+    || S(b).activeBonds - S(a).activeBonds || a.seat - b.seat);
 }
 
 /** Battle options for the unite field (without data/logger, added by the match). */

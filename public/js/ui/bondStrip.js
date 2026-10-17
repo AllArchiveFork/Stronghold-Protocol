@@ -28,6 +28,9 @@
 // shop yet), ✕ when all its bonds are off this match (m.private.diyBanned) — and opens the operator's card; a watched
 // teammate's 自选 pieces on the field are rows too (their picks are not sent), opening THEIR operator's card (the unit's
 // pick goes with onMember: never the empty 甄选干员 slot's card).
+// 预计叠层 (GitHub feedback #25; server/match/layerForecast.js, the own m.private.layerForecast in PREP): a disc whose bond
+// the player's own <休整期结束时> effects will add layers to carries a +n badge, and its popup a 预计叠层 block naming the
+// sources; random sources are not counted (「含随机来源，未计入」) and neither are plugins (「插件效果未计入」).
 
 import { html, BondDisc, Icon, MicroLabel, Tooltip } from './components.js';
 import { RichText, UnitThumb, BondGlyph, GIcon } from './gameComponents.js';
@@ -47,11 +50,28 @@ function OwnerTag({ owner }) {
   </span>`;
 }
 
+/** The name of a forecast source (layerForecast sources[]: { kind, id }). */
+export function forecastSourceName(src) {
+  const rec = (file) => data.lookup(file, src.id);
+  switch (src.kind) {
+    case 'bond': return rec('bonds')?.name || src.id;
+    case 'band': return rec('bands')?.name || src.id;
+    case 'item': return rec('items')?.name || src.id;
+    case 'effect': return rec('effects')?.name || src.id;
+    case 'garrison': { const c = rec('chess'); return c ? t('{name} 的特质', { name: c.name }) : t('特质'); }
+    default: return t('特质');
+  }
+}
+
+/** The forecast layers of a bond (0 when none). */
+const forecastOf = (fc, bondId) => (fc && fc.bonds && Number(fc.bonds[bondId]?.n)) || 0;
+
 /**
  * @param {{ bonds: any[], layersDisabled?: boolean, onOpen:(bondId:string)=>void, openId?: string|null, max?: number,
- *   owner?: string|null }} props — owner: the watched teammate's name (null = your own bonds)
+ *   owner?: string|null, forecast?: any }} props — owner: the watched teammate's name (null = your own bonds); forecast:
+ *   the own m.private.layerForecast in PREP, else null
  */
-export function BondStrip({ bonds, layersDisabled = false, onOpen, openId = null, max = 14, owner = null }) {
+export function BondStrip({ bonds, layersDisabled = false, onOpen, openId = null, max = 14, owner = null, forecast = null }) {
   const sorted = sortBonds(bonds, (id) => data.lookup('bonds', id));
   if (!sorted.length) {
     return html`<div class=${cx('bstrip', 'bstrip--empty', owner && 'is-other')} data-owner=${owner || null}>
@@ -77,12 +97,14 @@ export function BondStrip({ bonds, layersDisabled = false, onOpen, openId = null
         </div>`;
       }
       const next = nextThreshold(b.count ?? 0, th);
+      const fc = rec?.noStack || owner ? 0 : forecastOf(forecast, b.bondId);
       return html`<div key=${b.bondId} role="listitem" data-bond=${b.bondId} data-harmony=${b.harmony > 0 ? b.harmony : null}
           class=${cx('bslot', b.active && 'is-active', openId === b.bondId && 'is-open')}>
         <${BondDisc} name=${rec?.name || b.bondId} icon=${bondIconUrl(m, b.bondId)} layers=${rec?.noStack ? undefined : b.layers ?? 0}
           tier=${b.tier ?? 0} maxTier=${Math.max(1, th.length)} active=${!!b.active} size="sm" showName=${true}
           layersDisabled=${layersDisabled} onClick=${() => onOpen(b.bondId)}
           title=${`${rec?.name || b.bondId} ${b.count ?? 0}/${next ?? th[th.length - 1] ?? '-'}${b.harmony > 0 ? t('（含调和 +{harmony}）', { harmony: b.harmony }) : ''}`} />
+        ${fc ? html`<span class="bslot__fc num" data-forecast=${fc} title=${t('休整期结束时预计 +{n} 层', { n: fc })}>+${fc}</span>` : null}
         <span class=${cx('bslot__count', 'num', next == null && 'is-max')}>${b.count ?? 0}<small>/${next ?? th[th.length - 1] ?? '-'}</small></span>
       </div>`;
     })}
@@ -103,9 +125,10 @@ export function BondStrip({ bonds, layersDisabled = false, onOpen, openId = null
  *   pick (`diy`, its unit's: the card composes their operator; the own rows' card reads m.private.diy); `off`: the
  *   mode never activates this bond (gameLogic modeOffBonds — 标准's 10 inactive bonds): 本局禁用 instead of 未激活, with a
  *   note, no 在场 count and no 当前效果 block (its numbers would promise an effect the mode never gives; the bond text stays).
- *   `entry.harmony` (the server's bond views: the +1 调和 added to `count`): 在场 n（含调和 +1） and the 调和 row
+ *   `entry.harmony` (the server's bond views: the +1 调和 added to `count`): 在场 n（含调和 +1） and the 调和 row;
+ *   `forecast`: the own m.private.layerForecast in PREP (the 预计叠层 block), else null
  */
-export function BondPopup({ bondId, entry, priv, banned = [], onClose, onMember, place = null, over = false, beside = null, owner = null, off = false }) {
+export function BondPopup({ bondId, entry, priv, banned = [], onClose, onMember, place = null, over = false, beside = null, owner = null, off = false, forecast = null }) {
   const b = data.lookup('bonds', bondId);
   if (!b) return null;
   const count = entry?.count ?? 0;
@@ -154,6 +177,13 @@ export function BondPopup({ bondId, entry, priv, banned = [], onClose, onMember,
     <div class="bpop__tiers">
       ${th.map((n, i) => html`<span key=${i} class=${cx('bpop__tier', i < tier && 'is-on')}><b class="num">${n}</b><small>${b.maxCount != null ? t('名及以下') : tc('bond-threshold', '名')}</small></span>`)}
     </div>
+    ${forecast && !off && !b.noStack && (forecastOf(forecast, bondId) || forecast.random || forecast.partial) ? html`<section class="bpop__sec bpop__fc" data-forecast=${forecastOf(forecast, bondId)}>
+      <h4>${t('预计叠层')} <small>${t('休整期结束时')}</small></h4>
+      ${forecastOf(forecast, bondId) ? html`<p><b class="num t-mint">+${forecastOf(forecast, bondId)}</b> ${t('层')} · ${forecast.bonds[bondId].sources.map((x) => `${forecastSourceName(x)} +${x.n}`).join('、')}</p>`
+        : html`<p class="t-lo">${t('本盟约没有确定的叠层来源')}</p>`}
+      ${forecast.random ? html`<small class="bpop__fcnote">${t('含随机来源，未计入')}</small>` : null}
+      ${forecast.partial ? html`<small class="bpop__fcnote">${t('插件效果未计入')}</small>` : null}
+    </section>` : null}
     ${hasNow ? html`<section class="bpop__sec bpop__sec--now">
       <h4>${t('当前效果')} ${b.noStack ? null : html`<small class="num">${t('（{layers} 层）', { layers })}</small>`}</h4>
       <${RichText} as="p" text=${formatBondEffect(b, layers)} class="bpop__desc" />

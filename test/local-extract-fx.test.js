@@ -264,6 +264,46 @@ print(json.dumps([fx.token_skill_ids(rec), fx.mount_names([6, 8, 9, 5, 10, 29, 3
     assert.deepEqual(float, [0.5, 1], 'a float channel stays');
     assert.deepEqual(unknown, [1, 0], 'an unknown format (a compressed mesh\'s colours, already 0…1) stays');
   });
+  test('skins (§33.12 Skin): the catalogue\'s skins, their battle prefab, the effect swaps and fake projectiles', () => {
+    const out = py(`
+cat = '''export const SKIN_CATALOGUE = Object.freeze([
+  {
+    "id": "char_1040_blaze2_nlc_1",
+    "charId": "char_1040_blaze2",
+    "name": N_("x"),
+    "officialId": "char_1040_blaze2@nlc#1",
+    "charName": "y" // i18n-ignore
+  },
+  { "id": "char_1033_swire2_ambienceSynesthesia_4", "charId": "char_1033_swire2", "officialId": "char_1033_swire2@ambienceSynesthesia#4" },
+  { "id": "broken", "charId": "char_002_amiya", "officialId": "char_003_kalts@boc#6" },
+  { "id": "char_1040_blaze2_winter_5", "charId": "char_1040_blaze2", "officialId": "char_1040_blaze2@winter#5" }
+]);'''
+lines = []
+eff = {'a_hit', 'a_hit_nlc#1', 'a_start_nlc#1', 'birth_nlc#1'}
+pk = lambda k: k.lower() if k and k.lower() in ('p', 'p_graphic', 'p_logic') else None
+pairs = [{'fromEffect': 'A_Hit', 'toEffect': 'A_Hit_nlc#1'}, {'fromEffect': 'a_start', 'toEffect': 'a_start_nlc#1'},
+         {'fromEffect': 'a_end', 'toEffect': 'a_end_nlc#1'}, {'fromEffect': 'common_char_birth_01', 'toEffect': 'birth_nlc#1'},
+         {'fromEffect': 'a_hit', 'toEffect': 'a_start_nlc#1'}, {'fromEffect': '', 'toEffect': 'x'}]
+fakes = [{'originProjectileKey': 'P', 'graphicProjectileKey': 'p_graphic', 'logicProjecitleKey': 'p_logic', '_fakeMuzzlePoint': 8},
+         {'originProjectileKey': 'q', 'graphicProjectileKey': 'q_graphic', 'logicProjecitleKey': 'q_logic', '_fakeMuzzlePoint': 2}]
+print(json.dumps([fx.skin_catalogue(cat), fx.skin_prefab_container('char_1040_blaze2@nlc#1'),
+                  fx.skin_prefab_container('char_1033_swire2@ambienceSynesthesia#4'),
+                  fx.skin_swaps(pairs, fakes, 1, eff, pk, 'skins x', lines.append), fx.skin_swaps(pairs, fakes, 0, eff, pk, 'x', lambda m: None)[1],
+                  lines, fx.fx_file('a_hit_nlc#1')]))`);
+    assert.deepEqual(out[0], {
+      char_1040_blaze2: [{ id: 'char_1040_blaze2_nlc_1', officialId: 'char_1040_blaze2@nlc#1' }, { id: 'char_1040_blaze2_winter_5', officialId: 'char_1040_blaze2@winter#5' }],
+      char_1033_swire2: [{ id: 'char_1033_swire2_ambienceSynesthesia_4', officialId: 'char_1033_swire2@ambienceSynesthesia#4' }],
+    }, 'by operator, in catalogue order; an officialId of another operator is skipped');
+    assert.equal(out[1], '/battle/prefabs/skins/character/char_1040_blaze2/char_1040_blaze2_nlc#1.prefab');
+    assert.equal(out[2], '/battle/prefabs/skins/character/char_1033_swire2/char_1033_swire2_ambiencesynesthesia#4.prefab', 'lower case, like the containers');
+    const [replace, fakeProjectiles, missing] = out[3];
+    assert.deepEqual(replace, { a_hit: 'a_hit_nlc#1', a_start: 'a_start_nlc#1', common_char_birth_01: 'birth_nlc#1' }, 'lower case; a missing target dropped; the first of two swaps kept');
+    assert.deepEqual(fakeProjectiles, [{ origin: 'p', graphic: 'p_graphic', logic: 'p_logic', muzzle: 'SPECIAL_2' }]);
+    assert.deepEqual(missing, ['a_end_nlc#1', 'q_graphic']);
+    assert.deepEqual(out[4], [], 'no fake projectiles without _useFakeProjectile');
+    assert.equal(out[5].length, 3, out[5].join('\n'));
+    assert.match(out[6], /^a_hit_nlc_1-[0-9a-f]{8}$/, 'a skin effect\'s file: the safe form + the key\'s CRC32');
+  });
 });
 
 describe('fx.py skill effect roles (index.json skills, DESIGN §33.12)', { skip: !PY && 'no python3' }, () => {
@@ -809,6 +849,30 @@ describe('extracted effects (when fx was extracted on this machine)', { skip: !f
       }
     }
     for (const f of Object.values(index.skins.char_1038_whitw2?.points?.SpecialPoint0 || {})) assert.equal(f.followRot, true, '荒芜拉普兰德\'s wolves turn with their bones');
+  });
+
+  test('the catalogue\'s skins (skins[<skin id>] with `char`): points, effect swaps to exported prefabs, fake projectiles in the index', { skip: !Object.values(index?.skins || {}).some((s) => s.char) && 'an index without the catalogue\'s skins' }, () => {
+    const MOUNTS = new Set(['FOOT', 'HIT', 'MUZZLE', 'HEAD', 'UI', 'GROUND', ...Array.from({ length: 24 }, (_, i) => `SPECIAL_${i}`)]);
+    for (const [id, sk] of Object.entries(index.skins)) {
+      if (!sk.char) { assert.ok(index.units[id]?.skin === id, `${id}: a unit's default skin`); continue; }
+      assert.ok(index.units[sk.char]?.kind === 'char', `${id}: ${sk.char} is an operator of the index`);
+      assert.ok(sk.officialId.startsWith(`${sk.char}@`) && sk.source.startsWith(`skinpack/${sk.char}.ab `), `${id}: officialId / source`);
+      assert.ok(sk.points && typeof sk.points === 'object' && sk.replace && typeof sk.replace === 'object' && Array.isArray(sk.fakeProjectiles), `${id}: points / replace / fakeProjectiles`);
+      for (const [from, to] of Object.entries(sk.replace)) {
+        assert.ok(from === from.toLowerCase() && to === to.toLowerCase() && from !== to, `${id}: ${from} → ${to}`);
+        assert.ok(index.prefabs[to] && groups['fx/prefabs'][to], `${id}: ${to} exported`);
+      }
+      for (const f of sk.fakeProjectiles) {
+        assert.ok(index.projectiles[f.graphic], `${id}: graphic projectile ${f.graphic}`);
+        assert.ok(f.logic === null || index.projectiles[f.logic], `${id}: logic projectile ${f.logic}`);
+        assert.ok(f.muzzle === null || MOUNTS.has(f.muzzle), `${id}: muzzle ${f.muzzle}`);
+      }
+    }
+    const blaze = index.skins.char_1040_blaze2_nlc_1;
+    if (blaze) {
+      assert.equal(blaze.replace.blaze2_attack_01_hit, 'blaze2_attack_01_hit_nlc#1');
+      assert.deepEqual(blaze.fakeProjectiles.map((f) => f.origin), ['projectile_chr_blaze2', 'projectile_chr_blaze2_s2', 'projectile_chr_blaze2_s3']);
+    }
   });
 
   test('projectiles of an index written by the fixed extractor: `main` is the projectile class\'s flying effect, a chain\'s line is `link`', { skip: !Object.values(index?.projectiles || {}).some((p) => p.link) && 'an index written before the fix (the runtime reads the behaviours: flight.js projectileParts)' }, () => {

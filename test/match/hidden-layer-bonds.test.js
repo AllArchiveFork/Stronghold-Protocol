@@ -91,5 +91,9 @@ test('hidden layers contribute to unite pair ordering while inactive layers do n
     } });
   const a = player('p_0', 0, 5), b = player('p_1', 1, 8), m = { gd }, results = new Map();
   assert.equal(helperStats(m, b, results).layers, 8);
+  assert.equal(helperStats(m, b, results).activeBonds, 1, 'the inactive bond counts neither as a bond nor as layers');
   assert.deepEqual(helperOrder(m, [a, b], results).map((p) => p.playerId), ['p_1', 'p_0']);
+  // the selection of 2 of 3 breaks a PRTS tie on the bond count, then on these layers, before the seat
+  const c = player('p_2', 2, 7);
+  assert.deepEqual(helperOrder(m, [a, b, c], results).map((p) => p.playerId), ['p_1', 'p_2']);
 });

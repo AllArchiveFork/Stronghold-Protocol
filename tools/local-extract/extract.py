@@ -43,7 +43,8 @@ aklz4.py registers a decoder for it. This script pulls the art the web sources l
     → fx/index.json, fx/textures.json, fx/prefabs/*.json, fx/tex/**.webp, fx/mesh/*.json, listed in their own
     data/local-fx.json (next to --manifest; data/local-assets.json has no fx group);
     only with an explicit --only fx (a plain run leaves them out): the Phase 1a sample by default, --fx-set used for
-    every effect the units reference, --fx-keys <k1,k2> for named prefabs
+    every effect the units reference (and the swapped effects of the operators' skins of shared/skin-catalogue.js,
+    from skinpack/<charId>.ab; --fx-skins), --fx-keys <k1,k2> for named prefabs
 
 Usage:
   python3 -m venv .venv && .venv/bin/pip install -r tools/local-extract/requirements.txt
@@ -54,6 +55,7 @@ Usage:
                                                           copied from a release bundle; needs Pillow)
   .venv/bin/python tools/local-extract/extract.py --only scene [--scenes <dir of in-season bundles>]
   .venv/bin/python tools/local-extract/extract.py --only fx [--fx-set sample|used] [--fx-keys k1,k2] [--fx-jobs N]
+                                                  [--fx-skins <skin-catalogue.js>|off] [--fx-skin-bundles <AB root>]
 
 Writes <out>/**.png|.webp|.skel|.atlas and data/local-assets.json (manifest of what was extracted). With --only, just
 the jobs whose output subdir starts with one of the prefixes run, and their groups replace those of the existing
@@ -903,6 +905,12 @@ def main():
     ap.add_argument('--fx-keys', default='', metavar='K1,K2',
                     help='with --only fx: export only these effect prefabs (comma-separated keys)')
     ap.add_argument('--fx-jobs', type=int, default=0, metavar='N', help='with --only fx: worker processes (default up to 8)')
+    ap.add_argument('--fx-skins', default='', metavar='PATH|off',
+                    help='with --fx-set used: the skin catalogue whose operators\' skins get their mount points and '
+                         'effect swaps (default shared/skin-catalogue.js; off: none)')
+    ap.add_argument('--fx-skin-bundles', default='', metavar='DIR',
+                    help='with --fx-set used: an AB root of newer bundles read for those skins only (its '
+                         'skinpack/<charId>.ab first; its effect prefabs the client lacks)')
     ap.add_argument('--webp', action='store_true',
                     help='only write the WebP copies of the board textures and the guide pages from the PNGs already '
                          'under --out and list them in the manifest (needs Pillow, not the client)')
@@ -957,7 +965,9 @@ def main():
         keys = [k.strip().lower() for k in args.fx_keys.split(',') if k.strip()]
         total += fx.export_fx(ab_root, out_root, manifest, print, selection=args.fx_set, keys=keys or None,
                               jobs=args.fx_jobs or None, root=ROOT,
-                              fx_manifest=Path(args.manifest).with_name(fx.FX_MANIFEST))
+                              fx_manifest=Path(args.manifest).with_name(fx.FX_MANIFEST),
+                              catalogue=False if args.fx_skins == 'off' else args.fx_skins or None,
+                              skin_bundles=args.fx_skin_bundles or None)
     if stage_ids:
         total += export_scenes(ab_root, out_root, manifest, print, stage_ids, scene_roots(ab_root, args.scenes))
     old = {}

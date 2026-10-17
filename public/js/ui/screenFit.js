@@ -9,7 +9,13 @@
 // screens' fixed box, theme.css) and the full-page panels to that box (every .screen is absolute inset 0 inside it, the
 // board is sized from its host element) and computes the layout root 1rem from it instead of the whole viewport. Fixed
 // overlays (dialogs, toasts) keep the full screen.
+// Feedback #16 (10-16: 「调回 80% 之后手机横屏三分之一是黑屏」): the 底部 track sat 8 px above 界面大小's buttons, a tap on a
+// range track jumps the value there, and the result outlived reloads while 界面大小 still read 80%. So the section is
+// folded by default (its head says 已调整 and offers 重置 whenever an edge is moved), the readings are the pixel offsets
+// (±N px, not a 0–100 that reads like a percentage), and on touch a tap on the track away from the thumb does nothing —
+// the thumb is dragged, or −/+ steps.
 
+import { useState } from '../../vendor/hooks.module.js';
 import { html, Button, MicroLabel } from './components.js';
 import { createStore, useStore, loadPref, savePref } from '../store.js';
 import { t, N_ } from '../../../shared/i18n.js';
@@ -60,26 +66,60 @@ const SIDE_NAMES = { l: N_('左侧'), r: N_('右侧'), t: N_('顶部'), b: N_('�
 const SIDE_MICRO = { l: 'LEFT', r: 'RIGHT', t: 'TOP', b: 'BOTTOM' };
 const LO = sliderOf(FIT_MIN), HI = sliderOf(FIT_MAX);
 
-/** The settings section: one 0–100 slider per edge (50 = unchanged), −/+ one step for a fine touch, 重置. */
+/** The reading of a pixel offset: 0, or ±N px (inward positive, as stored). */
+export const fitLabel = (px) => (px ? `${px > 0 ? '+' : '−'}${Math.abs(px)} px` : '0');
+
+/**
+ * Whether a touch at clientX on a range input starts on (or right by) its thumb: a touch elsewhere on the track is
+ * ignored, so a tap meant for a neighbouring control cannot jump the value (the thumb is assumed ~1 track-height wide).
+ * @param {{ left: number, width: number, height: number }} rect @param {number} value @param {number} lo @param {number} hi
+ */
+export function nearThumb(rect, clientX, value, lo, hi, slop = 24) {
+  const thumb = Math.max(16, rect.height);
+  const x = rect.left + thumb / 2 + (rect.width - thumb) * ((value - lo) / ((hi - lo) || 1));
+  return Math.abs(clientX - x) <= thumb / 2 + slop;
+}
+
+// A touch that lands on the track away from the thumb: the browser still moves the thumb there (cancelling the
+// touchstart does not stop a range input), so the inputs of that press are put back instead.
+let strayTouch = null;
+function guardDown(e) {
+  const el = e.currentTarget;
+  strayTouch = e.pointerType !== 'mouse' && el && !nearThumb(el.getBoundingClientRect(), e.clientX, Number(el.value), Number(el.min), Number(el.max)) ? el : null;
+}
+const guardUp = () => { strayTouch = null; };
+
+/**
+ * The settings section, folded by default: the head shows 已调整 (and 重置) while any edge is moved; open, one slider
+ * per edge (centre = unchanged; reading ±N px), −/+ one step for a fine touch.
+ */
 export function ScreenFitSection() {
   const f = useStore((s) => s, Object.is, fitStore);
+  const [open, setOpen] = useState(false);
   const any = FIT_SIDES.some((k) => f[k] !== 0);
-  return html`<section class="set-fit" aria-labelledby="set-fit-title">
+  return html`<section class=${`set-fit${open ? ' is-open' : ''}`} aria-labelledby="set-fit-title">
     <div class="set-keys__head">
-      <span class="set-row__label" id="set-fit-title">${t('异形屏适配')}<${MicroLabel}>SCREEN FIT<//></span>
-      <${Button} variant="ghost" size="sm" icon="refresh" class="set-fit__reset" disabled=${!any} onClick=${() => updateFit(NONE)}>${t('重置')}<//>
+      <button type="button" class="set-fit__toggle" aria-expanded=${open ? 'true' : 'false'} aria-controls="set-fit-body" data-testid="fit-toggle" onClick=${() => setOpen(!open)}>
+        <span class="set-row__label" id="set-fit-title">${t('异形屏适配')}<${MicroLabel}>SCREEN FIT<//></span>
+        ${any ? html`<span class="set-fit__badge" data-testid="fit-badge">${t('已调整')}</span>` : null}
+        <span class="set-fit__chev" aria-hidden="true"></span>
+      </button>
+      ${any ? html`<${Button} variant="ghost" size="sm" icon="refresh" class="set-fit__reset" data-testid="fit-reset" onClick=${() => updateFit(NONE)}>${t('重置')}<//>` : null}
     </div>
-    <p class="set-hint">${t('全屏后界面被挖孔、刘海或曲面边缘挡住，或比例、位置不对时使用：50 为不调整，往右拉该边往里收，往左拉该边往外扩。界面会立即移动，可边看边调，只保存在这台设备上。')}</p>
-    ${FIT_SIDES.map((k) => {
-      const v = sliderOf(f[k]);
-      return html`<div key=${k} class="set-row set-fit__row">
-        <span class="set-row__label">${t(SIDE_NAMES[k])}<${MicroLabel}>${SIDE_MICRO[k]}<//></span>
-        <button type="button" class="set-fit__step" aria-label=${t('减少')} disabled=${v <= LO} onClick=${() => updateFit({ [k]: pxOf(v - 1) })}>−</button>
-        <input class="set-range" type="range" min=${LO} max=${HI} step="1" value=${v} style=${`--pct:${v}%`}
-          aria-label=${t(SIDE_NAMES[k])} data-testid=${`fit-${k}`} onInput=${(e) => updateFit({ [k]: pxOf(e.currentTarget.value) })} />
-        <button type="button" class="set-fit__step" aria-label=${t('增加')} disabled=${v >= HI} onClick=${() => updateFit({ [k]: pxOf(v + 1) })}>+</button>
-        <span class="set-row__val num">${v}</span>
-      </div>`;
-    })}
+    ${open ? html`<div id="set-fit-body" class="set-fit__body">
+      <p class="set-hint">${t('全屏后界面被挖孔、刘海或曲面边缘挡住，或比例、位置不对时使用：滑块居中（0）为不调整，往右拉该边往里收，往左拉该边往外扩，单位为像素。界面会立即移动，可边看边调，只保存在这台设备上；触屏请拖动滑块或用 −/+。')}</p>
+      ${FIT_SIDES.map((k) => {
+        const v = sliderOf(f[k]);
+        return html`<div key=${k} class="set-row set-fit__row">
+          <span class="set-row__label">${t(SIDE_NAMES[k])}<${MicroLabel}>${SIDE_MICRO[k]}<//></span>
+          <button type="button" class="set-fit__step" aria-label=${t('减少')} disabled=${v <= LO} onClick=${() => updateFit({ [k]: pxOf(v - 1) })}>−</button>
+          <input class="set-range" type="range" min=${LO} max=${HI} step="1" value=${v} style=${`--pct:${v}%`}
+            aria-label=${t(SIDE_NAMES[k])} aria-valuetext=${fitLabel(f[k])} data-testid=${`fit-${k}`} onPointerDown=${guardDown} onPointerUp=${guardUp} onPointerCancel=${guardUp}
+            onInput=${(e) => { if (strayTouch === e.currentTarget) { e.currentTarget.value = String(v); return; } updateFit({ [k]: pxOf(e.currentTarget.value) }); }} />
+          <button type="button" class="set-fit__step" aria-label=${t('增加')} disabled=${v >= HI} onClick=${() => updateFit({ [k]: pxOf(v + 1) })}>+</button>
+          <span class="set-row__val num">${fitLabel(f[k])}</span>
+        </div>`;
+      })}
+    </div>` : null}
   </section>`;
 }

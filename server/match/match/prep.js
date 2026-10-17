@@ -237,6 +237,8 @@ export class MatchPrep {
 
   endPrep() {
     if (this.phase !== PHASE.PREP) return;
+    // an open 投票移出 ends with the prep (kickVote.js)
+    this.cancelKickVote('prepEnd');
     // the round's checkpoint (snapshot.js): the finished prep, before its end changes anything — a match interrupted
     // during this round's battle comes back here
     this._checkpoint('prep-end');

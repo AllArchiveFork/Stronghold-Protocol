@@ -64,16 +64,18 @@
 //   * Permanent departure during a match (room.leave, g.leave, reconnect window expired): the seat is
 //     marked departed (shown as connected=false), match.onLeave(playerId) is called, and the seat is freed
 //     when the match ends. 'g.leave' is handled here and never reaches match.handle(). A human the match removes
-//     (opts.onRemove: the AFK rule, option `afkRemoveRounds`, default 2, 0 = off) departs the same way (matchRemoved):
-//     the match already sent it m.removed; one removed while offline gets room.closed {reason:'afk'} on its next resume.
+//     (opts.onRemove: the AFK rule, option `afkRemoveRounds`, default 2, 0 = off; a passed 投票移出, reason 'kicked')
+//     departs the same way (matchRemoved): the match already sent it m.removed; one removed while offline gets
+//     room.closed {reason:'afk' | 'kicked'} on its next resume.
 //   * All other 'g.*' messages go to room.match.handle(playerId, msg); its {ok}/{error} becomes the reply.
 //   * Match lifecycle: room.start → new Match({...}) → room.state (inMatch=true) → match.start(). The match gets
 //     `matchNo` = the room's match number (1, 2, …): with the seed it keeps battleIds unique across the room's
 //     matches, so a late b.progress / b.result of the previous match is ignored by the next one (DESIGN §14).
 //     onEnd(summary) → room back to LOBBY (departed seats freed, humans un-readied, disconnected humans
 //     get the lobby grace), dispose() on the next macrotask. Players can start again.
-//   * room.closed reasons: 'timeout' (removed after lobby grace), 'kicked' (room.kick, room.removeSpectator), 'empty' (a
-//     spectator whose room lost its last player), 'afk' (removed by the match while offline), 'shutdown' (server stopping).
+//   * room.closed reasons: 'timeout' (removed after lobby grace), 'kicked' (room.kick, room.removeSpectator, a passed
+//     投票移出 while offline), 'empty' (a spectator whose room lost its last player), 'afk' (removed by the match while
+//     offline), 'shutdown' (server stopping).
 //   * Operator loadout (DESIGN §16): room.loadout { entries } is checked strictly against the game data
 //     (shared/protocol.js checkLoadout: known visible chess, a skill index legal for the normal AND the elite status, a
 //     module of the elite or 'none'; any bad entry rejects the whole message, nothing is stored). ▸ It is stored on the
@@ -170,10 +172,11 @@
 //     time → room.closed {kicked} to it. A spectator in a LOBBY room may take a free player seat with room.join of the same
 //     code; a player never switches to spectating in place (ALREADY). Disconnect / grace / reconnect / expiry work as for
 //     a player seat (the seat is kept and given back on resume).
-//   * Display card (fork lobby, 2026-10-14): room.card { charId?, avatar?, bg?, trophies? } — a portrait operator and an
+//   * Display card (fork lobby, 2026-10-14): room.card { charId?, avatar?, bg?, trophies?, look?, avatarLook? } — a portrait operator and an
 //     avatar operator (real operators of the game data: cardCharIds, else BAD_MSG), a namecard background id (format
 //     only) and a self-reported trophy
-//     count (cosmetic, never used by a match) — is stored on the session (it follows the player into every room; a field
+//     count (cosmetic, never used by a match), the art of the portrait and the avatar (look / avatarLook: 精二 '', 精一
+//     'e1' or a skin of that operator, else BAD_MSG; feedback #9 / #24 — a look the operator change orphans is dropped) — is stored on the session (it follows the player into every room; a field
 //     the message leaves out keeps its value, '' / 0 clears it) and copied to the player's seat; room.state shows it as
 //     seats[].card on human seats that have one (spectators: none). A change is broadcast to the room, at most
 //     CARD_CHANGES per CARD_WINDOW_MS per session (RATE beyond); the card never enters a match.
@@ -187,7 +190,7 @@
 import { randomBytes, randomInt } from 'node:crypto';
 import { DIFFICULTIES, ERR, MAX_SEATS, MAX_SPECTATORS, ROOM_CODE_LEN, MATCHMAKING_VERSION, modeIdFor } from '../shared/constants.js';
 import { checkLoadout, checkLoadoutOps, cultivationCharIds, checkNotOwned, checkDiyPicks, charPotentialChanges } from '../shared/protocol.js';
-import { isSkinChoices } from '../shared/skins.js';
+import { isSkinChoices, skinFor } from '../shared/skins.js';
 import { EXPERIMENTAL_DEFAULTS, experimentalOptions, isExperimental, sameExperimental } from '../shared/experimental.js';
 import { MAX_PLAYER_CAPACITY, PLAYER_CAPACITY_VERSION, roomCapacity } from '../shared/playerCapacity.js';
 import { encode, isErrCode, sendEncodedMany, sendMessage, sendRaw, sendSession, TokenBucket } from './net.js';
@@ -270,7 +273,7 @@ const noopLog = { info() {}, warn() {}, error() {}, debug() {} };
  *   content: a room with gameplay plugins — whether the player's page loaded and checked its content (header "Gameplay
  *   plugins"; null = still loading); contentGen: counts the seat's disconnects (a queued room.contentReady of an earlier
  *   page no longer counts); loadoutCs / notOwnedCs / diyCs: the content its settings were checked for
- * @typedef {Readonly<{ charId?: string, avatar?: string, bg?: string, trophies?: number }>} Card
+ * @typedef {Readonly<{ charId?: string, avatar?: string, bg?: string, trophies?: number, look?: string, avatarLook?: string }>} Card
  * @typedef {{ charId: string, skillIndex: number, uniEquipId: string|null }} DiyLoadout
  */
 
@@ -311,7 +314,9 @@ function cardCharIds(data) {
   return ids;
 }
 const sameCard = (a, b) => (a?.charId ?? '') === (b?.charId ?? '') && (a?.avatar ?? '') === (b?.avatar ?? '') && (a?.bg ?? '') === (b?.bg ?? '')
-  && (a?.trophies ?? 0) === (b?.trophies ?? 0);
+  && (a?.trophies ?? 0) === (b?.trophies ?? 0) && (a?.look ?? '') === (b?.look ?? '') && (a?.avatarLook ?? '') === (b?.avatarLook ?? '');
+/** A card look ('' / 'e1' / a skin id) that `charId` can wear. */
+const lookFits = (charId, look) => !look || look === 'e1' || (!!charId && !!skinFor(charId, look));
 
 /**
  * The GameData a room's next match builds (Match: mode, difficulty and the expanded-room 鸭爵 switch), per data object —
@@ -517,7 +522,7 @@ export class Lobby {
     /** room.create / room.start / room.addBot refusals per cap since start (/healthz limits.refused) */
     this.limitRefusals = { maxRooms: 0, maxRoomsPerAddr: 0, maxMatchesPerAddr: 0, maxBots: 0, maxBotsPerAddr: 0 };
     /** human seats that left a running match since start: the AFK rule (online / offline) or an elapsed reconnect window */
-    this.matchDepartures = { afkOnline: 0, afkOffline: 0, expired: 0 };
+    this.matchDepartures = { afkOnline: 0, afkOffline: 0, kicked: 0, expired: 0 };
     this.online = new Map();
     this.presenceSeq = 0;
     this.presenceTimer = null;
@@ -1527,12 +1532,16 @@ export class Lobby {
     return this.startMatch(room, key, room.ownerKeys ? keys : null);
   }
 
-  /** Host authorization stays in the lobby; the match owns the vote and setup. */
+  /**
+   * Who may propose stays in the lobby (setupVote.js has the vote rule): any seated human of a matchmade room (野排,
+   * room.source 'matchmaking'), only the host of a private one; room.cancelReroll is the host's in both (the proposer
+   * withdraws with g.rerollVote agree:false). The match owns the vote and setup.
+   */
   rerollSetup(session, msg, cancel = false) {
     const room = this.roomOf(session);
     if (!room) return fail(ERR.NOT_IN_ROOM);
     if (room.spectatorOf(session.playerId)) return fail(ERR.SPECTATOR);
-    if (room.hostId !== session.playerId) return fail(ERR.NOT_HOST);
+    if (room.hostId !== session.playerId && (cancel || room.source !== 'matchmaking')) return fail(ERR.NOT_HOST);
     const method = cancel ? 'cancelSetupReroll' : 'requestSetupReroll';
     if (!room.match || typeof room.match[method] !== 'function') return fail(ERR.WRONG_PHASE);
     return this.callMatch(room, method, session.playerId, cancel ? msg.voteId : msg.setupRevision) || fail(ERR.INTERNAL);
@@ -1824,7 +1833,7 @@ export class Lobby {
    * clears it; an unknown operator is BAD_MSG — and copy it to the player's seat (never a spectator's), broadcasting the
    * room state when it changed. An unchanged card costs nothing; a change beyond CARD_CHANGES per CARD_WINDOW_MS is RATE.
    */
-  setCard(session, { charId, avatar, bg, trophies }) {
+  setCard(session, { charId, avatar, bg, trophies, look, avatarLook }) {
     const known = cardCharIds(this.safeData());
     if ((charId && !known.has(charId)) || (avatar && !known.has(avatar))) return fail(ERR.BAD_MSG, 'unknown operator');
     const prev = session.card || {};
@@ -1832,8 +1841,14 @@ export class Lobby {
     const id = charId === undefined ? prev.charId : charId, back = bg === undefined ? prev.bg : bg;
     const face = avatar === undefined ? prev.avatar : avatar;
     const count = trophies === undefined ? prev.trophies : trophies;
+    // a look sent must fit its operator; a stored one the operator change no longer fits is dropped
+    if ((look && !lookFits(id, look)) || (avatarLook && !lookFits(face, avatarLook))) return fail(ERR.BAD_MSG, 'skin of another operator');
+    const art = look === undefined ? (lookFits(id, prev.look) ? prev.look : '') : look;
+    const faceArt = avatarLook === undefined ? (lookFits(face, prev.avatarLook) ? prev.avatarLook : '') : avatarLook;
     if (id) next.charId = id;
     if (face) next.avatar = face;
+    if (id && art) next.look = art;
+    if (face && faceArt) next.avatarLook = faceArt;
     if (back) next.bg = back;
     if (count > 0) next.trophies = count;
     const card = Object.keys(next).length ? Object.freeze(next) : null;
@@ -2371,9 +2386,10 @@ export class Lobby {
   }
 
   /**
-   * A match removed one of its humans (Match opts.onRemove: the AFK rule, reason 'afk' — it already sent the player
-   * m.removed): the seat departs exactly like a g.leave (removeMember → match.onLeave; freed when the match ends). A player
-   * removed while offline is told on its next resume: room.closed { reason }.
+   * A match removed one of its humans (Match opts.onRemove: the AFK rule, reason 'afk', or a passed 投票移出, reason
+   * 'kicked' — it already sent the player m.removed): the seat departs exactly like a g.leave (removeMember →
+   * match.onLeave; freed when the match ends). A player removed while offline is told on its next resume:
+   * room.closed { reason }.
    * @param {Room} room @param {string} playerId @param {string} reason
    */
   matchRemoved(room, playerId, reason) {
@@ -2381,7 +2397,7 @@ export class Lobby {
     if (!seat || seat.isBot || seat.left || room.disposed) return;
     const session = this.registry.byId(playerId);
     const offline = !!session && session.roomCode === room.code && !session.connected;
-    this.matchDepartures[offline ? 'afkOffline' : 'afkOnline']++;
+    this.matchDepartures[reason === 'kicked' ? 'kicked' : offline ? 'afkOffline' : 'afkOnline']++;
     this.removeMember(room, playerId);
     if (offline) session.notice = reason;
   }
