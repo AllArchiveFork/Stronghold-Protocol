@@ -25,8 +25,9 @@ const sameSet = (a, b) => a.size === b.size && [...a].every(value => b.has(value
 // start is logged with its step (logStartFailure).
 const RETRYABLE_START = new Set(['TIMEOUT', 'PLAYER_OFFLINE']);
 const startError = error => isErrCode(error?.code) ? error.code : RETRYABLE_START.has(error?.code) ? ERR.START_RETRY : ERR.INTERNAL;
-// A restored match waits this long for a node to take it (the whole stack restarts at once: nodes come up meanwhile),
-// retrying every RESTORE_RETRY_MS on these codes; any other failure closes its room at once.
+// A restored match waits this long for a node to take it (the whole stack restarts at once: nodes come up meanwhile,
+// and a node whose checkpoint store is not answering yet says NOT_READY), retrying every RESTORE_RETRY_MS on these
+// codes; any other failure closes its room at once.
 const RESTORE_WAIT_MS = 120_000, RESTORE_RETRY_MS = 1000;
 const RESTORE_RETRY = new Set(['NO_NODE', 'NOT_READY', 'TRANSPORT', 'TIMEOUT', 'BAD_REPLY', 'CLOSED', 'NODE_UNAVAILABLE', 'SESSION_BUSY', 'ROOM_BUSY']);
 

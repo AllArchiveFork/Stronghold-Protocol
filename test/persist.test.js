@@ -84,6 +84,8 @@ test('a solo run survives a server restart: same identity, same room, same round
 
 test('a run stopped during its battle comes back in that round\'s prep, which says the battle is fought again', { timeout: 60_000 }, async (t) => {
   const store = new MemoryValkey();
+  // the round's checkpoint (written as its prep ended) is still on its way when the server stops: the shutdown waits for it
+  store.checkpointWriteMs = 2000;
   const a = await startServer(serverOpts(store));
   let c = await TestClient.connect(`ws://127.0.0.1:${a.port}/ws`);
   const welcome = await c.hello('Doctor', undefined, { matchmakingVersion: MATCHMAKING_VERSION });
@@ -98,6 +100,7 @@ test('a run stopped during its battle comes back in that round\'s prep, which sa
   assert.ok(!['PREP', 'ROUND_START', 'SP_DRAFT'].includes(match.phase), `past the prep (${match.phase})`);
   await a.close();
   await c.closed;
+  store.checkpointWriteMs = 0;
 
   const b = await startServer(serverOpts(store));
   t.after(() => b.close());
@@ -145,9 +148,12 @@ test('a lobby room and its waiting players come back; a visitor outside any room
 test('a store that is down costs only the checkpoints: the server starts and plays', { timeout: 30_000 }, async (t) => {
   const store = new MemoryValkey();
   store.down = true;
-  const a = await startServer(serverOpts(store));
+  // (the startup read waits for it — RESTORE_WAIT_MS, test/persist-startup.test.js — here only 1 s)
+  const t0 = Date.now();
+  const a = await startServer({ ...serverOpts(store), persistRestoreWaitMs: 1000 });
   t.after(() => a.close());
-  assert.equal(a.persistence.restored.ok, false);
+  assert.deepEqual(a.persistence.restored, { ok: false, reason: 'unavailable' });
+  assert.ok(Date.now() - t0 >= 500, 'read again after a pause');
   const c = await TestClient.connect(`ws://127.0.0.1:${a.port}/ws`);
   const w = await c.hello('Doctor');
   assert.equal((await c.request({ t: 'room.create', mode: 'solo', difficulty: 'NORMAL' })).t, 'ok');

@@ -12,7 +12,9 @@
 //
 // Values are JSON, deflated off the main thread (libuv's pool, not a Worker) once larger than 1 KiB. Every key carries
 // a TTL (25 h: longer than a solo run's 24 h reconnect window); a write refreshes it. A store that is down costs nothing
-// but the checkpoints: every call resolves false / null and is counted (stats, /healthz `persistence`).
+// but the checkpoints: every call resolves false / null and is counted (stats, /healthz `persistence`); a read that
+// failed says why (`error`: the client's code, DATA for a value that does not decode, CLOSED) — the startup read waits
+// out the TRANSIENT ones (persister.js restore, node.js load).
 
 import { readFileSync } from 'node:fs';
 import { promisify } from 'node:util';
@@ -32,6 +34,12 @@ const DEFLATED = 0x01;
 const HASH_CHUNK = 256;
 /** Largest value read back (a corrupt or foreign key cannot make the server inflate gigabytes). */
 const MAX_VALUE_BYTES = 64 * 1024 * 1024;
+
+/**
+ * The read failures that pass by themselves (valkey.js codes): the store not reachable (yet), no reply in time, or still
+ * loading its data set. A refused password, an error reply or a value that does not decode (DATA) stay as they are.
+ */
+export const TRANSIENT_FAILURES = new Set(['UNAVAILABLE', 'TIMEOUT', 'LOADING']);
 
 const noopLog = { info() {}, warn() {}, error() {}, debug() {} };
 const PREFIX_RE = /^[A-Za-z0-9_.:-]{1,64}$/;
@@ -108,19 +116,25 @@ export class CheckpointStore {
     }
   }
 
-  /** @returns {Promise<{ ok: boolean, value: any }>} ok false: the store did not answer (value null: no such key) */
+  /**
+   * @returns {Promise<{ ok: boolean, value: any, error?: string }>} ok false: the store did not answer or the value did not
+   *   decode (`error`, see the header); value null: no such key
+   */
   async get(key) {
-    if (this.closed) return { ok: false, value: null };
-    try {
-      const raw = await this.client.command('GET', key);
-      this.stats.reads++;
-      if (raw == null) return { ok: true, value: null };
-      return { ok: true, value: await this.decode(raw) };
-    } catch (e) {
-      this.stats.readFailures++;
-      this.log.debug?.(`[persist] read failed (${e?.code || e?.message || 'error'})`);
-      return { ok: false, value: null };
-    }
+    if (this.closed) return { ok: false, value: null, error: 'CLOSED' };
+    let raw;
+    try { raw = await this.client.command('GET', key); } catch (e) { return this.readFailed(e); }
+    this.stats.reads++;
+    if (raw == null) return { ok: true, value: null };
+    try { return { ok: true, value: await this.decode(raw) }; } catch { return this.readFailed({ code: 'DATA' }); }
+  }
+
+  /** A failed read, counted. @returns {{ ok: false, value: null, error: string }} */
+  readFailed(e) {
+    const error = typeof e?.code === 'string' ? e.code : 'ERROR';
+    this.stats.readFailures++;
+    this.log.debug?.(`[persist] read failed (${error})`);
+    return { ok: false, value: null, error };
   }
 
   async del(key) {
@@ -153,22 +167,17 @@ export class CheckpointStore {
     }
   }
 
-  /** Every field of a hash, parsed. @returns {Promise<{ ok: boolean, value: Map<string, any> | null }>} */
+  /** Every field of a hash, parsed. @returns {Promise<{ ok: boolean, value: Map<string, any> | null, error?: string }>} */
   async hashRead(name) {
-    if (this.closed) return { ok: false, value: null };
-    try {
-      const flat = await this.client.command('HGETALL', this.key(name));
-      this.stats.reads++;
-      const out = new Map();
-      for (let i = 0; i + 1 < (flat?.length ?? 0); i += 2) {
-        try { out.set(flat[i].toString(), JSON.parse(flat[i + 1].toString('utf8'))); } catch { /* a broken record is skipped */ }
-      }
-      return { ok: true, value: out };
-    } catch (e) {
-      this.stats.readFailures++;
-      this.log.debug?.(`[persist] hash read failed (${e?.code || e?.message || 'error'})`);
-      return { ok: false, value: null };
+    if (this.closed) return { ok: false, value: null, error: 'CLOSED' };
+    let flat;
+    try { flat = await this.client.command('HGETALL', this.key(name)); } catch (e) { return this.readFailed(e); }
+    this.stats.reads++;
+    const out = new Map();
+    for (let i = 0; i + 1 < (flat?.length ?? 0); i += 2) {
+      try { out.set(flat[i].toString(), JSON.parse(flat[i + 1].toString('utf8'))); } catch { /* a broken record is skipped */ }
     }
+    return { ok: true, value: out };
   }
 
   saveCheckpoint(id, value) { return this.put(this.checkpointKey(id), value); }

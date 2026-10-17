@@ -12,7 +12,10 @@
 //   * on a graceful shutdown: one last round of everything, then the lobby closes its rooms quietly (no room.closed: the
 //     players are coming back);
 //   * at startup (restore): sessions and rooms first (synchronously, before the server listens), then each local match
-//     from its checkpoint; a match that cannot come back closes its room ('node-restarted', told on resume).
+//     from its checkpoint; a match that cannot come back closes its room ('node-restarted', told on resume). A store
+//     that is not answering yet (a host boot or a bare start runs its container and this process at once: refused,
+//     no reply, still loading its data set) is asked again with a growing pause for up to RESTORE_WAIT_MS — the server
+//     does not listen meanwhile; anything else (a refused password, a document that does not decode) is final at once.
 //
 // Nothing here may disturb a match: a capture that fails keeps the previous checkpoint, a store that is down is skipped
 // (and counted), every timer is unref'd.
@@ -20,9 +23,18 @@
 import { snapshotMatch, restoreMatch, CHECKPOINT_PREP_END } from '../match/snapshot.js';
 import { createRngFromState } from '../sim/rng.js';
 import { restoreLobby, roomDoc, sessionDoc, LOBBY_DOC_VERSION, SESSION_FIELDS } from './lobbyState.js';
+import { TRANSIENT_FAILURES } from './store.js';
 
 /** Default interval between rounds of writes (ms). */
 export const SAVE_MS = 10_000;
+/** How long the startup read waits for a store that is not answering yet (ms; restore). */
+export const RESTORE_WAIT_MS = 60_000;
+/** The pause before the startup read's second attempt (ms), doubled after each one up to RESTORE_PAUSE_MAX_MS. */
+const RESTORE_PAUSE_MS = 500, RESTORE_PAUSE_MAX_MS = 5000;
+
+/** A startup pause: the timer holds the process, nothing else may yet (unlike every other timer here). */
+const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const seconds = (ms) => (ms / 1000).toFixed(1);
 
 const noopLog = { info() {}, warn() {}, error() {}, debug() {} };
 
@@ -32,17 +44,23 @@ export const localCheckpointId = (code, matchNo, seed) => `L.${code}.${matchNo}.
 export class LobbyPersister {
   /**
    * @param {{ store: import('./store.js').CheckpointStore, registry: import('../net.js').SessionRegistry,
-   *   lobby: import('../lobby.js').Lobby, log?: object, saveMs?: number, now?: () => number }} opts
+   *   lobby: import('../lobby.js').Lobby, log?: object, saveMs?: number, now?: () => number, restoreWaitMs?: number,
+   *   sleep?: (ms: number) => Promise<void> }} opts  `restoreWaitMs` / `sleep` (tests): the startup read's budget and pause
    */
-  constructor({ store, registry, lobby, log = noopLog, saveMs = SAVE_MS, now = Date.now }) {
+  constructor({ store, registry, lobby, log = noopLog, saveMs = SAVE_MS, now = Date.now, restoreWaitMs = RESTORE_WAIT_MS, sleep = pause }) {
     this.store = store;
     this.registry = registry;
     this.lobby = lobby;
     this.log = log;
     this.now = now;
+    this.sleep = sleep;
     this.saveMs = Math.max(1000, Number(saveMs) || SAVE_MS);
+    this.restoreWaitMs = Math.max(0, Number(restoreWaitMs ?? RESTORE_WAIT_MS) || 0);
     this.cluster = typeof lobby.remoteMatchRef === 'function';
-    /** @type {WeakMap<object, { id: string, seed: number, matchNo: number, room: string, json: string | null }>} local matches */
+    /**
+     * local matches (`pending`: the write of their last checkpoint)
+     * @type {WeakMap<object, { id: string, seed: number, matchNo: number, room: string, json: string | null, pending: Promise<boolean> | null }>}
+     */
     this.matches = new WeakMap();
     /** checkpoint ids written by this process and still named by the last lobby document */
     this.written = new Set();
@@ -110,7 +128,9 @@ export class LobbyPersister {
       if (!this.cluster) for (const room of this.lobby.rooms.values()) {
         const m = this.localMatch(room);
         if (!m) continue;
-        const rec = this.capture(room, m, reason);
+        // a match past its last safe point (a battle) is not captured again, but the write that safe point started (its
+        // prep's end) still lands before the document names it and before a shutdown closes the store
+        const rec = this.capture(room, m, reason) ?? this.matches.get(m);
         if (rec?.pending) pending.push(rec.pending);
       }
       await Promise.all(pending);
@@ -197,13 +217,41 @@ export class LobbyPersister {
     return named;
   }
 
-  /** The stored lobby document (head + records), or { ok: false } when the store did not answer. */
+  /** The stored lobby document (head + records), or { ok: false, error } when the store did not answer (store.js get). */
   async readLobby() {
     const head = await this.store.loadLobby();
     if (!head.ok || !head.value) return head;
     const [sessions, rooms] = await Promise.all([this.store.hashRead('lobby:sessions'), this.store.hashRead('lobby:rooms')]);
-    if (!sessions.ok || !rooms.ok) return { ok: false, value: null };
+    if (!sessions.ok || !rooms.ok) return { ok: false, value: null, error: (sessions.ok ? rooms : sessions).error };
     return { ok: true, value: { ...head.value, sessions: [...sessions.value.values()], rooms: [...rooms.value.values()] } };
+  }
+
+  /**
+   * The startup read (restore; see the header): readLobby again after a pause (0.5 s, doubling to 5 s) while the store
+   * fails TRANSIENT_FAILURES, until `restoreWaitMs` would be over. Each retry and the outcome are logged.
+   */
+  async readLobbyAtStartup() {
+    const t0 = this.now();
+    let wait = RESTORE_PAUSE_MS;
+    for (let attempt = 1; ; attempt++) { // loop-cap: every pass waits `wait` (>= 0.5 s) of the bounded restoreWaitMs, or returns
+      const loaded = await this.readLobby();
+      const spent = this.now() - t0;
+      if (loaded.ok) {
+        if (attempt > 1) this.log.info?.(`[persist] the store answered at startup (attempt ${attempt}, ${seconds(spent)} s)`);
+        return loaded;
+      }
+      if (!TRANSIENT_FAILURES.has(loaded.error)) {
+        this.log.warn?.(`[persist] the saved lobby could not be read at startup (${loaded.error || 'error'}): nothing restored`);
+        return loaded;
+      }
+      if (this.closed || spent + wait > this.restoreWaitMs) {
+        this.log.warn?.(`[persist] the store did not answer at startup (${loaded.error}, ${attempt} attempt(s) in ${seconds(spent)} s): nothing restored`);
+        return loaded;
+      }
+      this.log.warn?.(`[persist] the store is not answering at startup (${loaded.error}): attempt ${attempt + 1} in ${seconds(wait)} s`);
+      await this.sleep(wait);
+      wait = Math.min(RESTORE_PAUSE_MAX_MS, wait * 2);
+    }
   }
 
   start() {
@@ -216,10 +264,11 @@ export class LobbyPersister {
   /**
    * Take the lobby and the local matches back (startServer, before listening). Sessions and rooms synchronously, then
    * every local match from its checkpoint; in the cluster the lobby places each remote match again in the background.
+   * The lobby's read waits for a store that is not answering yet (readLobbyAtStartup), at most restoreWaitMs.
    */
   async restore() {
-    const loaded = await this.readLobby();
-    if (!loaded.ok) { this.log.warn?.('[persist] the store did not answer at startup: nothing restored'); return { ok: false, reason: 'unavailable' }; }
+    const loaded = await this.readLobbyAtStartup();
+    if (!loaded.ok) return { ok: false, reason: TRANSIENT_FAILURES.has(loaded.error) ? 'unavailable' : 'unreadable' };
     if (!loaded.value) { this.log.info?.('[persist] no saved lobby: a fresh start'); return { ok: true, sessions: 0, rooms: 0, matches: 0 }; }
     const doc = loaded.value;
     if (doc.kind !== (this.cluster ? 'cluster' : 'local')) {

@@ -514,9 +514,15 @@ SP_REDIS_URL=redis://127.0.0.1:6379/0 npm start
 - 协调器正常运行、某个 game 节点重启或失联：它上面的对局由其他节点从存档重建，不再直接关闭房间。
 
 重建不了的对局（存档缺失、版本不符、等不到节点）会关闭房间，玩家回来时看到「对局服务器已重启，本局模拟已中断」。
-正常关闭（SIGTERM）时先写最后一次存档，房间不会向玩家发「同盟已关闭」。Valkey 宕机或连不上不会影响对局，只是不存档：
+正常关闭（SIGTERM）时先写最后一次存档（战斗中的对局不再存，但会等准备阶段结束时那一份写完），房间不会向玩家发「同盟已关闭」。Valkey 宕机或连不上不会影响对局，只是不存档：
 `/healthz` 的 `persistence` 里有写入/失败/恢复计数（集群另有 `persistence.remote`：接管、重建、失败、等待中），
 game 节点的 `status` RPC 带 `checkpoints` 计数。
+
+**启动时等存储**：主机重启或直接 `systemctl start` 时 Valkey 和服务器同时启动，服务器读存档时 Valkey 可能还没监听或还在
+加载数据（回 `LOADING`）。启动时那一次读取遇到连不上、超时或 `LOADING` 会间隔 0.5 秒起、逐次加倍到 5 秒重试，
+最多等 60 秒（`server/persist/persister.js` `RESTORE_WAIT_MS`），每次重试和结果都写日志；这期间服务器（集群里是协调器）
+不监听端口，恢复完成或放弃后才接受玩家。密码错误、存档无法解码不重试，直接按「没有存档」启动。集群里 game 节点
+按协调器要求读某局存档时存储没响应，回 `NOT_READY`，协调器每秒重试，最多 2 分钟（与等节点就绪相同）。
 
 **版本**：存档有三个格式版本——对局 `SNAPSHOT_VERSION`（`server/match/snapshot.js`）、大厅文档
 `LOBBY_DOC_VERSION`（`server/persist/lobbyState.js`）、节点信封 `NODE_CHECKPOINT_VERSION`（`server/persist/node.js`）。

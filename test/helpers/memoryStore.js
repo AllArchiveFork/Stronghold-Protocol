@@ -1,6 +1,6 @@
 // test/helpers/memoryStore.js — an in-memory stand-in for the checkpoint store's Valkey client (server/persist/valkey.js):
 // GET / SET [PX] / DEL / PING / HSET / HDEL / HGETALL / PEXPIRE on Maps that outlives the servers of a test, and a switch to make it fail like a store
-// that is down.
+// that is down (or take its time over the checkpoints' writes).
 import { CheckpointStore } from '../../server/persist/store.js';
 
 export class MemoryValkey {
@@ -10,6 +10,8 @@ export class MemoryValkey {
     /** @type {Map<string, Map<string, Buffer>>} */
     this.hashes = new Map();
     this.down = false;
+    /** ms each checkpoint write (SET …cp:…) takes: a busy store, a large value */
+    this.checkpointWriteMs = 0;
     this.ready = true;
     this.stats = { connects: 1, failures: 0 };
     this.commands = [];
@@ -18,6 +20,7 @@ export class MemoryValkey {
   async command(name, ...args) {
     this.commands.push(name);
     if (this.down) { const e = new Error('UNAVAILABLE'); e.code = 'UNAVAILABLE'; throw e; }
+    if (name === 'SET' && this.checkpointWriteMs > 0 && String(args[0]).includes(':cp:')) await new Promise((r) => setTimeout(r, this.checkpointWriteMs));
     switch (name) {
       case 'PING': return 'PONG';
       case 'GET': return this.data.get(String(args[0])) ?? null;

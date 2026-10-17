@@ -7,6 +7,9 @@
 //     issued during a connection attempt wait for it (bounded by connectTimeoutMs and maxPending);
 //   * every command has a deadline (commandTimeoutMs); a late reply means the stream can no longer be trusted, so the
 //     connection is dropped and every pending command fails;
+//   * a store still reading its data set into memory answers `-LOADING …` (also to the connection's PING): that reply
+//     has its own code (LOADING), never taken for a refused password (AUTH) — the startup read waits it out
+//     (persister.js restore);
 //   * the URL may carry a user / password (redis://user:pass@host:port/db; rediss:// or valkeys:// for TLS) or the
 //     password comes from a file (SP_REDIS_PASSWORD_FILE): neither is ever logged.
 
@@ -47,7 +50,7 @@ export function encodeCommand(args) {
 
 /**
  * Incremental RESP2 reply parser. feed() takes a chunk and returns the complete replies (an error reply is a
- * ValkeyError value; bulk strings are Buffers; null bulk / array is null).
+ * ValkeyError value — code LOADING for `-LOADING …`, REPLY otherwise; bulk strings are Buffers; null bulk / array is null).
  */
 export class ReplyParser {
   constructor() { this.buf = Buffer.alloc(0); }
@@ -76,7 +79,7 @@ export class ReplyParser {
     if (!l) return null;
     switch (type) {
       case '+': return { value: l.text, end: l.next };
-      case '-': return { value: new ValkeyError('REPLY', l.text.slice(0, 200)), end: l.next };
+      case '-': return { value: new ValkeyError(/^LOADING\b/.test(l.text) ? 'LOADING' : 'REPLY', l.text.slice(0, 200)), end: l.next };
       case ':': return { value: Number(l.text), end: l.next };
       case '$': {
         const n = Number(l.text);
@@ -132,7 +135,7 @@ export class ValkeyClient {
 
   get ready() { return this.state === 'ready'; }
 
-  /** One command. @returns {Promise<any>} the reply; rejects with ValkeyError (UNAVAILABLE, TIMEOUT, REPLY, …) */
+  /** One command. @returns {Promise<any>} the reply; rejects with ValkeyError (UNAVAILABLE, TIMEOUT, LOADING, REPLY, …) */
   command(...args) {
     if (this.state === 'closed') return Promise.reject(new ValkeyError('CLOSED'));
     this.stats.commands++;

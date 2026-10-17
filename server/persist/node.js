@@ -3,7 +3,8 @@
 // checkpoint is deleted once the actor ends or is released for good. After a restart the coordinator asks a node to
 // `restore` an assignment (server/cluster/game-node.js): the node reads the checkpoint here and the GameHost rebuilds
 // the actor from it (GameHost.restore). A node never restores anything on its own — the coordinator decides which
-// rooms came back.
+// rooms came back. A store that is not answering (yet) at that read is no lost checkpoint: the node answers NOT_READY
+// and the coordinator asks again (server/cluster/lobby.js RESTORE_RETRY, for RESTORE_WAIT_MS).
 //
 // The envelope: { v, kind: 'cluster', assignmentId, roomCode, nodeId, spec (the assignment DTO the actor was prepared
 // with), left (players that departed), match (server/match/snapshot.js) }. Nothing here touches a running match beyond
@@ -11,6 +12,7 @@
 
 import { snapshotMatch } from '../match/snapshot.js';
 import { SAVE_MS } from './persister.js';
+import { TRANSIENT_FAILURES } from './store.js';
 
 /** How long a rebuilt actor keeps the checkpoint it came from (> the node's 20 s publication lease). */
 const SUPERSEDE_MS = 30_000;
@@ -31,7 +33,10 @@ export class NodeCheckpoints {
     this.nodeId = nodeId;
     this.log = log;
     this.saveMs = Math.max(1000, Number(saveMs) || SAVE_MS);
-    /** @type {Map<string, { json: string | null, ctx: object }>} assignment id → the last checkpoint written */
+    /**
+     * assignment id → the last checkpoint written (`pending`: its write)
+     * @type {Map<string, { json: string | null, ctx: object, ok: boolean, pending: Promise<boolean> | null }>}
+     */
     this.written = new Map();
     /**
      * a rebuilt actor's assignment id → the checkpoint it came from, deleted by a later round once the new actor has
@@ -57,10 +62,11 @@ export class NodeCheckpoints {
       nodeId: this.nodeId, reason, spec: ctx.spec, left, match: doc });
     const prev = this.written.get(id);
     if (prev && prev.ctx === ctx && prev.json === json) return null;
-    this.written.set(id, { json, ctx, ok: false });
+    const rec = { json, ctx, ok: false, pending: null };
+    this.written.set(id, rec);
     this.counts.captures++;
-    const rec = this.written.get(id);
-    return this.store.saveCheckpoint(id, json).then((ok) => { if (ok) rec.ok = true; return ok; });
+    rec.pending = this.store.saveCheckpoint(id, json).then((ok) => { if (ok) rec.ok = true; return ok; });
+    return rec.pending;
   }
 
   /** One periodic round: every committed actor, then the checkpoints of actors that ended or were released. */
@@ -69,7 +75,9 @@ export class NodeCheckpoints {
     const run = (async () => {
       const writes = [];
       for (const ctx of this.gameHost.contexts.values()) {
-        const w = this.capture(ctx, reason);
+        // an actor past its last safe point (a battle) is not captured again: the write that safe point started still
+        // lands before the round ends (a shutdown closes the store next; see persister.js flush)
+        const w = this.capture(ctx, reason) ?? this.written.get(ctx.spec?.assignmentId)?.pending;
         if (w) writes.push(w);
       }
       await Promise.all(writes);
@@ -103,11 +111,16 @@ export class NodeCheckpoints {
 
   /**
    * The checkpoint `checkpointId` the coordinator wants back (game-node `restore`) as the new assignment `assignmentId`
-   * (whose own first checkpoint then replaces it), or null.
+   * (whose own first checkpoint then replaces it), or null. Rejects with code NOT_READY while the store is not answering
+   * (store.js TRANSIENT_FAILURES): the checkpoint may well be there, the coordinator asks again.
    * @returns {Promise<{ spec: object, left: string[], match: object } | null>}
    */
   async load(checkpointId, assignmentId = checkpointId) {
     const loaded = await this.store.loadCheckpoint(checkpointId);
+    if (!loaded.ok && TRANSIENT_FAILURES.has(loaded.error)) {
+      this.log.warn?.(`[persist] checkpoint ${checkpointId.slice(0, 8)}: the store is not answering (${loaded.error}); the coordinator asks again`);
+      throw Object.assign(new Error('checkpoint store not answering'), { code: 'NOT_READY' });
+    }
     const cp = loaded.value;
     if (!cp || cp.v !== NODE_CHECKPOINT_VERSION || cp.kind !== 'cluster' || cp.assignmentId !== checkpointId
       || !cp.spec || typeof cp.spec !== 'object' || !cp.match || !Array.isArray(cp.left)) {

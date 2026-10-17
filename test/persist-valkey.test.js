@@ -39,6 +39,8 @@ test('RESP: commands encode as arrays of bulk strings; replies parse across chun
   assert.equal(out[2], null);
   assert.equal(out[3], 42);
   assert.equal(out[4].code, 'REPLY');
+  // a store still loading its data set: its own code (the startup read waits it out, test/persist-startup.test.js)
+  assert.equal(new ReplyParser().feed(Buffer.from('-LOADING Valkey is loading the dataset in memory\r\n'))[0].code, 'LOADING');
   assert.equal(out[5][0].toString(), 'a');
   assert.equal(out[5][1], null);
 });
@@ -67,7 +69,7 @@ test('a store that does not answer fails fast and then backs off: nothing waits 
   assert.ok(Date.now() - t1 < 50, 'during the backoff a command fails at once');
   const store = new CheckpointStore({ url: `redis://127.0.0.1:${port}`, client, log: quiet });
   assert.equal(await store.saveLobby({ v: 1 }), false);
-  assert.deepEqual(await store.loadLobby(), { ok: false, value: null });
+  assert.deepEqual(await store.loadLobby(), { ok: false, value: null, error: 'UNAVAILABLE' });
   assert.equal(store.snapshot().writeFailures, 1);
   await store.close();
 });

@@ -46,6 +46,8 @@ test('the whole stack restarts (a release): the match comes back on a node from 
 
 test('a stack stopped during a battle rebuilds the match in that round\'s prep, which says the battle is fought again', { timeout: 120_000 }, async (t) => {
   const store = new MemoryValkey(), storeFor = () => memoryStore(store), configs = nodeConfigs();
+  // the round's checkpoint (written as its prep ended) is still on its way when the node stops: the shutdown waits for it
+  store.checkpointWriteMs = 2000;
   const first = await stack(storeFor, { configs });
   const { c, code, ctx: before } = await playToPrep(first, 2);
   await c.request('g.ready', { ready: true });
@@ -53,6 +55,7 @@ test('a stack stopped during a battle rebuilds the match in that round\'s prep, 
   assert.equal(before.match.round, 2);
   await stop(first);
   await c.closed;
+  store.checkpointWriteMs = 0;
   const second = await stack(storeFor, { configs });
   t.after(() => stop(second));
   await until(() => second.coordinator.lobby.restoreStats.rebuilt === 1, 15_000, 'rebuilt');

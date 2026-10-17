@@ -55,7 +55,8 @@ export async function startGameNode({ host = '127.0.0.1', port = 0, nodeId, gene
   if (!int(ticketTtlMs, 1, 30_000)) throw new RangeError('invalid admission ticket lifetime');
   if ([getLoadState, getLoadDetails].some(fn => fn !== undefined && typeof fn !== 'function')) throw new TypeError('invalid load provider');
   if (typeof streamMarkers !== 'boolean') throw new TypeError('invalid game stream markers');
-  // restoreSource(assignmentId) → Promise<{ spec, left, match, reason } | null>: the checkpoints (server/persist/node.js)
+  // restoreSource(assignmentId) → Promise<{ spec, left, match, reason } | null>: the checkpoints (server/persist/node.js);
+  // it rejects with code NOT_READY while their store is not answering
   if (restoreSource !== null && typeof restoreSource !== 'function') throw new TypeError('invalid restore source');
   if (publicSlot !== null && publicGameLabel(publicSlot) === null) throw new TypeError('invalid public node slot');
   const authority = createRpcAuthenticator({ key, scope: nodeId, now });
@@ -198,7 +199,9 @@ export async function startGameNode({ host = '127.0.0.1', port = 0, nodeId, gene
       if (!nodeReady()) throw new RpcError('NOT_READY');
       if (!restoreSource) throw new RpcError('NO_CHECKPOINT');
       let saved;
-      try { saved = await restoreSource(payload.checkpointId, payload.assignmentId); } catch { saved = null; }
+      // a checkpoint store that is not answering (yet) is a node not ready to rebuild it: the coordinator asks again
+      try { saved = await restoreSource(payload.checkpointId, payload.assignmentId); }
+      catch (e) { if (e?.code === 'NOT_READY') throw new RpcError('NOT_READY'); saved = null; }
       if (!saved || saved.spec?.roomCode !== payload.roomCode || !Array.isArray(saved.spec?.seats)) throw new RpcError('NO_CHECKPOINT');
       if (stopped) throw new RpcError('CLOSED');
       let view;
