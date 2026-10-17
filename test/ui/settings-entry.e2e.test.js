@@ -46,10 +46,8 @@ describe('the settings entry of the lobby and the room', { skip: !ENABLED && 'se
     const problems = [];
     page.on('console', (m) => { if (m.type() === 'error') problems.push(`console: ${m.text()}`); });
     page.on('pageerror', (e) => problems.push(`pageerror: ${e.message}`));
-    await page.goto(`${base}/`, { waitUntil: 'networkidle0', timeout: 60000 });
-    await page.waitForSelector('input', { timeout: 15000 });
-    await page.type('input', '测试博士');
-    await page.evaluate(() => [...document.querySelectorAll('button')].find((b) => /开始/.test(b.textContent))?.click());
+    await page.goto(`${base}/`, { waitUntil: 'load', timeout: 60000 });
+    // no title screen to type a callsign into since 2026-10-15: the page opens on the lobby
     await page.waitForSelector('.lobby-screen', { timeout: 15000 });
     await sleep(500);
 

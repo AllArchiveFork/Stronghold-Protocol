@@ -68,7 +68,7 @@ describe('user playtest #5 — UI items 8 / 9 (mock harness, headless Chrome)', 
     const problems = [];
     page.on('pageerror', (e) => problems.push(`pageerror: ${e.message}`));
     page.on('console', (m) => { if (m.type() === 'error') problems.push(`console: ${m.text()}`); });
-    await page.goto(`${base}/dev/game-mock.html?shot=1&${query}`, { waitUntil: 'networkidle0' });
+    await page.goto(`${base}/dev/game-mock.html?shot=1&${query}`, { waitUntil: 'load' });
     await page.waitForFunction(() => !!document.querySelector('.screen:not(.gload)') && !!globalThis.__SP_VIEW__, { timeout: 20000 });
     if (insets) {
       await page.evaluate((i) => {
@@ -183,7 +183,8 @@ describe('user playtest #5 — UI items 8 / 9 (mock harness, headless Chrome)', 
     const { GLYPHS } = await import('../../public/js/ui/gameComponents.js');
     for (const [name, w, h, touch] of [view('844x390'), view('756x366'), view('1920x1080')]) {
       const { page, problems } = await open('phase=PREP', { w, h, touch });
-      const r = await page.evaluate(() => [...document.querySelectorAll('.gm__corner .gm__gear')].map((b) => {
+      // (the 输出统计 toggle that shares the corner and its class since rel16 is the damage board's, not one of these)
+      const r = await page.evaluate(() => [...document.querySelectorAll('.gm__corner .gm__gear:not(.damage-board__toggle)')].map((b) => {
         const svg = b.querySelector('svg.icon');
         const s = svg.getBoundingClientRect(), br = b.getBoundingClientRect();
         return { cls: b.className, w: s.width, h: s.height, bw: br.width, d: svg.querySelector('path')?.getAttribute('d') };

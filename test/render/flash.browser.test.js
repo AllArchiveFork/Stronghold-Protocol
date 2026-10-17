@@ -43,7 +43,7 @@ describe('user playtest #4 item 13: no screen-sized UI flash (mock battle, headl
       const problems = [];
       page.on('pageerror', (e) => problems.push(`pageerror: ${e.message}`));
       await page.setViewport({ width: w, height: h });
-      await page.goto(`http://127.0.0.1:${srv.port}/dev/game-mock.html?shot=1&render=engine&phase=COMBAT`, { waitUntil: 'networkidle0' });
+      await page.goto(`http://127.0.0.1:${srv.port}/dev/game-mock.html?shot=1&render=engine&phase=COMBAT`, { waitUntil: 'load' });
       await page.waitForFunction(() => !!document.querySelector('.screen:not(.gload)') && globalThis.__SP_VIEW__?.raw?.mode === 'battle', { timeout: 30000 });
       await sleep(1500);
       const r = await page.evaluate(async () => {
@@ -56,6 +56,8 @@ describe('user playtest #4 item 13: no screen-sized UI flash (mock battle, headl
         net._emit('b.ev', { t: 'b.ev', fieldId: S.battle.fieldRef.id, gt, ev: bonds.map((b, i) => ['layer', 'p1', b, i + 1]) });
         const t0 = performance.now();
         const icon = (p) => p.c.children.find((c) => c.texture && c.texture !== R.debug.fx.tex.glow);
+        // each pop's icon: its own texture (render/app.js materialTexture, not PIXI's TextureCache) became valid while shown
+        const loaded = new Map();
         let worst = 0, seen = 0;
         // every frame of the pops' life (1.4 s): the icon sprite's drawn box
         while (performance.now() - t0 < 1600) {
@@ -63,17 +65,18 @@ describe('user playtest #4 item 13: no screen-sized UI flash (mock battle, headl
           for (const p of R.debug.fx.pops) {
             const sp = icon(p);
             if (!sp || !sp.visible || !(sp.worldAlpha > 0.02)) continue;
+            loaded.set(p, loaded.get(p) || !!sp.texture.baseTexture.valid);
             const b = sp.getBounds();
             seen = Math.max(seen, R.debug.fx.pops.length);
             worst = Math.max(worst, b.width, b.height);
           }
         }
-        return { bonds, worst: Math.round(worst), seen, loaded: bonds.map((b) => !!PIXI.utils.TextureCache[icons.bondIcon(b)]?.valid) };
+        return { bonds, worst: Math.round(worst), seen, loaded: [...loaded.values()] };
       });
       await page.screenshot({ path: path.join(OUT, `flash-bond-pop-${w}.png`) });
       await page.close();
       assert.ok(r.bonds.length >= 2 && r.seen >= 2, `premise: bond icons popped for the first time (${JSON.stringify(r)})`);
-      assert.ok(r.loaded.every(Boolean), `premise: their images loaded during the pop (${JSON.stringify(r)})`);
+      assert.ok(r.loaded.length >= 2 && r.loaded.every(Boolean), `premise: their images loaded during the pop (${JSON.stringify(r)})`);
       assert.ok(r.worst > 20 && r.worst < 80, `the icon is ~46 px (× the pop's scale-in), never screen-sized: ${r.worst} px`);
       assert.deepEqual(problems, []);
     });

@@ -23,6 +23,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { settled } from '../e2e/client.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const OUT = path.join(ROOT, 'test/e2e/out');
@@ -65,7 +66,7 @@ describe('user playtest #6 — UI items 6 / 10 (mock harness, headless Chrome)',
     const problems = [];
     page.on('pageerror', (e) => problems.push(`pageerror: ${e.message}`));
     page.on('console', (m) => { if (m.type() === 'error') problems.push(`console: ${m.text()}`); });
-    await page.goto(`${base}/dev/game-mock.html?shot=1&${query}`, { waitUntil: 'networkidle0' });
+    await page.goto(`${base}/dev/game-mock.html?shot=1&${query}`, { waitUntil: 'load' });
     await page.waitForFunction(() => !!document.querySelector('.screen:not(.gload)'), { timeout: 20000 });
     // the real page's web font (index.html loads it from Google Fonts; Android's CJK font has its metrics): the mock has
     // no <link> for it, and the system fallback wraps differently (QA: 海沟实验体 took 8 lines at 640×360 with it) —
@@ -174,6 +175,9 @@ describe('user playtest #6 — UI items 6 / 10 (mock harness, headless Chrome)',
     const tapAt = async (x, y) => { if (touch) await page.touchscreen.tap(x, y); else await page.mouse.click(x, y); await sleep(400); };
     const b = await page.$eval(sel, (el) => { const r = el.getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height }; });
     await tapAt(b.x + b.w * 0.85, b.y + b.h * 0.85); // the old ⓘ corner: arms like the rest of the card
+    // the armed card lifts and its 确认购买 strip slides in (confirm-in): probed once both stand still (bounded)
+    await settled(page, '.scard.is-armed').catch(() => {});
+    await settled(page, '.scard.is-armed .scard__confirm').catch(() => {});
     return page.evaluate(() => {
       const a = document.querySelector('.scard.is-armed');
       if (!a) return null;
@@ -217,7 +221,8 @@ describe('user playtest #6 — UI items 6 / 10 (mock harness, headless Chrome)',
           const at = spot === 'strip centre' ? [strip.x + strip.w / 2, strip.y + strip.h / 2]
             : spot === 'strip right' ? [strip.x + strip.w * 0.9, strip.y + strip.h * 0.6] : [box.x + box.w * 0.94, box.y + box.h * 0.94];
           if (touch) await page.touchscreen.tap(at[0], at[1]); else await page.mouse.click(at[0], at[1]);
-          await sleep(450);
+          // the purchase lands when the mock answers (a busy host: later than a fixed pause)
+          await page.waitForFunction((i) => !!globalThis.__MOCK__.S().priv.shop.slots[i]?.sold, { timeout: 5000, polling: 100 }, slotIdx).catch(() => {});
           const after = await page.evaluate((i) => ({ funds: globalThis.__MOCK__.S().priv.funds, sold: !!globalThis.__MOCK__.S().priv.shop.slots[i]?.sold }), slotIdx);
           assert.ok(after.sold && after.funds < funds0, `${name} ${kind}: a ${touch ? 'tap' : 'click'} on the ${spot} buys`);
           if (spot === 'strip centre' && kind === 'operator') report.push(`${name}: ${probe.hit}/${probe.n}`);

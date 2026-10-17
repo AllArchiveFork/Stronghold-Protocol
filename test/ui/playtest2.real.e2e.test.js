@@ -69,6 +69,7 @@ async function soloToPrep(c, diff) {
   await c.waitFor((s) => !!s.room, 'solo room');
   if (!(await c.st()).phase) await c.roomStart({ timeout: 20000 });
   await c.waitFor((s) => s.phase === 'INFO_CHECK', 'briefing', 30000);
+  await c.settled('.brief-go'); // (a click during its entrance falls through)
   await c.click('.brief__foot .btn--primary', '准备就绪');
   await c.waitFor((s) => s.phase === 'BAND_DRAFT', 'band draft', 30000);
   await c.click('.dband', null, { nth: 1 });
@@ -261,6 +262,7 @@ describe('user playtest #2 item 6 — 前往查看 → 返回战场 in combat (r
       await sleep(500);
       await c.roomStart({ timeout: 20000 });
       await c.waitFor((s) => s.phase === 'INFO_CHECK', 'briefing', 30000);
+      await c.settled('.brief-go'); // (a click during its entrance falls through)
       await c.click('.brief__foot .btn--primary', '准备就绪');
       await c.waitFor((s) => s.phase === 'BAND_DRAFT' && s.draft?.turn === s.me || s.phase === 'PREP', 'my band pick', 60000);
       if ((await c.st()).phase === 'BAND_DRAFT') {
@@ -394,7 +396,7 @@ describe('user playtest #2 item 10 — boss-round prep on the boss field (real s
       await sleep(400);
       await host.roomStart({ timeout: 20000 });
       for (const c of [host, guest]) await c.waitFor((s) => s.phase === 'INFO_CHECK', 'briefing', 30000);
-      for (const c of [host, guest]) await c.click('.brief__foot .btn--primary', '准备就绪');
+      for (const c of [host, guest]) { await c.settled('.brief-go'); await c.click('.brief__foot .btn--primary', '准备就绪'); }
       // the draft first (a client still in the briefing would count as done without picking: its turn then runs out —
       // Match.BAND_TURN_SECONDS, 50 s each since the 2026-10-10 official-play report)
       for (const c of [host, guest]) await c.waitFor((s) => s.phase !== 'INFO_CHECK', 'band draft', 40000);
@@ -466,7 +468,7 @@ describe('user playtest #2 item 10 — boss-round prep on the boss field (real s
         assert.equal(await c.page.$('.spov__order'), null);
         assert.equal(await c.page.evaluate(() => globalThis.__SP__.store.get().match.public.deadline), deadline);
       }
-      await host.page.reload({ waitUntil: 'networkidle0' });
+      await host.page.reload({ waitUntil: 'load' });
       await host.page.waitForSelector('.spov[aria-label="教鞭选择"]', { timeout: 20000 });
       assert.deepEqual(await choiceOf(host), hostChoice, 'refresh reuses the ID and cards');
       assert.deepEqual(await choiceOf(guest), guestChoice, 'the teammate keeps its own candidates');

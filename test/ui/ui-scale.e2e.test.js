@@ -51,7 +51,7 @@ describe('界面大小 (headless Chrome)', { skip: !ENABLED && 'set SP_E2E=1 (an
     await page.evaluateOnNewDocument((ui) => {
       try { localStorage.setItem('sp.pref.settings', JSON.stringify(ui ? { uiScale: ui } : {})); } catch { /* ignore */ }
     }, uiScale);
-    await page.goto(`${base}/dev/game-mock.html?shot=1&${query}`, { waitUntil: 'networkidle0', timeout: 60000 });
+    await page.goto(`${base}/dev/game-mock.html?shot=1&${query}`, { waitUntil: 'load', timeout: 60000 });
     await page.waitForFunction(() => !!document.querySelector('.screen:not(.gload)') && !!globalThis.__SP_VIEW__, { timeout: 20000 });
     await page.waitForFunction(() => {
       const bar = document.querySelector('.shopbar');

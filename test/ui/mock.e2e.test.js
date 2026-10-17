@@ -18,7 +18,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { aimedDrag, groundAnchor, anchorPoint, cameraSettled } from '../e2e/client.mjs';
+import { aimedDrag, groundAnchor, anchorPoint, cameraSettled, settled } from '../e2e/client.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const OUT = path.join(ROOT, 'test/e2e/out');
@@ -65,12 +65,21 @@ describe('in-match UI (mock harness, headless Chrome)', { skip: !ENABLED && 'set
     page.on('pageerror', (e) => problems.push(`pageerror: ${e.message}`));
     page.on('requestfailed', (r) => { if (!/fonts\.(googleapis|gstatic)/.test(r.url())) problems.push(`requestfailed: ${r.url()} ${r.failure()?.errorText}`); });
     page.on('response', (r) => { if (r.status() >= 400) problems.push(`http ${r.status()}: ${r.url()}`); });
-    await page.goto(`${base}/dev/game-mock.html?shot=1&render=${render}&${query}`, { waitUntil: 'networkidle0' });
+    await page.goto(`${base}/dev/game-mock.html?shot=1&render=${render}&${query}`, { waitUntil: 'load' });
     await page.waitForFunction(() => !!document.querySelector('.screen:not(.gload)'), { timeout: 15000 });
     await new Promise((r) => setTimeout(r, 900));
     return { page, problems };
   }
   const mockState = (page) => page.evaluate(() => JSON.parse(JSON.stringify(globalThis.__MOCK__.S().priv)));
+  /** The engine view is up and every prep piece on it has its view (operators with their Spine model loaded). */
+  const prepViews = (page) => page.waitForFunction(() => {
+    const R = globalThis.__SP_VIEW__?.raw, p = globalThis.__MOCK__.S().priv;
+    if (!R?.debug?.views) return false;
+    return [...(p.board || []), ...(p.hand || []), ...(p.temp || [])].every((x) => {
+      const v = x && R.debug.views.get('p:' + x.uid);
+      return !x || (v && !v.destroyed && (x.kind === 'item' || v.spineReady));
+    });
+  }, { timeout: 30000, polling: 200 });
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const useWhip = (page) => page.evaluate(async () => {
     const { net } = await import('/js/net.js');
@@ -484,14 +493,18 @@ describe('in-match UI (mock harness, headless Chrome)', { skip: !ENABLED && 'set
 
     ({ page, problems } = await open('phase=BAND_DRAFT'));
     const bands = await page.$$('.dband');
+    const bandId = await bands[5].evaluate((el) => el.dataset.band);
     await bands[5].click();
     await page.click('.draft-detail__btns .btn--primary');
-    await sleep(300);
-    assert.ok(await page.$('.dband.is-mine'), 'band picked');
+    // a confirmed pick replaces the grid with the 已选定策略 panel of that band (screens/bandDraft.js view 'done')
+    await page.waitForSelector('.draft-done', { timeout: 5000 });
+    assert.deepEqual(await page.evaluate(() => globalThis.__MOCK__.S().requests.filter(([t]) => t === 'g.band').map(([, f]) => f.bandId)), [bandId], 'band picked');
+    assert.equal(await page.$eval('.draft-done__name', (el) => el.textContent.trim()), await page.evaluate(async (id) => (await import('/js/data.js')).getBand(id)?.name, bandId));
     assert.deepEqual(problems, []);
     await page.close();
 
     ({ page, problems } = await open('phase=INFO_CHECK'));
+    await settled(page, '.brief-go'); // (a click during its entrance falls through)
     await page.click('.brief__foot .btn--primary');
     await sleep(300);
     const txt = await page.$eval('.brief-ready__txt', (el) => el.textContent);
@@ -1062,9 +1075,18 @@ describe('in-match UI (mock harness, headless Chrome)', { skip: !ENABLED && 'set
   });
 
   test('result: no Hidden Core medal when R15 was never reached', async () => {
+    // the settlement (screens/settle.js): 个人战报 → 下一步 → 同盟 → 数据详情, the full report (screens/result.js) over it
     const { page, problems } = await open('phase=RESULT&variant=defeat');
+    await page.waitForSelector('[data-testid="settle-self"]', { timeout: 10000 });
+    assert.equal(await page.$('.smedal--hidden'), null, 'none on 个人战报');
+    await settled(page, '.settle__next');
+    await page.click('.settle__next');
+    await page.waitForSelector('[data-testid="settle-team"]', { timeout: 10000 });
+    await settled(page, '.steam__detail');
+    await page.click('.steam__detail');
+    await page.waitForSelector('[data-testid="settle-detail"] .result__medals', { timeout: 10000 });
     assert.equal(await page.$('.medal--hidden'), null);
-    assert.ok(await page.$('.medal'), 'the leader medal is still shown');
+    assert.ok(await page.$('[data-testid="settle-detail"] .medal'), 'the leader medal is still shown');
     assert.deepEqual(problems, []);
     await page.close();
   });
@@ -1072,7 +1094,7 @@ describe('in-match UI (mock harness, headless Chrome)', { skip: !ENABLED && 'set
   test('engine: equipment dropped on an operator\'s tile equips it — the tile under the pointer decides (user playtest #4 item 1)', async (t) => {
     if (RENDER !== 'engine') { t.skip('SP_RENDER=fallback'); return; }
     const { page, problems } = await open('phase=PREP');
-    await sleep(1500); // spine models
+    await prepViews(page);
     const at = (uid, fy) => page.evaluate((u, f) => { const r = globalThis.__SP_VIEW__?.pieceScreenRect(u); return r && { x: r.left + r.width / 2, y: r.top + r.height * f }; }, uid, fy);
     const tileAt = (row, col) => page.evaluate((r, c) => { const x = globalThis.__SP_VIEW__?.raw?.tileScreen?.(r, c); return x && { x: x.x, y: x.y }; }, row, col);
     // (aimed after the pickup, e2e/client.mjs aimedDrag)
@@ -1092,7 +1114,7 @@ describe('in-match UI (mock harness, headless Chrome)', { skip: !ENABLED && 'set
   test('an illegal drop says why (DOM fallback: pieceDrop, engine: cancelled drag)', async () => {
     for (const render of RENDER === 'engine' ? ['fallback', 'engine'] : ['fallback']) {
       const { page, problems } = await open('phase=PREP', { render });
-      if (render === 'engine') await sleep(1500);
+      if (render === 'engine') await prepViews(page);
       // deploy cap reached: a hand operator dropped on any empty board tile is refused
       await page.evaluate(() => globalThis.__MOCK__.mutate((S) => { S.priv.deployCap = S.priv.board.filter((x) => x.kind === 'chess').length; S.priv.deployCount = S.priv.deployCap; }));
       await sleep(200);
@@ -1143,8 +1165,9 @@ describe('in-match UI (mock harness, headless Chrome)', { skip: !ENABLED && 'set
     const buttons = await page.$$('.modal__actions .btn');
     await buttons[1].click(); // 暂离
     await page.waitForSelector('.awayov');
+    await settled(page, '.awayov'); // (it fades and slides in: a click during its entrance can miss 返回)
     await page.click('.awayov .btn');
-    await sleep(300);
+    await page.waitForSelector('.awayov', { hidden: true, timeout: 5000 }).catch(() => {});
     assert.equal(await page.$('.awayov'), null);
     assert.deepEqual(problems, []);
     await page.close();

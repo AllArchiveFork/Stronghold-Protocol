@@ -21,6 +21,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { settled } from '../e2e/client.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const OUT = path.join(ROOT, 'test/e2e/out');
@@ -183,6 +184,7 @@ describe('GitHub issue #8 item 1: 本局信息 in the strategy draft (real serve
     assert.match(brief.legend, /或本模式禁用/);
     await shot(page, 'solo-briefing');
 
+    await settled(page, '.brief-go'); // (a click during its entrance falls through)
     await press(p, '.brief__foot .btn--primary', '准备就绪');
     await waitSt(page, (s) => s.phase === 'BAND_DRAFT', 'band draft');
     await page.waitForSelector('[data-testid="match-info-open"]', { visible: true, timeout: 10000 });
@@ -289,7 +291,7 @@ describe('GitHub issue #8 item 1: 本局信息 in the strategy draft (real serve
     }
     assert.deepEqual(briefs.get(b), briefs.get(a), 'both players see the same briefing');
     await shot(b.page, 'coop-phone-briefing-844');
-    for (const p of [a, b]) await press(p, '.brief__foot .btn--primary', '准备就绪');
+    for (const p of [a, b]) { await settled(p.page, '.brief-go'); await press(p, '.brief__foot .btn--primary', '准备就绪'); }
     for (const p of [a, b]) await waitSt(p.page, (s) => s.phase === 'BAND_DRAFT' && !!s.turn, `${p.name}: band draft`);
 
     const turn = (await st(a.page)).turn;

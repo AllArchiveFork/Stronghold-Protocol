@@ -209,6 +209,7 @@ describe('cosmetic plugins in the browser (P1a)', { skip: !ENABLED && 'set SP_E2
       await c.waitFor((s) => !!s.room, 'solo room');
       if (!(await c.st()).phase) await c.click('.room-bar__right button', '开始模拟', { timeout: 20000 });
       await c.waitFor((s) => s.phase === 'INFO_CHECK', 'briefing', 30000);
+      await c.settled('.brief-go'); // (a click during its entrance falls through)
       await c.click('.brief__foot .btn--primary', '准备就绪');
       await c.waitFor((s) => s.phase === 'BAND_DRAFT', 'band draft', 30000);
       await c.click('.dband', null, { nth: 1 });

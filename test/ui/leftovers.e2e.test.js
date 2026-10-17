@@ -56,7 +56,7 @@ describe('client leftovers — mock harness', { skip: !ENABLED && 'set SP_E2E=1 
     page.on('pageerror', (e) => problems.push(`pageerror: ${e.message}`));
     page.on('requestfailed', (r) => { if (!/fonts\.(googleapis|gstatic)/.test(r.url())) problems.push(`requestfailed: ${r.url()} ${r.failure()?.errorText}`); });
     page.on('response', (r) => { if (r.status() >= 400) problems.push(`http ${r.status()}: ${r.url()}`); });
-    await page.goto(`${base}/dev/game-mock.html?shot=1&${query}`, { waitUntil: 'networkidle0' });
+    await page.goto(`${base}/dev/game-mock.html?shot=1&${query}`, { waitUntil: 'load' });
     await page.waitForFunction(() => !!document.querySelector('.screen:not(.gload)'), { timeout: 15000 });
     await sleep(900);
     return { page, problems };
@@ -156,8 +156,8 @@ describe('client leftovers — mock harness', { skip: !ENABLED && 'set SP_E2E=1 
     assert.match(pend, /DOT/);
     assert.match(pend, /\d+\s*秒后全队生命值开始流失/);
     const secs = Number(pend.match(/(\d+)\s*秒后/)[1]);
-    // the mock sets the drain 18 s after its script ran; the page is read after networkidle0, which waits for the
-    // official effects the board preloads (about 8 s here), so only the range is checked
+    // the mock sets the drain 18 s after its script ran; the page is read once its screen is up (when the official
+    // effects the board preloads are done depends on the host), so only the range is checked
     assert.ok(secs > 0 && secs <= 18, `drain in ${secs} s`);
     assert.equal(await page.$eval('.gtop__right .countdown', (el) => el.getAttribute('aria-label')), '剩余0秒');
     await page.screenshot({ path: path.join(OUT, 'leftover-fa-overtime.png') });
@@ -237,6 +237,7 @@ describe('client leftovers — real server', { skip: !ENABLED && 'set SP_E2E=1 (
       await c.waitFor((s) => !!s.room, 'solo room');
       if (!(await c.st()).phase) await c.roomStart({ timeout: 20000 });
       await c.waitFor((s) => s.phase === 'INFO_CHECK', 'briefing', 30000);
+      await c.settled('.brief-go'); // (a click during its entrance falls through)
       await c.click('.brief__foot .btn--primary', '准备就绪');
       await c.waitFor((s) => s.phase === 'BAND_DRAFT', 'band draft', 30000);
       await c.click('.dband', null, { nth: 1 });

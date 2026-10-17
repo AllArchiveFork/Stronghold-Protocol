@@ -40,7 +40,7 @@ describe('stage device tip in the browser', { skip: !ENABLED && 'set SP_E2E=1 (a
     await srv?.close();
   });
 
-  async function open(url, { w = 1600, h = 900, waitUntil = 'networkidle0' } = {}) {
+  async function open(url, { w = 1600, h = 900, waitUntil = 'load' } = {}) {
     const page = await browser.newPage();
     await page.setViewport({ width: w, height: h });
     const problems = [];

@@ -56,6 +56,7 @@ describe('0.2.0 补位 — a not-owned operator fights as its stand-in (real ser
       await c.waitFor((s) => s.phase === 'INFO_CHECK', 'briefing', 30000);
       const standIns = await c.page.evaluate(() => globalThis.__SP__.store.get().match.private?.standIns ?? null);
       assert.deepEqual(standIns, [SILVER], 'the match received the not-owned list');
+      await c.settled('.brief-go'); // (a click during its entrance falls through)
       await c.click('.brief__foot .btn--primary', '准备就绪');
       await c.waitFor((s) => s.phase === 'BAND_DRAFT', 'band draft', 30000);
       await c.click('.dband', null, { nth: 1 });
@@ -149,10 +150,25 @@ describe('0.2.0 补位 — a not-owned operator fights as its stand-in (real ser
       await sleep(800);
       await c.shot('combat');
       // 6) the battle ends, the round settles (the result upload is accepted) and the match ends (finishAfter 1): the
-      // result screen's lineup shows Sharp with the 「替补」 mark
+      // settlement (screens/settle.js) — 个人战报's lineup shows Sharp with the 「替补」 mark, and so does the full report
+      // (ResultView) that 下一步 → 同盟 → 数据详情 opens over it
       await c.waitFor((s) => !!s.result, 'result', 180000);
-      await c.page.waitForSelector('.rcard.is-self .rcard__lineup .uthumb', { visible: true, timeout: 15000 });
-      const lineup = await c.page.evaluate(() => [...document.querySelectorAll('.rcard.is-self .rcard__lineup .uthumb')].map((el) => ({
+      await c.page.waitForSelector('.settle__next', { visible: true, timeout: 15000 });
+      const own = await c.page.evaluate(() => [...document.querySelectorAll('.sself .sop:not(.is-empty)')].map((el) => ({
+        title: el.getAttribute('title') || '', mark: el.querySelector('.sop__si')?.textContent || '',
+        standIn: el.querySelector('.sop__si')?.dataset.standin || '', art: el.querySelector('.sop__art img')?.getAttribute('src') || '',
+      })));
+      assert.equal(own.length, 1, '个人战报: the one operator fielded');
+      assert.deepEqual([own[0].mark, own[0].standIn], ['替补', SHARP], JSON.stringify(own));
+      assert.match(own[0].title, /Sharp/);
+      assert.match(own[0].art, /char_609_acguad/, 'Sharp\'s art');
+      await c.settled('.settle__next');
+      await c.click('.settle__next', '下一步');
+      await c.page.waitForSelector('.settle--team .steam__detail', { visible: true, timeout: 10000 });
+      await c.settled('.steam__detail');
+      await c.click('.steam__detail', '数据详情');
+      await c.page.waitForSelector('.settle__detail .rcard.is-self .rcard__lineup .uthumb', { visible: true, timeout: 15000 });
+      const lineup = await c.page.evaluate(() => [...document.querySelectorAll('.settle__detail .rcard.is-self .rcard__lineup .uthumb')].map((el) => ({
         title: el.getAttribute('title') || '', mark: el.querySelector('.uthumb__si')?.textContent || '',
         standIn: el.querySelector('.uthumb__si')?.dataset.standin || '', art: el.querySelector('img')?.getAttribute('src') || '',
       })));

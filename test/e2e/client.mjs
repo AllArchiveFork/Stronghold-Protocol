@@ -77,6 +77,18 @@ export function anchorPoint(page, a) {
   }, a);
 }
 
+/**
+ * Wait until `sel` is there and its own entrance animations ran (bounded): e.g. the briefing's 准备就绪 (.brief-go) is
+ * clipped away for its first ~0.8 s, and a click then falls through it — a player cannot press a button not yet drawn.
+ * @param {any} page @param {string} sel @param {number} [timeout]
+ */
+export async function settled(page, sel, timeout = 5000) {
+  await page.waitForFunction((sel) => {
+    const el = document.querySelector(sel);
+    return !!el && el.getAnimations().every((a) => a.playState === 'finished' || a.effect?.getComputedTiming().iterations === Infinity);
+  }, { timeout, polling: 100 }, sel);
+}
+
 /** Wait until the render engine's camera holds still for a few frames (at most `ms`); resolves at once without it. */
 export function cameraSettled(page, ms = 1500) {
   return page.evaluate((ms) => new Promise((resolve) => {
@@ -353,16 +365,8 @@ export class Client {
 
   async exists(sel) { return !!(await this.page.$(sel)); }
 
-  /**
-   * Wait until `sel`'s own entrance animations ran (bounded): e.g. the briefing's 准备就绪 (.brief-go) is clipped away
-   * for its first ~0.8 s, and a click then falls through it — a player cannot press a button not yet drawn.
-   */
-  async settled(sel, timeout = 5000) {
-    await this.page.waitForFunction((sel) => {
-      const el = document.querySelector(sel);
-      return !!el && el.getAnimations().every((a) => a.playState === 'finished' || a.effect?.getComputedTiming().iterations === Infinity);
-    }, { timeout, polling: 100 }, sel);
-  }
+  /** `settled` (above) on this client's page. */
+  async settled(sel, timeout = 5000) { await settled(this.page, sel, timeout); }
 
   async visible(sel) {
     return this.page.evaluate((sel) => {

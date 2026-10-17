@@ -35,7 +35,7 @@ describe('the shop refresh single-flights (GitHub #501, mock harness, headless C
   test('a tap under a lagging shop pays once: the button dims, the extra tap / R key are dropped, the next tap works', async () => {
     const page = await browser.newPage();
     await page.setViewport({ width: 1920, height: 1080, deviceScaleFactor: 1 });
-    await page.goto(`${base}/dev/game-mock.html?shot=1&phase=PREP&render=fallback`, { waitUntil: 'networkidle0' });
+    await page.goto(`${base}/dev/game-mock.html?shot=1&phase=PREP&render=fallback`, { waitUntil: 'load' });
     await page.waitForFunction(() => !!document.querySelector('.screen:not(.gload)') && !!globalThis.__SP_VIEW__, { timeout: 20000 });
     // the mock answers instantly; give g.refresh a high RTT, and count what the client actually sends (gameActions.js
     // looks net.request up at call time; the mock's own request record only sees the request after the delay)

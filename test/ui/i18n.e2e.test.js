@@ -95,7 +95,7 @@ describe('language switch in the lobby', { skip: !ENABLED && 'set SP_E2E=1 (Chro
     page.on('console', (m) => { if (m.type() === 'error') problems.push(`console: ${m.text()}`); });
     page.on('pageerror', (e) => problems.push(`pageerror: ${e.message}`));
     page.on('response', (r) => { if (r.status() >= 400 && !/fonts\.(googleapis|gstatic)/.test(r.url())) problems.push(`http ${r.status()}: ${r.url()}`); });
-    await page.goto(`${base}/`, { waitUntil: 'networkidle0' });
+    await page.goto(`${base}/`, { waitUntil: 'load' });
     await openLanguageSettings(page);
     assert.equal(await settingsLabel(page), '设置');
     assert.equal(await renameLabel(page), '修改博士代号');
@@ -111,12 +111,12 @@ describe('language switch in the lobby', { skip: !ENABLED && 'set SP_E2E=1 (Chro
     await page.waitForFunction(() => globalThis.__SP__?.data?.locale() === 'en', { timeout: 8000 });
     assert.equal(await page.evaluate(() => globalThis.__SP__.data.get('config').modes.mode_multi_abyss.name), 'Ultimate Simulation');
 
-    await page.reload({ waitUntil: 'networkidle0' });
+    await page.reload({ waitUntil: 'load' });
     await page.waitForSelector('.lobby-screen .lobby-settings');
     assert.equal(await settingsLabel(page), 'Settings', 'the choice survives a reload');
     assert.equal(await page.evaluate(() => document.title), 'Stronghold Protocol: Alliance · Web Simulation');
 
-    await page.goto(`${base}/?lang=zh`, { waitUntil: 'networkidle0' });
+    await page.goto(`${base}/?lang=zh`, { waitUntil: 'load' });
     await page.waitForSelector('.lobby-screen .lobby-settings');
     await sleep(200);
     assert.equal(await settingsLabel(page), '设置');
@@ -138,7 +138,7 @@ describe('language switch in the lobby', { skip: !ENABLED && 'set SP_E2E=1 (Chro
       fs.writeFileSync(path.join(PACK_DIR, 'pack.json'), JSON.stringify({ type: 'lang', lang: 'qab', name: 'Qabisch', files: { ui: 'ui.json' } }));
       fs.writeFileSync(path.join(PACK_DIR, 'ui.json'), JSON.stringify({ 设置: 'Qab-Einstellung' }));
       await sleep(1100); // the server's registry looks at the folders again after a second
-      await page.goto(`${base}/?lang=zh`, { waitUntil: 'networkidle0' });
+      await page.goto(`${base}/?lang=zh`, { waitUntil: 'load' });
       await openLanguageSettings(page);
       await page.waitForFunction(() => [...document.querySelectorAll('.modal [data-testid="lang-toggle"] :is(button, option)')].some((e) => (e.dataset.lang ?? e.value) === 'qaa'), { timeout: 8000 });
       assert.deepEqual(await menu(page), [...SHIPPED.slice(0, 4), ['qaa', 'Testisch'], ['qab', 'Qabisch'], SHIPPED[4]]);
@@ -160,7 +160,7 @@ describe('language switch in the lobby', { skip: !ENABLED && 'set SP_E2E=1 (Chro
       await page.waitForFunction(() => document.querySelector('.lobby-settings')?.getAttribute('aria-label') === 'Einstellungen', { timeout: 8000 });
       removePacks();
       await sleep(1100);
-      await page.reload({ waitUntil: 'networkidle0' });
+      await page.reload({ waitUntil: 'load' });
       await page.waitForSelector('.lobby-screen .lobby-settings');
       assert.equal(await settingsLabel(page), '设置', 'the stored pack is gone: Chinese');
       assert.deepEqual(await menu(page), SHIPPED);
@@ -177,7 +177,7 @@ describe('language switch in the lobby', { skip: !ENABLED && 'set SP_E2E=1 (Chro
     page.on('console', (m) => { if (m.type() === 'error') problems.push(`console: ${m.text()}`); });
     page.on('pageerror', (e) => problems.push(`pageerror: ${e.message}`));
     page.on('response', (r) => { if (r.status() >= 400 && !/fonts\.(googleapis|gstatic)/.test(r.url())) problems.push(`http ${r.status()}: ${r.url()}`); });
-    await page.goto(`${base}/?lang=zh`, { waitUntil: 'networkidle0' });
+    await page.goto(`${base}/?lang=zh`, { waitUntil: 'load' });
     await openLanguageSettings(page);
     assert.equal(await settingsNote(page), null, 'Chinese: no machine-translation note');
     for (const code of ['ja', 'ko', 'zh-TW']) {
@@ -237,7 +237,8 @@ describe('language switch in the lobby', { skip: !ENABLED && 'set SP_E2E=1 (Chro
   test('a late English pack cannot overwrite a newer Traditional Chinese selection; its cache remains reusable', async (t) => {
     const page = await browser.newPage();
     t.after(() => page.close());
-    await page.goto(`${base}/?lang=zh`, { waitUntil: 'networkidle0' });
+    await page.goto(`${base}/?lang=zh`, { waitUntil: 'load' });
+    await page.waitForSelector('.lobby-screen .lobby-settings');
     await holdPacks(page, ['en']);
     await pick(page, 'en');
     await waitForPack(page, 'en');
@@ -254,7 +255,8 @@ describe('language switch in the lobby', { skip: !ENABLED && 'set SP_E2E=1 (Chro
   test('selecting the displayed default language cancels a pending pack', async (t) => {
     const page = await browser.newPage();
     t.after(() => page.close());
-    await page.goto(`${base}/?lang=zh`, { waitUntil: 'networkidle0' });
+    await page.goto(`${base}/?lang=zh`, { waitUntil: 'load' });
+    await page.waitForSelector('.lobby-screen .lobby-settings');
     await holdPacks(page, ['en']);
     await pick(page, 'en');
     await waitForPack(page, 'en');
@@ -268,7 +270,8 @@ describe('language switch in the lobby', { skip: !ENABLED && 'set SP_E2E=1 (Chro
   test('repeated selections reuse a pending pack and still supersede an intervening selection', async (t) => {
     const page = await browser.newPage();
     t.after(() => page.close());
-    await page.goto(`${base}/?lang=zh`, { waitUntil: 'networkidle0' });
+    await page.goto(`${base}/?lang=zh`, { waitUntil: 'load' });
+    await page.waitForSelector('.lobby-screen .lobby-settings');
     await holdPacks(page, ['en', 'zh-TW']);
     await pick(page, 'en');
     await waitForPack(page, 'en');
@@ -286,7 +289,8 @@ describe('language switch in the lobby', { skip: !ENABLED && 'set SP_E2E=1 (Chro
   test('a failed latest selection keeps the last successful UI and menu; an older pack stays stale', async (t) => {
     const page = await browser.newPage();
     t.after(() => page.close());
-    await page.goto(`${base}/?lang=zh`, { waitUntil: 'networkidle0' });
+    await page.goto(`${base}/?lang=zh`, { waitUntil: 'load' });
+    await page.waitForSelector('.lobby-screen .lobby-settings');
     await holdPacks(page, ['en', 'zh-TW']);
     await pick(page, 'en');
     await waitForPack(page, 'en');
@@ -302,7 +306,8 @@ describe('language switch in the lobby', { skip: !ENABLED && 'set SP_E2E=1 (Chro
   test('a stale failure leaves a newer pending dropdown selection intact', async (t) => {
     const page = await browser.newPage();
     t.after(() => page.close());
-    await page.goto(`${base}/?lang=zh`, { waitUntil: 'networkidle0' });
+    await page.goto(`${base}/?lang=zh`, { waitUntil: 'load' });
+    await page.waitForSelector('.lobby-screen .lobby-settings');
     await holdPacks(page, ['en', 'zh-TW']);
     await pick(page, 'en');
     await waitForPack(page, 'en');

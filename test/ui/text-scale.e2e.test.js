@@ -83,9 +83,7 @@ describe('文字大小 on a phone (headless Chrome)', { skip: !ENABLED && 'set S
 
   test('the steps grow the readable text; the layout root and the modal box do not move', async () => {
     const { page, problems } = await open(`${base}/`, null, { seed: false });
-    await page.waitForSelector('input', { timeout: 15000 });
-    await page.type('input', '文字大小');
-    await page.evaluate(() => [...document.querySelectorAll('button')].find((b) => /开始/.test(b.textContent))?.click());
+    // no title screen to type a callsign into since 2026-10-15: the page opens on the lobby
     await page.waitForSelector('.lobby-screen', { timeout: 15000 });
     await sleep(500);
     {
@@ -131,7 +129,7 @@ describe('文字大小 on a phone (headless Chrome)', { skip: !ENABLED && 'set S
 
     // saved with the settings and restored on the next visit
     assert.deepEqual(await page.evaluate(() => JSON.parse(localStorage.getItem('sp.pref.settings')).textSize), 'xl');
-    await page.reload({ waitUntil: 'networkidle0' });
+    await page.reload({ waitUntil: 'load' });
     await page.waitForSelector('.lobby-screen', { timeout: 15000 });
     await sleep(500);
     {
@@ -151,6 +149,8 @@ describe('文字大小 on a phone (headless Chrome)', { skip: !ENABLED && 'set S
     const measure = async (textSize) => {
       const { page, problems } = await open(`${base}/dev/game-mock.html?shot=1&phase=PREP&variant=settings`, textSize);
       await page.waitForFunction(() => !!document.querySelector('.screen:not(.gload)'), { timeout: 15000 });
+      // the renderer's canvas (measured below) exists once the engine has built its view
+      await page.waitForSelector('.gm__field canvas', { timeout: 30000 });
       await sleep(900);
       // Compare settled layout, not shop-up's transient .3rem translation.
       await page.waitForFunction(() => {

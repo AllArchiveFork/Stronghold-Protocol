@@ -22,7 +22,8 @@ describe('settlement return control under enlarged text (#458)', { skip: !ENABLE
       try {
         await page.setViewport({ width, height });
         await page.evaluateOnNewDocument(ts => localStorage.setItem('sp.pref.settings', JSON.stringify({ textSize: ts })), textSize);
-        await page.goto(`http://127.0.0.1:${srv.port}/`, { waitUntil: 'networkidle0' });
+        await page.goto(`http://127.0.0.1:${srv.port}/`, { waitUntil: 'load' });
+        await page.waitForSelector('.lobby-screen', { timeout: 15000 }); // booted: nothing of the app renders over the fixture later
         // Use the production ResultView with a captured real match result; no CSS or geometry is changed by the fixture.
         await page.evaluate(async res => {
           const { render, h } = await import('/vendor/preact.module.js');

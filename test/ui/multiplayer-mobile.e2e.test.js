@@ -2,7 +2,7 @@
 // Checks readable/reachable rosters, queue feedback and lobby controls; not physical devices or a full match.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import puppeteer from 'puppeteer-core';
 import { WebSocket } from 'ws';
@@ -15,6 +15,8 @@ const enabled = process.env.SP_E2E === '1';
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 test('mobile lobby, same-pool count and every expanded roster seat remain operable', { skip: !enabled, timeout: 120000 }, async () => {
+  // (the ignored .cache/stardust/ is not there in a fresh checkout)
+  if (!process.env.SP_MOBILE_EVIDENCE) mkdirSync(fileURLToPath(new URL('../../.cache/stardust/', import.meta.url)), { recursive: true });
   const out = process.env.SP_MOBILE_EVIDENCE || mkdtempSync(fileURLToPath(new URL('../../.cache/stardust/oct11-mobile-validation-', import.meta.url)));
   const report = { ok: false, productionAccessed: false, scope: 'localhost HTTP/WS, server Match/one Worker, Chrome touch emulation, twenty seats', errors: [], externalRequests: 0 };
   let srv, browser, guest;

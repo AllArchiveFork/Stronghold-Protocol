@@ -40,7 +40,7 @@ describe('the 观战席 capsule of the match top bar', { skip: !ENABLED && 'set 
     const problems = [];
     page.on('console', (m) => { if (m.type() === 'error') problems.push(`console: ${m.text()}`); });
     page.on('pageerror', (e) => problems.push(`pageerror: ${e.message}`));
-    await page.goto(`${base}/dev/game-mock.html?render=fallback&${query}`, { waitUntil: 'networkidle0', timeout: 60000 });
+    await page.goto(`${base}/dev/game-mock.html?render=fallback&${query}`, { waitUntil: 'load', timeout: 60000 });
     await page.waitForSelector('.gtop', { timeout: 15000 });
     await sleep(400);
     return { page, problems };

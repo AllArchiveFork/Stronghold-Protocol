@@ -21,7 +21,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { aimedDrag } from '../e2e/client.mjs';
+import { aimedDrag, settled } from '../e2e/client.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const OUT = path.join(ROOT, 'test/e2e/out');
@@ -141,6 +141,54 @@ class Client {
     await this.page.waitForFunction((n) => globalThis.__SP__?.net.status === 'online' && globalThis.__SP__.net.helloName === n,
       { timeout: 30000 }, name);
   }
+
+  // ---- hub and room (the lobby / room design of 2026-10-14; as test/e2e/client.mjs) ---------------------------------
+
+  /**
+   * Closes the lobby's 公告板 when it opened by itself — over the hub, once the session is online and the notices are
+   * loaded (screens/lobby.js); no board is a no-op.
+   */
+  async dismissBoard(timeout = 2500) {
+    await this.page.waitForFunction(() => ['ready', 'missing'].includes(globalThis.__SP__?.data.status('announcements')), { timeout: 15000 });
+    const board = await this.page.waitForSelector('.announcement-board', { visible: true, timeout }).catch(() => null);
+    if (!board) return false;
+    await this.click('.announcement-board .modal__actions button');
+    await this.page.waitForSelector('.announcement-board', { hidden: true, timeout: 10000 });
+    return true;
+  }
+
+  /** Hub 独立模拟 → 选择模拟协议: the card named `difficulty` and 开始模拟 (room.create). */
+  async createSolo(difficulty = '标准模拟') {
+    await this.dismissBoard();
+    await this.click('.hub-entry', '独立模拟');
+    await this.page.waitForSelector('.proto .proto-list', { visible: true, timeout: 15000 });
+    await this.click('.proto .pcard__name', difficulty);
+    await this.click('.proto .proto-start', '开始模拟');
+  }
+
+  /** Hub 同盟模拟 → 选择同盟方式 → 创建同盟, then the room's difficulty when given. Resolves with the alliance key. */
+  async createCoop(difficulty = null) {
+    await this.dismissBoard();
+    await this.click('.hub-entry', '同盟模拟');
+    await this.page.waitForSelector('.ally', { visible: true, timeout: 15000 });
+    await this.click('.ally-card--create');
+    const { room } = await this.waitFor((s) => !!s.room?.code, 'room created', 20000);
+    await this.page.waitForSelector('.rs', { visible: true, timeout: 15000 });
+    if (difficulty) {
+      await this.click('.rs-pill__diff');
+      await this.page.waitForSelector('.rs-proto', { visible: true, timeout: 10000 });
+      await this.click('.rs-proto .pcard__name', difficulty);
+      await this.click('.rs-proto .proto-start', '确认');
+      await this.page.waitForSelector('.rs-proto', { hidden: true, timeout: 10000 });
+    }
+    return room.code;
+  }
+
+  /** Room: 开始模拟 (the host). */
+  roomStart(opts) { return this.click('.rs-go', '开始模拟', opts); }
+
+  /** Room: 准备就绪 (a teammate). */
+  roomReady(opts) { return this.click('.rs-go', '准备就绪', opts); }
 
   // ---- field view helpers (render engine debug hooks) ------------------------------------------------------------
 
@@ -495,7 +543,7 @@ describe('real server + real browsers', { skip: !ENABLED && 'set SP_REAL_E2E=1 (
       await sleep(800);
       await host.shot('briefing');
       await guest.shot('briefing-720');
-      for (const c of both) await c.click('.brief__foot .btn--primary', '准备就绪');
+      for (const c of both) { await settled(c.page, '.brief-go'); await c.click('.brief__foot .btn--primary', '准备就绪'); }
 
       // ---- band draft -------------------------------------------------------------------------------------------------
       for (const c of both) await c.waitFor((s) => s.phase === 'BAND_DRAFT' || s.phase === 'BATTLE_CHECK' || s.phase === 'PREP', 'band draft', 40000);
@@ -627,7 +675,9 @@ describe('real server + real browsers', { skip: !ENABLED && 'set SP_REAL_E2E=1 (
               if (!(await c.click('.team__ob', '前往查看', { optional: true, timeout: 3000 }))) continue;
               const ok = await c.page.waitForFunction((fid) => { const s = globalThis.__SP_RUNNER__?.state(); return !!s && s.fieldId === fid && s.watch; }, { timeout: 15000 }, other.fieldId).then(() => true, () => false);
               if (!ok) continue;
-              await sleep(1200);
+              // its units are built from the observed field's first frames (a busy host: later than a fixed pause)
+              await c.page.waitForFunction(() => { try { return (globalThis.__SP_VIEW__?.raw?.stats?.()?.units ?? 0) > 0; } catch { return false; } },
+                { timeout: 10000, polling: 100 }).catch(() => {});
               const other2 = await c.viewStats();
               assert.ok(other2 && other2.units > 0, 'the observed field renders units');
               await c.shot(`combat-observe-r${hs.round}`);
@@ -674,6 +724,7 @@ describe('real server + real browsers', { skip: !ENABLED && 'set SP_REAL_E2E=1 (
       await solo.waitFor((s) => !!s.room, 'solo room');
       if (!(await solo.st()).phase) await solo.roomStart({ timeout: 20000 });
       await solo.waitFor((s) => s.phase === 'INFO_CHECK', 'briefing', 30000);
+      await settled(solo.page, '.brief-go'); // (a click during its entrance falls through)
       await solo.click('.brief__foot .btn--primary', '准备就绪');
       await solo.waitFor((s) => s.phase === 'BAND_DRAFT', 'band draft', 30000);
       await sleep(600);

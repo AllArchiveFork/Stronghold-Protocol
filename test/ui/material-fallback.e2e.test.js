@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import puppeteer from 'puppeteer-core';
 import { startServer } from '../../server/index.js';
@@ -16,6 +16,8 @@ class StreamingMatch extends Match {
 }
 
 test('browser survives two-redirect CDN failures with bounded public-material OpenI retries', { skip: !enabled, timeout: 120000 }, async () => {
+  // (the ignored .cache/stardust/ is not there in a fresh checkout)
+  if (!process.env.SP_MATERIAL_EVIDENCE) mkdirSync(fileURLToPath(new URL('../../.cache/stardust/', import.meta.url)), { recursive: true });
   const out = process.env.SP_MATERIAL_EVIDENCE || mkdtempSync(fileURLToPath(new URL('../../.cache/stardust/browser-openi-fallback-', import.meta.url)));
   const report = { ok: false, scope: 'localhost app, one real combat Worker, synthetic local CDN failures', productionAccessed: false, externalRequestsBlocked: 0, errors: [], primary: [], forced: [] };
   let app, browser, provider, page;

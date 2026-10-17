@@ -29,7 +29,7 @@ describe('facing wheel keyboard (mock match, headless Chrome)', { skip: !ENABLED
     await page.setViewport({ width: 1920, height: 1080 });
     const errors = [];
     page.on('pageerror', (e) => errors.push(e.message));
-    await page.goto(`http://127.0.0.1:${srv.port}/dev/game-mock.html?shot=1&render=fallback&phase=PREP`, { waitUntil: 'networkidle0' });
+    await page.goto(`http://127.0.0.1:${srv.port}/dev/game-mock.html?shot=1&render=fallback&phase=PREP`, { waitUntil: 'load' });
     await page.waitForSelector('.ff-piece');
     const state = () => page.evaluate(() => JSON.parse(JSON.stringify(globalThis.__MOCK__.S().priv)));
     const moves = () => page.evaluate(() => globalThis.__MOCK__.S().requests.filter(([type]) => type === 'g.move'));

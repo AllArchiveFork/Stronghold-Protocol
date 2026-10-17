@@ -375,6 +375,8 @@ describe('the runner\'s cs check (public/js/battle/runner.js)', () => {
     const state = { held: null, loading: 'cd'.repeat(32) };
     const r = rig({ state, contentFor: async (cs) => { await tick(); state.held = { cs, data: DATA }; state.loading = null; return state.held; } });
     r.net.emit('b.start', s);
+    // the set arrives on a timer: run() steps its frames without yielding to timers, so it starts once the set is there
+    await until(() => state.held, 'the content set arrived');
     await r.run(60_000);
     const e = r.runner._entries.get(s.battleId);
     assert.equal(e.authoritative, true, 'kept while the page loaded the set, confirmed once it was there');

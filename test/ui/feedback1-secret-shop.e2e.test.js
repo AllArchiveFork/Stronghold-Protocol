@@ -50,7 +50,7 @@ describe('机密商店: the same item twice (mock harness, headless Chrome)', { 
       const problems = [];
       page.on('pageerror', (e) => problems.push(`pageerror: ${e.message}`));
       page.on('console', (m) => { if (m.type() === 'error') problems.push(`console: ${m.text()}`); });
-      await page.goto(`${base}/dev/game-mock.html?shot=1&phase=SP_DRAFT&variant=shop`, { waitUntil: 'networkidle0' });
+      await page.goto(`${base}/dev/game-mock.html?shot=1&phase=SP_DRAFT&variant=shop`, { waitUntil: 'load' });
       await page.waitForSelector('.spov__grid .spcard', { timeout: 20000 });
       await sleep(600);
       // the teammate p4 has taken the first 变形同构体 (slot 0)
@@ -70,6 +70,8 @@ describe('机密商店: the same item twice (mock harness, headless Chrome)', { 
       assert.deepEqual(c.map((x) => x.armed), [false, false, false, true, false, false], 'only the tapped twin is armed');
       await page.screenshot({ path: path.join(OUT, `fb1-secret-shop-${name}-armed.png`) });
       await tap(3);
+      // the pick lands when the mock answers (a busy host: later than a fixed pause)
+      await page.waitForFunction(() => globalThis.__MOCK__.S().pub.sp.picks?.p1 != null, { timeout: 5000, polling: 100 }).catch(() => {});
       const picks = await page.evaluate(() => ({ ...globalThis.__MOCK__.S().pub.sp.picks }));
       assert.deepEqual(picks, { p4: 0, p1: 3 }, 'g.choice sent the second twin\'s index');
       await sleep(250);

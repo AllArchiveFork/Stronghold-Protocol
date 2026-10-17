@@ -203,6 +203,7 @@ describe('0.2.0 自选编队 — a slotted operator in the own shop and battle (
       await c.waitFor((s) => s.phase === 'INFO_CHECK', 'briefing', 30000);
       const diy = await c.page.evaluate(() => globalThis.__SP__.store.get().match.private?.diy ?? null);
       assert.deepEqual(diy, { [SLOT]: PICK }, 'the match received the picks');
+      await c.settled('.brief-go'); // (a click during its entrance falls through)
       await c.click('.brief__foot .btn--primary', '准备就绪');
       await c.waitFor((s) => s.phase === 'BAND_DRAFT', 'band draft', 30000);
       await c.click('.dband', null, { nth: 1 });

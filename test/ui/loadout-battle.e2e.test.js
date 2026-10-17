@@ -72,6 +72,7 @@ describe('user playtest #2 item 1 — loadout chosen in the UI fights in the loc
       await c.waitFor((s) => s.phase === 'INFO_CHECK', 'briefing', 30000);
       const lo = await c.page.evaluate(() => globalThis.__SP__.store.get().match.private?.loadout ?? null);
       assert.deepEqual(lo, { [BASE]: { skill: 0, module: 'none' } }, 'the match received the loadout');
+      await c.settled('.brief-go'); // (a click during its entrance falls through)
       await c.click('.brief__foot .btn--primary', '准备就绪');
       await c.waitFor((s) => s.phase === 'BAND_DRAFT', 'band draft', 30000);
       await sleep(500);

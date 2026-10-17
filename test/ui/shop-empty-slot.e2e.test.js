@@ -43,7 +43,7 @@ describe('the empty slot of the shop bar', { skip: !ENABLED && 'set SP_E2E=1 (an
     const problems = [];
     page.on('console', (m) => { if (m.type() === 'error') problems.push(`console: ${m.text()}`); });
     page.on('pageerror', (e) => problems.push(`pageerror: ${e.message}`));
-    await page.goto(`${base}/dev/game-mock.html?phase=PREP&render=fallback`, { waitUntil: 'networkidle0', timeout: 60000 });
+    await page.goto(`${base}/dev/game-mock.html?phase=PREP&render=fallback`, { waitUntil: 'load', timeout: 60000 });
     await page.waitForSelector('.shopbar__cards .scard', { timeout: 15000 });
     await sleep(400);
     const before = await cards(page);
@@ -90,7 +90,7 @@ describe('the empty slot of the shop bar', { skip: !ENABLED && 'set SP_E2E=1 (an
     const problems = [];
     page.on('console', (m) => { if (m.type() === 'error') problems.push(`console: ${m.text()}`); });
     page.on('pageerror', (e) => problems.push(`pageerror: ${e.message}`));
-    await page.goto(`${base}/dev/game-mock.html?phase=PREP&render=fallback`, { waitUntil: 'networkidle0', timeout: 60000 });
+    await page.goto(`${base}/dev/game-mock.html?phase=PREP&render=fallback`, { waitUntil: 'load', timeout: 60000 });
     await page.waitForSelector('.shopbar__cards .scard', { timeout: 15000 });
     // level 3 with its four operator slots, funds for the upgrade (the mock answers like the server: level 4 has five)
     await page.evaluate(() => globalThis.__MOCK__.mutate((S) => {

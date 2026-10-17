@@ -115,12 +115,20 @@ describe('user playtest #3 items 1 and 7 (mock match, headless Chrome)', { skip 
     page.on('console', (m) => { if (m.type() === 'error') problems.push(`console: ${m.text()}`); });
     page.on('pageerror', (e) => problems.push(`pageerror: ${e.message}`));
     await page.setViewport({ width: w, height: h });
-    await page.goto(`http://127.0.0.1:${srv.port}/dev/game-mock.html?shot=1&render=engine&${query}`, { waitUntil: 'networkidle0' });
+    await page.goto(`http://127.0.0.1:${srv.port}/dev/game-mock.html?shot=1&render=engine&${query}`, { waitUntil: 'load' });
     await page.waitForFunction(() => !!document.querySelector('.screen:not(.gload)') && !!globalThis.__SP_VIEW__?.raw?.debug, { timeout: 30000 });
     await page.evaluate(installHelpers);
-    await sleep(2000); // Spine models
+    await modelsLive(page, 'opened');
     return { page, problems };
   }
+  /**
+   * Wait until every prep piece has its view in place with a live Spine model (installHelpers check() finds nothing):
+   * a first visit downloads the models, a prep after a battle loads them again (bounded; the problems left fail it).
+   */
+  const modelsLive = async (page, label, timeout = 30_000) => {
+    try { await page.waitForFunction(() => window.__t.check().length === 0, { timeout, polling: 200 }); }
+    catch { assert.deepEqual(await page.evaluate(() => window.__t.check()), [], `${label}: every prep model alive and in place within ${timeout / 1000} s`); }
+  };
   const setPhase = (page, ph) => page.evaluate(async (p) => { const { PHASE } = await import('/shared/constants.js'); globalThis.__MOCK__.setPhase(PHASE[p]); }, ph);
   const uidAt = (page, row, col) => page.evaluate((r, c) => globalThis.__MOCK__.S().priv.board.find((p) => p.row === r && p.col === c)?.uid ?? null, row, col);
   const assertAllDrawn = async (page, label) => {
@@ -138,7 +146,7 @@ describe('user playtest #3 items 1 and 7 (mock match, headless Chrome)', { skip 
       await setPhase(page, 'COMBAT');
       await sleep(2000);
       await setPhase(page, 'PREP');
-      await sleep(2500);
+      await modelsLive(page, `prep after battle ${round + 1}`);
       await assertAllDrawn(page, `prep after battle ${round + 1}`);
     }
     const st = await page.evaluate(async () => (await import('/js/assets.js')).assets.spine.stats());
@@ -476,11 +484,11 @@ describe('user playtest #3 items 1 and 7 (mock match, headless Chrome)', { skip 
     const problems = [];
     page.on('pageerror', (e) => problems.push(`pageerror: ${e.message}`));
     await page.setViewport({ width: 844, height: 390, deviceScaleFactor: 2, isMobile: true, hasTouch: true, isLandscape: true });
-    await page.goto(`http://127.0.0.1:${srv.port}/dev/game-mock.html?shot=1&render=engine&phase=PREP`, { waitUntil: 'networkidle0' });
+    await page.goto(`http://127.0.0.1:${srv.port}/dev/game-mock.html?shot=1&render=engine&phase=PREP`, { waitUntil: 'load' });
     await page.waitForFunction(() => !!document.querySelector('.screen:not(.gload)') && !!globalThis.__SP_VIEW__?.raw?.debug, { timeout: 30000 });
     await page.evaluate(installHelpers);
     await page.evaluate(() => globalThis.__MOCK__.mutate((S) => { S.priv.hand[5] = null; }));
-    await sleep(2000);
+    await modelsLive(page, 'phone');
     // `spot` is read after the pickup; `hold` gets it
     const touchDrag = async (from, spot, { hold = null } = {}) => {
       await cameraSettled(page);

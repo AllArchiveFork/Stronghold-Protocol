@@ -2,7 +2,7 @@
 // Phone emulation / software WebGL / one short combat are not physical-device or full-match coverage.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import puppeteer from 'puppeteer-core';
 import { WebSocket } from 'ws';
 import { startServer } from '../../server/index.js';
@@ -14,6 +14,8 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const enabled = process.env.SP_E2E === '1';
 
 test('phone online count and full-size shops stay visible, touchable and reconnectable', { skip: !enabled, timeout: 180000 }, async () => {
+  // (the ignored .cache/stardust/ is not there in a fresh checkout)
+  if (!process.env.SP_MOBILE_SHOP_EVIDENCE) mkdirSync(new URL('../../.cache/stardust/', import.meta.url).pathname, { recursive: true });
   const out = process.env.SP_MOBILE_SHOP_EVIDENCE || mkdtempSync(new URL('../../.cache/stardust/mobile-shop-024-', import.meta.url).pathname);
   const report = { ok: false, productionAccessed: false, physicalDevice: false, softwareWebGL: true, fixtureFunds: 100, pageErrors: [], externalRequests: 0, screens: [], lobby: [], shops: [] };
   let srv, browser, peer, page;

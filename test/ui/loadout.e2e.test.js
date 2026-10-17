@@ -14,6 +14,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { settled } from '../e2e/client.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const OUT = path.join(ROOT, 'test/e2e/out');
@@ -274,6 +275,9 @@ describe('干员调配 overlay (real server, headless Chrome)', { skip: !ENABLED
     await waitSt(page, (s) => !!s.room, 'room');
     await page.evaluate(() => globalThis.__SP__.net.request('room.start', {}));
     await waitSt(page, (s) => s.phase === 'INFO_CHECK', 'briefing');
+    // 准备就绪 below is pressed at once after the overlay closes: its own entrance is over by then (a click during it
+    // falls through)
+    await settled(page, '.brief-go');
     await clickSel(page, '.brief [data-testid="loadout-open"]');
     await page.waitForSelector('.lo .lo-card', { visible: true, timeout: 15000 });
     await page.type('.lo-search input', '隐现');
@@ -482,8 +486,8 @@ describe('干员调配 overlay (real server, headless Chrome)', { skip: !ENABLED
     await clickSel(page, '.lobby-screen [data-testid="loadout-open"]');
     await page.waitForSelector('.lo .lo-card', { visible: true, timeout: 15000 });
     await pickChess(page, '隐现');
-    // between the skills and the modules, 精锐 shown first: the default module's numbers, the 3 × 4 range
-    assert.deepEqual(await page.$$eval('.lo-detail__body > .lo-sec > header h3', (els) => els.map((e) => e.firstChild.textContent)), ['潜能与练度', '技能', '局内数值', '模组']);
+    // between the skills and the modules (外观, the skins, last), 精锐 shown first: the default module's numbers, the 3 × 4 range
+    assert.deepEqual(await page.$$eval('.lo-detail__body > .lo-sec > header h3', (els) => els.map((e) => e.firstChild.textContent)), ['潜能与练度', '技能', '局内数值', '模组', '外观']);
     const stats = await shownStats(page);
     assert.deepEqual(Object.keys(stats), ['生命上限', '攻击', '防御', '法术抗性', '攻击间隔', '阻挡数', '部署费用', '再部署']);
     assert.equal(stats['生命上限'], fmt((golden.statsBase.maxHp + mod.attr.maxHp) * T4.max_hp));

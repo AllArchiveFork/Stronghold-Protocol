@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { settled } from '../e2e/client.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const OUT = path.join(ROOT, 'test/e2e/out/band-draft-skip');
@@ -97,6 +98,7 @@ describe('strategy skip eligibility (real server, normal browser operations)', {
     if ((await state(host)).phase !== 'INFO_CHECK') await click(host, '.room-bar__right button', '开始模拟');
     for (const c of clients) {
       await c.page.waitForSelector('.brief__foot .btn--primary');
+      await settled(c.page, '.brief-go'); // (a click during its entrance falls through)
       await click(c.page, '.brief__foot .btn--primary', '准备就绪');
     }
     await host.waitForFunction(() => globalThis.__SP__.store.get().match.public?.phase === 'BAND_DRAFT');

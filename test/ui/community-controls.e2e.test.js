@@ -50,9 +50,12 @@ describe('community UI: lobby header and shared DIY details', { skip: !enabled }
       localStorage.setItem('sp.pref.settings', JSON.stringify({ textSize: 'xl' }));
       localStorage.setItem('sp.pref.lang', JSON.stringify(l));
     }, lang);
-    await page.goto(`http://127.0.0.1:${srv.port}/`, { waitUntil: 'networkidle0' });
+    await page.goto(`http://127.0.0.1:${srv.port}/`, { waitUntil: 'load' });
     await page.waitForSelector('.lobby-screen');
-    // an unread announcement opens over the lobby on arrival (screens/lobby.js); read it first, as a player would
+    // an unread announcement opens over the lobby on arrival (screens/lobby.js), once the session is online and the
+    // notices are loaded: wait for both, then read it first, as a player would
+    await page.waitForFunction(() => globalThis.__SP__?.store.get().connection.status === 'online'
+      && ['ready', 'missing'].includes(globalThis.__SP__.data.status('announcements')), { timeout: 15000 });
     if (await page.waitForSelector('.announcement-board', { timeout: 2000 }).catch(() => null)) {
       await page.click('.announcement-board .modal__actions .btn'); await page.waitForSelector('.announcement-board', { hidden: true });
     }

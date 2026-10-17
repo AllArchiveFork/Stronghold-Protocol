@@ -79,6 +79,7 @@ describe('spectator seats (community report #26, real server)', { skip: !ENABLED
       await host.roomStart({ timeout: 20000 });
       for (const c of [host, spec]) await c.waitFor((s) => s.phase === 'INFO_CHECK', 'briefing', 30000);
       assert.match(await spec.page.evaluate(() => document.querySelector('.brief__foot .btn--primary')?.textContent || ''), /观战中/);
+      await host.settled('.brief-go'); // (a click during its entrance falls through)
       await host.click('.brief__foot .btn--primary', '准备就绪');
       const t0 = Date.now();
       for (;;) {

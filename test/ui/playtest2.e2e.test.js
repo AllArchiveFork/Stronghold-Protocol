@@ -23,6 +23,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { settled } from '../e2e/client.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const OUT = path.join(ROOT, 'test/e2e/out');
@@ -65,7 +66,7 @@ describe('user playtest #2 — UI fixes (mock harness, headless Chrome)', { skip
     page.on('pageerror', (e) => problems.push(`pageerror: ${e.message}`));
     page.on('requestfailed', (r) => problems.push(`requestfailed: ${r.url()} ${r.failure()?.errorText}`));
     page.on('response', (r) => { if (r.status() >= 400) problems.push(`http ${r.status()}: ${r.url()}`); });
-    await page.goto(`${base}/dev/game-mock.html?shot=1&render=${render}&${query}`, { waitUntil: 'networkidle0' });
+    await page.goto(`${base}/dev/game-mock.html?shot=1&render=${render}&${query}`, { waitUntil: 'load' });
     await page.waitForFunction(() => !!document.querySelector('.screen:not(.gload)') && !!globalThis.__SP_VIEW__, { timeout: 20000 });
     await sleep(render === 'engine' ? 1600 : 700);
     return { page, problems };
@@ -211,10 +212,12 @@ describe('user playtest #2 — UI fixes (mock harness, headless Chrome)', { skip
         // a real click on 出售 of the leftmost bench unit sells it
         const first = pieces[0];
         await tapPiece(page, first.uid);
+        await settled(page, '.uframe__btn--sell'); // (the plate scales in: a click during its entrance can miss it)
         const funds0 = await page.evaluate(() => globalThis.__MOCK__.S().priv.funds);
         const sell = await page.$eval('.uframe__btn--sell', (el) => { const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height * 0.35 }; });
         await page.mouse.click(sell.x, sell.y);
-        await sleep(400);
+        // the sale lands when the mock answers (a busy host: later than a fixed pause)
+        await page.waitForFunction((uid) => !globalThis.__MOCK__.S().priv.hand.some((x) => x && x.uid === uid), { timeout: 5000, polling: 100 }, first.uid).catch(() => {});
         const after = await page.evaluate((uid) => ({ funds: globalThis.__MOCK__.S().priv.funds, gone: !globalThis.__MOCK__.S().priv.hand.some((x) => x && x.uid === uid) }), first.uid);
         assert.ok(after.gone && after.funds > funds0, `${name}/${render}: 出售 of ${first.where} sold it (${JSON.stringify(after)})`);
         assert.deepEqual(problems, [], `${name}/${render}`);
