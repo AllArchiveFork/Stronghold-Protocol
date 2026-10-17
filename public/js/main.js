@@ -55,6 +55,7 @@ import { matchMusic } from './ui/lobbyMusic.js';
 import { GuideHost } from './ui/guide.js';
 import { installDeviceSupport } from './ui/device.js';
 import { registerImportedAssetWorker } from './assetCache.js';
+import { installAssetHints } from './ui/assetSection.js';
 import { codeSource } from './codeSource.js';
 import { LoadoutHost } from './screens/loadout.js';
 import { StatsHost } from './screens/stats.js';
@@ -485,6 +486,8 @@ async function boot() {
   // Hashed art a player imported, and — with the release's material profile (/code-source.json) — the art this page
   // fetches, kept by path across the provider's rotating signed redirects. HTTPS or localhost only; never stops boot.
   void codeSource.get().then((source) => registerImportedAssetWorker(undefined, undefined, source?.material ?? null));
+  // a slow material load suggests 设置 → 素材下载 once per session (fork: ui/assetSection.js)
+  installAssetHints();
   // A page restored from the back/forward cache has a dead socket and a stale token choice: start over.
   window.addEventListener('pageshow', (ev) => { if (ev.persisted) location.reload(); });
   // Pick this tab's reconnect token (asks other live tabs; ≤150 ms) while fonts load.
@@ -556,8 +559,13 @@ async function boot() {
     startBuildGuard({
       inMatch: () => selectRoute(store.get()) === 'game',
       onStale: ({ waiting }) => { if (waiting) store.patch('ui', { buildStale: true }); },
-      // the same /healthz names how many plugins the server has: the title screen shows it before any hello
-      onHealth: (h) => { const n = pluginCount(h.content); if (n !== store.get().installedPlugins) store.set({ installedPlugins: n }); },
+      // a body that names the server's plugins (`content`, as /healthz does) updates their count; /client-build carries
+      // only { build }, which says nothing about plugins: the count welcome gave stays
+      onHealth: (h) => {
+        if (!h?.content || typeof h.content !== 'object') return;
+        const n = pluginCount(h.content);
+        if (n !== store.get().installedPlugins) store.set({ installedPlugins: n });
+      },
     });
   } catch (err) {
     console.warn('[app] build guard failed to start', err);

@@ -32,6 +32,7 @@ import { html, Button, Icon, MicroLabel, TextField, PingPill, AvatarFrame, Toolt
 import { AnnouncementBoard, announcementRevision, announcementDismissed, dismissAnnouncement, announcementBanner, parseAnnouncements } from '../ui/announcements.js';
 import { ServerStatusModal } from '../ui/serverStatus.js';
 import { LobbyFeedback } from '../ui/lobbyFeedback.js';
+import { SiteBoards } from '../ui/siteBoards.js';
 import { toast, toastError } from '../ui/toasts.js';
 import { GuideButton, openGuide } from '../ui/guide.js';
 import { openStats } from './stats.js';
@@ -778,7 +779,7 @@ export function LobbyScreen() {
         <${AchievementEntry} onOpen=${() => setAchOpen(true)} />
         <${HubTile} icon="key" label=${t('密钥加入')} en="JOIN WITH KEY" onClick=${() => setJoinOpen(true)} />
         <${TipsPanel} />
-        <div class="hub-contact"><${LobbyFeedback} /><${DesignCredit} /><${HubFoot} /></div>
+        <div class="hub-contact"><div class="hub-contact__row"><${LobbyFeedback} /><${SiteBoards} /></div><${DesignCredit} /><${HubFoot} /></div>
       </aside>
 
       <aside class="hub-right">

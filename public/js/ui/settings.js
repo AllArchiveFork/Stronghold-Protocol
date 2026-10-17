@@ -42,6 +42,7 @@ import { copyText } from './clipboard.js';
 // 异形屏适配 (ui/screenFit.js): imported here, ahead of main.js's first render, so the stored offsets are on at boot
 import { ScreenFitSection } from './screenFit.js';
 import { OwnerKeySection } from './ownerName.js';
+import { AssetSection } from './assetSection.js';
 import { catalog, loadCatalog, cosmeticPlugins, installedCount, personal, personalApplied, personalSet, pluginName, setPersonalPlugin } from '../content.js';
 import { setUiPlugin, uiPluginEntries, uiPlugins } from './uiPlugins.js';
 import { UI_LIMITS } from '../../../shared/plugins/ui.js';
@@ -431,6 +432,7 @@ export function SettingsModal({ open, onClose }) {
         </div>
       </div>
       <p class="set-hint set-uiscale-note">${t('对局界面整体缩放：调小后棋盘更大，商店不用收起也能一边购买一边部署。默认手机 80%，电脑 100%。')}</p>
+      <${AssetSection} voice=${s.voiceLang} native=${s.voiceNative} />
       <${HotkeySection} keys=${s.keys} touchUi=${touchUi} />
       <${CosmeticSection} />
       <${UiPluginSection} />

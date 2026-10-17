@@ -2490,6 +2490,17 @@ button.ach-card__ava:hover, button.ach-card__ava:focus-visible { border-color: v
 .lobby-feedback { min-height: 40px; padding-inline: 10px; font-size: max(calc(.14 * var(--t)), 12px); color: var(--mint-400); border-color: var(--mint-700); letter-spacing: .04em; }
 .lobby-feedback .icon { width: 14px; height: 14px; }
 .lobby-feedback__label { margin-right: 6px; color: var(--text-md); letter-spacing: 0; }
+.hub-contact__row { display: flex; flex-wrap: wrap; align-items: center; gap: .06rem; max-width: 100%; }
+.hub-boards { display: flex; flex-wrap: wrap; align-items: center; gap: .06rem; }
+.hub-board { min-height: 40px; padding-inline: 10px; font-size: max(calc(.14 * var(--t)), 12px); color: var(--text-hi); letter-spacing: .04em; text-decoration: none; }
+.hub-board .icon { width: 14px; height: 14px; color: var(--mint-400); }
+/* a narrow left column (phones, small tablets) keeps the row to one line: the status link shows only its icon */
+:is(.sp-touch, .sp-coarse) .hub-board--status { width: 40px; padding-inline: 0; }
+:is(.sp-touch, .sp-coarse) .hub-board--status .btn__label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+@media (max-width: 1120px) {
+  .hub-board--status { width: 40px; padding-inline: 0; }
+  .hub-board--status .btn__label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+}
 .hub-credit { margin: 0; padding: .03rem .1rem; font-size: max(calc(.12 * var(--t)), 10px); line-height: 1.5; color: rgba(223, 230, 226, .62); background: rgba(6, 10, 10, .55); }
 .hub-credit b { color: rgba(223, 230, 226, .85); font-weight: 600; }
 .hub-credit__sep { margin: 0 .06rem; }

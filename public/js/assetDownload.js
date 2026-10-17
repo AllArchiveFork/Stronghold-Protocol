@@ -25,16 +25,35 @@ export function collectAssetUrls(...manifests) {
   return [...urls].sort((a, b) => Number(a.startsWith('/media/')) - Number(b.startsWith('/media/')) || a.localeCompare(b));
 }
 
+/**
+ * Fork (2026-10-16, the owner's request for players on weak networks; 设置 → 素材下载, ui/assetSection.js): what a
+ * download takes. 'all' is the upstream list; 'match' leaves out the operator skins (/assets/skins/, about 1.6 GB, each
+ * fetched when it is worn) and the dub banks of the voice languages this player does not hear — the Chinese lines stay,
+ * the other dubs fall back to them (voiceLanguage.js), and the native lines only with 本土语言 on.
+ * @param {string[]} urls collectAssetUrls() @param {{ tier?: string, voice?: string, native?: boolean }} [selection]
+ */
+export function selectAssetTier(urls, { tier = 'all', voice = 'cn', native = false } = {}) {
+  if (tier !== 'match') return urls;
+  const dubs = new Set(['cn', voice, native ? 'native' : null]);
+  return urls.filter((url) => { // plain paths, or content-hashed ones (/assets/~<16 hex>/…) when the server indexes them
+    if (/^\/assets\/(?:~[0-9a-f]{16}\/)?skins\//.test(url)) return false;
+    const dub = /^\/media\/(?:~[0-9a-f]{16}\/)?voice\/([^/]+)\//.exec(url);
+    return !dub || dubs.has(dub[1]);
+  });
+}
+
 /** A bounded, pausable download queue. A file counts only after its entire body arrives. */
 export function createAssetDownload({ fetch: doFetch = (...args) => globalThis.fetch(...args),
   concurrency = 4, timeoutMs = 60000, retries = 2, lookupImported = listImportedPaths } = {}) {
   let state = { phase: 'idle', total: 0, done: 0, bytes: 0, failures: [], localMissing: false, cached: 0 };
-  let urls = null, running = null, controller = null, paused = false, lastNotice = 0;
+  // listed: every file of the manifests; urls: the selected tier of them (start({ tier, … }), selectAssetTier)
+  let listed = null, urls = null, selection = {}, running = null, controller = null, paused = false, lastNotice = 0;
   const complete = new Set(), failures = new Map(), listeners = new Set();
+  const doneCount = () => (urls ? urls.reduce((n, url) => n + (complete.has(url) ? 1 : 0), 0) : complete.size);
   const emit = (force = false) => {
     if (!force && Date.now() - lastNotice < 100) return;
     lastNotice = Date.now();
-    state = { ...state, done: complete.size, failures: [...failures.values()] };
+    state = { ...state, done: doneCount(), failures: [...failures.values()] };
     for (const listener of listeners) listener(state);
   };
 
@@ -92,7 +111,7 @@ export function createAssetDownload({ fetch: doFetch = (...args) => globalThis.f
 
   async function run() {
     try {
-      if (!urls) {
+      if (!listed) {
         state = { ...state, phase: 'preparing', error: null };
         emit(true);
         // Sequential manifest reads keep cancellation simple and never leave a rejected sibling promise.
@@ -105,9 +124,11 @@ export function createAssetDownload({ fetch: doFetch = (...args) => globalThis.f
           || (fx !== null && (!fx || typeof fx !== 'object' || !fx.groups))) throw new Error('Invalid asset manifest');
         const list = collectAssetUrls(assets, local, fx);
         if (!list.length) throw new Error('Empty asset manifest');
-        urls = list;
-        state = { ...state, total: urls.length, localMissing: local === null };
+        listed = list;
+        state = { ...state, localMissing: local === null };
       }
+      urls = selectAssetTier(listed, selection);
+      state = { ...state, total: urls.length };
       if (paused) return;
       let imported = null;
       try { imported = await lookupImported(); } catch { imported = null; }
@@ -155,13 +176,15 @@ export function createAssetDownload({ fetch: doFetch = (...args) => globalThis.f
   return {
     get: () => state,
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
-    start() {
+    /** @param {{ tier?: string, voice?: string, native?: boolean }} [choice] what to take (selectAssetTier) */
+    start(choice) {
       if (running) return running;
       paused = false;
       controller = new AbortController();
+      if (choice) selection = { ...choice };
       // A new check after completion revalidates the manifest and all files through the HTTP cache.
       if (state.phase === 'complete') {
-        urls = null; complete.clear();
+        listed = null; urls = null; complete.clear();
         state = { phase: 'idle', total: 0, done: 0, bytes: 0, failures: [], localMissing: false, cached: 0 };
       }
       running = run().finally(() => { running = null; });

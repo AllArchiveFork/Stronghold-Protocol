@@ -163,5 +163,6 @@ test('onHealth: told every /healthz body a check reads — what else the page re
   g.stop();
   assert.equal(bodies.length, 3, 'the guard\'s first check hands it over');
   const main = (await import('node:fs')).readFileSync(new URL('../../public/js/main.js', import.meta.url), 'utf8');
-  assert.match(main, /onHealth: \(h\) => \{ const n = pluginCount\(h\.content\); if \(n !== store\.get\(\)\.installedPlugins\) store\.set\(\{ installedPlugins: n \}\); \}/);
+  // a body without `content` (/client-build answers only { build }) leaves the count welcome gave alone
+  assert.match(main, /onHealth: \(h\) => \{\n\s+if \(!h\?\.content \|\| typeof h\.content !== 'object'\) return;\n\s+const n = pluginCount\(h\.content\);\n\s+if \(n !== store\.get\(\)\.installedPlugins\) store\.set\(\{ installedPlugins: n \}\);\n\s+\}/);
 });

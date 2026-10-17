@@ -85,11 +85,16 @@ test('shipped announcement data validates; optional board is mounted from the lo
   assert.match(board, /ariaLabel=\$\{t\('大厅公告板'\)\} trapFocus=\$\{true\}/);
 });
 
-test('today\'s notices: a small update (no board zoom while deploying, the replayed-battle prompt) over the 0.3.0 update (official effects, voices, 8–20 seats choosing at once, restart recovery), this morning\'s update recalled, credits to the original and to xinhai-ai, the access rule and the maintenance; the introduction is retained with the credit and a first-visit guide', () => {
+test('the notices: the feedback board and the status page (2026-10-17), a small update (no board zoom while deploying, the replayed-battle prompt) over the 0.3.0 update (official effects, voices, 8–20 seats choosing at once, restart recovery), this morning\'s update recalled, credits to the original and to xinhai-ai, the access rule and the maintenance; the introduction is retained with the credit and a first-visit guide', () => {
   const entries = parseAnnouncements(JSON.parse(source('../../data/announcements.json')));
-  assert.equal(entries.length, 3);
-  assert.equal(entries[0].title, '小更新：拖动部署时不再缩放棋盘');
-  assert.equal(entries[0].date, '2026-10-16');
+  assert.equal(entries.length, 4);
+  assert.equal(entries[0].title, '新增反馈板和服务器状态页');
+  assert.equal(entries[0].date, '2026-10-17');
+  const boards = entries[0].paragraphs.join('\n');
+  for (const phrase of ['「反馈群」旁边新增「反馈板」', '未分配、无计划、已计划、已更新', '先搜索', '「服务器状态」', '新标签页', '回到原来的页面']) assert.ok(boards.includes(phrase), phrase);
+  assert.doesNotMatch(boards, /Grafana|Prometheus|SQLite|nginx|\/feedback|\/monitor/i);
+  const all = entries.slice();
+  entries.shift();
   const small = entries[0].paragraphs.join('\n');
   for (const phrase of ['不再临时收起商店、放大棋盘', '资金旁的「收起」', '作战要重新进行']) assert.ok(small.includes(phrase), phrase);
   assert.equal(entries[1].title, '版本更新 0.3.0：官方战斗特效、多语言配音、扩容房同时选择');
@@ -107,7 +112,7 @@ test('today\'s notices: a small update (no board zoom while deploying, the repla
   assert.match(entries[2].paragraphs.join('\n'), /第一次来的博士：.*「玩法说明」/);
   // the owner asked for a fuller notice on 2026-10-14 (was < 800) and a longer one for the 0.3.0 update on 2026-10-16
   // (was < 1600): the board scrolls, but the two together stay bounded
-  assert.ok(entries.flatMap(entry => entry.paragraphs).join('\n').length < 4000, 'the notices stay readable');
+  assert.ok(all.flatMap(entry => entry.paragraphs).join('\n').length < 4000, 'the notices stay readable');
 });
 
 test('announcements omit contacts and infrastructure; the lobby owns the copyable group number', () => {
