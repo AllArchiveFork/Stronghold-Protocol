@@ -68,7 +68,7 @@ OpenI目标只接受原Signature V2字段与固定HTTP wrapper `sp_request=cors|
 `modelscope.cn` 的公开 resolve 地址只走 HTTP/1.1，每次返回带新 `auth_key` 的不可缓存 302。浏览器对同一域名最多 6 条连接，同屏上百个图标会在这一跳排队，触发客户端 8 秒超时后整批切到 OpenI。`--signed-ttl <秒>` 在 profile 中加入 [material-lb/mssign.lua](material-lb/mssign.lua)：入口 OpenResty 对每个对象用内部 HEAD 子请求解析一次，把 CDN 签名地址存在共享内存，浏览器只跟随一次 302 直达 HTTP/2 CDN。
 
 - 只接受 `https://cdn-lfs*.modelscope.cn/prod/lfs-objects/…`、同一 repo／revision、固定查询字段且时间戳与本机相差不超过 120 秒的 type-A `auth_key`。其他回答、出错、冷却或锁等待超时一律回到原公开 resolve 302，与未启用相同。
-- `--signed-ttl` 是实测签名有效期的下限（600–3600 秒），不是 provider 承诺。剩余不足 300 秒时由一个请求重签，不足 120 秒不再下发；浏览器缓存签名 302 至多 300 秒，并在签名到期前至少 60 秒结束。尚未签到的回退 302 只缓存 60 秒；未启用签名的 profile 仍缓存 86400 秒。
+- `--signed-ttl` 是实测签名有效期的下限（600–3600 秒），不是 provider 承诺。剩余不足 300 秒时由一个请求重签，不足 120 秒不再下发；浏览器缓存签名 302 至多 600 秒（2026-10-17 前为 300 秒；改动只对新生成的 profile 生效），并在签名到期前至少 60 秒结束。尚未签到的回退 302 只缓存 60 秒；未启用签名的 profile 仍缓存 86400 秒。
 - 不限速：同一对象同一时间只解析一次（`resty.lock`）。上游 403／429／HTML 挑战页冷却 60 秒，连接失败／5xx 冷却 10 秒；200（非 LFS 对象）或 404 使该对象 10 分钟内直接回退。
 - 安装时把 [mssign-http.conf](material-lb/mssign-http.conf) 放进 http 上下文，把 [mssign-server.conf](material-lb/mssign-server.conf) 放进运行素材 `access.lua` 的 server。子请求不转发客户端头、Cookie 或正文，并校验证书；签名地址只在共享内存，不写日志、不落盘。共享内存在平滑 reload 后保留，冷重启后清空，首批对象各需解析一次。
 

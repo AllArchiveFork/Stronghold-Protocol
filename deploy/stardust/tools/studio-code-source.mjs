@@ -10,6 +10,9 @@
 //          print the edge's `location = /code-source.json` for this release's private-code include. --material names
 //          the active material profile: the page's service worker then keeps the art it fetches (public/sw.js).
 //          Print it again with the new profile when the profile changes.
+//          --carry <previous profile dir> --material-dir <this profile dir> (the edge's material-lb/<profile>/ copies,
+//          both with header-data.json): add `materialCarry`, so the worker keeps the previous profile's art whose bytes
+//          did not change and refetches only the rest (public/sw.js).
 //
 // No network access except `verify`'s GETs; no Git operation (commit / push stay manual, after authorization).
 
@@ -17,7 +20,7 @@ import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { lstat, mkdir, readdir, readFile, writeFile, copyFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { dirname, join, resolve, relative, sep } from 'node:path';
+import { basename, dirname, join, resolve, relative, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
@@ -115,11 +118,62 @@ async function verify(o) {
   if (bad.length) process.exitCode = 1;
 }
 
-function nginx(o) {
+/** nginx refuses a config token longer than its 4 KiB read buffer; the whole `return` body must stay below it. */
+const CODE_SOURCE_BODY_MAX = 3500;
+const PROFILE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+
+/** What an alias serves: its OpenI object and its ModelScope object without the dataset revision (release paths are immutable). */
+const materialIdentity = (entry) => JSON.stringify([entry.fileName,
+  typeof entry.modelscope === 'string' ? entry.modelscope.replace(/^https:\/\/modelscope\.cn\/datasets\/[^/]+\/[^/]+\/resolve\/[0-9a-f]+\//, '') : null]);
+
+/** Aliases of both profiles whose bytes may differ (sorted). Removed aliases are never requested; added ones were never kept. */
+export function changedMaterial(oldEntries, newEntries) {
+  return Object.keys(newEntries).filter((p) => Object.hasOwn(oldEntries, p)
+    && materialIdentity(oldEntries[p]) !== materialIdentity(newEntries[p])).sort();
+}
+
+/** The parent directory of a path or directory (`/a/b/c.png` → `/a/b/`, `/a/b/` → `/a/`). */
+const parentDir = (p) => p.slice(0, p.slice(0, -1).lastIndexOf('/') + 1);
+
+/**
+ * `drop` for materialCarry within `fits(drop)`: the changed paths, else their directories, coarser until it fits; null
+ * when even /assets/ and /media/ themselves do not (then nothing is carried, as before).
+ */
+export function carryDrop(changed, fits) {
+  let drop = [...changed];
+  for (;;) {
+    if (fits(drop)) return drop;
+    if (drop.every((p) => /^\/(?:assets|media)\/$/.test(p))) return null;
+    const next = [...new Set(drop.map((p) => (/^\/(?:assets|media)\/$/.test(p) ? p : parentDir(p))))].sort();
+    drop = next.filter((p) => !next.some((q) => q !== p && p.startsWith(q)));
+  }
+}
+
+async function materialCarry(o) {
+  if (o.carry === undefined && o['material-dir'] === undefined) return null;
+  if (!o.carry || !o['material-dir'] || !o.material) throw new Error('--carry needs --material and --material-dir');
+  const from = basename(resolve(o.carry));
+  if (!PROFILE_RE.test(from) || from === o.material) throw new Error('--carry: the directory of another profile');
+  if (basename(resolve(o['material-dir'])) !== o.material) throw new Error('--material-dir: the directory of --material');
+  const read = async (dir) => JSON.parse(await readFile(join(dir, 'header-data.json'), 'utf8')).entries;
+  const changed = changedMaterial(await read(o.carry), await read(o['material-dir']));
+  return { from, changed };
+}
+
+function codeSourceBody(o, carry) {
+  const base = { version: 1, sim: `${o.base}server/sim/`, data: `${o.base}data/`, ...(o.material ? { material: o.material } : {}) };
+  if (!carry) return JSON.stringify(base);
+  const withDrop = (drop) => JSON.stringify({ ...base, materialCarry: { from: carry.from, drop } });
+  const drop = carryDrop(carry.changed, (d) => withDrop(d).length <= CODE_SOURCE_BODY_MAX);
+  console.error(JSON.stringify({ carryFrom: carry.from, changed: carry.changed.length, drop: drop ? drop.length : null }));
+  return drop ? withDrop(drop) : JSON.stringify(base);
+}
+
+async function nginx(o) {
   need(o, 'base');
-  if (o.material !== undefined && !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(o.material)) throw new Error('--material: a profile id (letters, digits, . _ -)');
-  const body = JSON.stringify({ version: 1, sim: `${o.base}server/sim/`, data: `${o.base}data/`, ...(o.material ? { material: o.material } : {}) });
-  if (body.includes("'")) throw new Error('unexpected quote in --base');
+  if (o.material !== undefined && !PROFILE_RE.test(o.material)) throw new Error('--material: a profile id (letters, digits, . _ -)');
+  const body = codeSourceBody(o, await materialCarry(o));
+  if (body.includes("'") || body.includes('$')) throw new Error('unexpected quote or $ in --base or a material path');
   process.stdout.write(`location = /code-source.json {
     auth_request /_gate/check;
     if ($request_method !~ ^(GET|HEAD)$) { return 405; }
@@ -136,10 +190,12 @@ function nginx(o) {
 `);
 }
 
-const o = args(process.argv.slice(2));
-const commands = { stage, verify, nginx };
-if (!commands[o._]) {
-  console.error('usage: studio-code-source.mjs stage|verify|nginx … (see the header)');
-  process.exit(2);
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  const o = args(process.argv.slice(2));
+  const commands = { stage, verify, nginx };
+  if (!commands[o._]) {
+    console.error('usage: studio-code-source.mjs stage|verify|nginx … (see the header)');
+    process.exit(2);
+  }
+  await commands[o._](o);
 }
-await commands[o._](o);

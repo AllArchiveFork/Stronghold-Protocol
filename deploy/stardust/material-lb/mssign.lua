@@ -15,7 +15,7 @@ local NAMESPACE, REPOSITORY = "__MATERIAL_LB_SIGNED_NAMESPACE__", "__MATERIAL_LB
 local TTL = __MATERIAL_LB_SIGNED_TTL__ -- signature validity after its timestamp: a measured lower bound, not the provider's setting
 local SAFETY = 120              -- never hand out a URL with less validity left than this
 local REFRESH = 300             -- re-sign when less than this is left; until SAFETY the old URL is still served
-local BROWSER_MAX = 300         -- browser max-age for the signed redirect, always ending >= 60 s before expiry
+local BROWSER_MAX = 600         -- browser max-age for the signed redirect, always ending >= 60 s before expiry
 local allowed = { filename = true, namespace = true, repository = true, revision = true, tag = true, auth_key = true }
 local dict = ngx.shared.ark_ms_lock and ngx.shared.ark_ms_signed
 

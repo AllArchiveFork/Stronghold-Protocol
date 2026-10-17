@@ -624,7 +624,7 @@ test('fork: with a material profile the worker keeps public art by path; another
   assert.equal(assetWorkerUrl('bad/profile'), '/sw.js');
   assert.equal(assetWorkerUrl(null), '/sw.js');
   const origin = 'https://game.example';
-  const run = (material, store, fetched, deleted, { network } = {}) => {
+  const run = (material, store, fetched, deleted, { network, codeSource = null } = {}) => {
     const listeners = {};
     const sandbox = {
       self: { location: { origin, href: `${origin}${assetWorkerUrl(material)}` }, addEventListener(type, fn) { listeners[type] = fn; },
@@ -635,13 +635,23 @@ test('fork: with a material profile the worker keeps public art by path; another
           return {
             async match(key, options) { assert.equal(options, undefined); const hit = map.get(typeof key === 'string' ? key : key.url); return hit ? new Response(hit) : undefined; },
             async put(key, response) { map.set(key, await response.text()); },
+            async delete(key) { return map.delete(key); },
           };
+        },
+        async match(key, { cacheName } = {}) { // the worker must name the cache: an unnamed match would search them all
+          assert.ok(cacheName);
+          const hit = store.get(cacheName)?.get(key);
+          return hit === undefined ? undefined : new Response(hit);
         },
         async keys() { return [...store.keys()]; },
         async delete(name) { deleted.push(name); return store.delete(name); },
       },
       fetch: async (request, init) => {
         const url = typeof request === 'string' ? request : request.url;
+        if (url === '/code-source.json') {
+          assert.equal(init?.cache, 'no-store');
+          return codeSource ? new Response(JSON.stringify(codeSource)) : new Response('not found', { status: 404 });
+        }
         fetched.push([url, init?.mode ?? null]);
         return network ? network(url) : new Response(`net:${url}`, { headers: { 'content-type': 'image/png' } });
       },
@@ -685,6 +695,79 @@ test('fork: with a material profile the worker keeps public art by path; another
   await none.activate();
   assert.equal(await none.fire(`${origin}/assets/char/c.png`), null);
   assert.ok(store.has('sp-material-v030'));
+});
+
+test('fork: a new profile carries the previous profile\'s art except the paths /code-source.json drops', async () => {
+  const sw = fs.readFileSync(path.resolve('public/sw.js'), 'utf8');
+  const origin = 'https://game.example';
+  const store = new Map([
+    ['sp-material-v030', new Map([[`${origin}/assets/char/a.png`, 'old-a'], [`${origin}/assets/char/b.png`, 'old-b'],
+      [`${origin}/assets/char/changed.png`, 'old-changed'], [`${origin}/assets/local/scene/m01/lm0.png`, 'old-scene']])],
+    ['sp-material-older', new Map([[`${origin}/assets/char/a.png`, 'older-a']])],
+  ]);
+  const fetched = [], deleted = [];
+  const codeSource = { version: 1, material: 'rel21',
+    materialCarry: { from: 'v030', drop: ['/assets/char/changed.png', '/assets/local/scene/'] } };
+  const worker = (opts = {}) => {
+    const listeners = {};
+    vm.runInNewContext(sw, {
+      self: { location: { origin, href: `${origin}${assetWorkerUrl('rel21')}` }, addEventListener(type, fn) { listeners[type] = fn; },
+        skipWaiting: () => Promise.resolve(), clients: { claim: () => Promise.resolve() } },
+      caches: {
+        async open(name) {
+          const map = store.get(name) ?? new Map(); store.set(name, map);
+          return {
+            async match(key) { const hit = map.get(key); return hit === undefined ? undefined : new Response(hit); },
+            async put(key, response) { map.set(key, await response.text()); },
+            async delete(key) { return map.delete(key); },
+          };
+        },
+        async match(key, { cacheName } = {}) { const hit = store.get(cacheName)?.get(key); return hit === undefined ? undefined : new Response(hit); },
+        async keys() { return [...store.keys()]; },
+        async delete(name) { deleted.push(name); return store.delete(name); },
+      },
+      fetch: async (url, init) => {
+        if (url === '/code-source.json') return new Response(JSON.stringify(opts.codeSource ?? codeSource));
+        fetched.push(url);
+        return new Response(`net:${url}`, { headers: { 'content-type': 'image/png' } });
+      },
+      URL: globalThis.URL, Response: globalThis.Response, Promise: globalThis.Promise,
+    }, { filename: 'public/sw.js' });
+    return {
+      activate: async () => { let p; listeners.activate({ waitUntil(x) { p = x; } }); await p; },
+      fire: async (url) => {
+        let responded = null; const waits = [];
+        listeners.fetch({ request: new Request(url), respondWith(p) { responded = p; }, waitUntil(p) { waits.push(p); } });
+        const res = await responded; await Promise.all(waits);
+        return res.text();
+      },
+    };
+  };
+  const w = worker();
+  await w.activate();
+  assert.deepEqual(deleted, ['sp-material-older'], 'the carried profile stays, any other is dropped');
+  assert.equal(await w.fire(`${origin}/assets/char/a.png`), 'old-a');
+  assert.equal(fetched.length, 0, 'an unchanged file is not requested again');
+  assert.equal(store.get('sp-material-rel21').get(`${origin}/assets/char/a.png`), 'old-a', 'moved into the new cache');
+  assert.equal(store.get('sp-material-v030').has(`${origin}/assets/char/a.png`), false, 'and out of the old one');
+  assert.equal(await w.fire(`${origin}/assets/char/changed.png`), `net:${origin}/assets/char/changed.png`, 'a dropped path');
+  assert.equal(await w.fire(`${origin}/assets/local/scene/m01/lm0.png`), `net:${origin}/assets/local/scene/m01/lm0.png`, 'a dropped directory');
+  assert.equal(await w.fire(`${origin}/assets/char/new.png`), `net:${origin}/assets/char/new.png`);
+  assert.equal(fetched.length, 3);
+
+  // a restarted worker (no activate) reads the carry-over it activated with
+  assert.equal(await worker().fire(`${origin}/assets/char/b.png`), 'old-b');
+  assert.equal(fetched.length, 3);
+
+  // a /code-source.json for another profile, or none, carries nothing
+  for (const other of [{ ...codeSource, material: 'rel22' }, { version: 1, material: 'rel21' }]) {
+    store.set('sp-material-v030', new Map([[`${origin}/assets/char/c.png`, 'old-c']]));
+    deleted.length = 0;
+    const again = worker({ codeSource: other });
+    await again.activate();
+    assert.deepEqual(deleted, ['sp-material-v030']);
+    assert.equal(await again.fire(`${origin}/assets/char/c.png`), `net:${origin}/assets/char/c.png`);
+  }
 });
 
 test('site CSP keeps worker-src self and blob, and the sim worker policy does not gain the asset worker', () => {
