@@ -252,7 +252,7 @@ test('password page assets are allowlisted, not a filesystem proxy', async t => 
   const base = await start(t);
   assert.equal((await request(base + '/_gate/assets/gate.css')).status, 200);
   assert.equal((await request(base + '/_gate/assets/warmup.js')).status, 200);
-  assert.equal((await request(base + '/_gate/assets/terminal-motion.js?v=ae-11')).status, 200);
+  assert.equal((await request(base + '/_gate/assets/terminal-motion.js?v=ae-12')).status, 200);
   for (const name of ['doctor.webp', 'rhodes.webp', 'ae-sphere.json']) assert.equal((await request(base + '/_gate/assets/' + name)).status, 404, 'optional missing art does not prevent the gate starting');
   for (const path of ['/_gate/assets/secrets.json', '/_gate/assets/%2e%2e/server.mjs', '/server.mjs', '/data/chess.json', '/ws']) assert.equal((await request(base + path)).status, 404);
 });
@@ -275,6 +275,31 @@ test('safeNext keeps root invitations but rejects former rolling entries, code/a
     '/_release/old/public//evil.test', '/_release/old/public/?x=%0d%0a', '/_release/old/public/#hash']) {
     assert.equal(safeNext(path), '/');
   }
+});
+
+test('the edge pages behind the gate (feedback board, status dashboard) are return targets without the entry marker', async t => {
+  const dashboard = '/monitor/public-dashboards/81dd1f210fce472cb9a1158ef2d2d20c';
+  for (const path of ['/feedback/', '/monitor/', dashboard]) {
+    assert.equal(safeNext(path), path);
+    assert.equal(gameDestination(path), path);
+  }
+  assert.equal(safeNext('/feedback/?q=%E5%8D%A1'), '/feedback/');
+  for (const path of ['/feedback', '/feedback/api/posts', '/feedback/index.html', '/feedback/#post-1', '/monitor', '/monitor/login',
+    '/monitor/api/datasources', '/monitor/public-dashboards/', '/monitor/public-dashboards/81DD1F210FCE472CB9A1158EF2D2D20C',
+    dashboard + '/x', '/monitor/public-dashboards/../../login', '/monitor/public-dashboards/%2e%2e/%2e%2e/login', '//feedback/']) {
+    assert.equal(safeNext(path), '/', path);
+    assert.equal(gameDestination(path), '/?_prts=1', path);
+  }
+  const base = await start(t, { limiter: new AttemptLimiter({ perIP: 100, global: 100 }) });
+  const p = await page(base, '/feedback/');
+  assert.ok(p.html.includes('value="/feedback/"'));
+  const login = await post(base, p, { next: '/feedback/' });
+  assert.equal(login.status, 200);
+  assert.deepEqual(await login.json(), { ok: true, next: '/feedback/', callsign: '阿米娅' });
+  const remembered = { ...p, cookie: p.cookie + '; ' + login.headers.get('set-cookie').split(';')[0] };
+  const native = await post(base, remembered, { next: dashboard }, { Accept: 'text/html' }, '/_gate/profile');
+  assert.equal(native.status, 303);
+  assert.equal(native.headers.get('location'), dashboard);
 });
 
 test('login moderates callsign before issuing a session and never reflects a rejected value', async t => {

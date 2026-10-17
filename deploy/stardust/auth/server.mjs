@@ -99,6 +99,11 @@ function profileOrigin(profile) {
   return PROFILE_ORIGINS[profile];
 }
 
+// Besides the game's entries, the edge host's own pages behind the same gate (deploy/stardust/feedback and the public
+// Grafana dashboard of deploy/stardust/monitoring): a login started there returns there, without the game's entry marker.
+const EDGE_PAGES = Object.freeze([/^\/feedback\/$/, /^\/monitor\/$/, /^\/monitor\/public-dashboards\/[0-9a-f]{32}$/]);
+export const isEdgePage = pathname => EDGE_PAGES.some(page => page.test(pathname));
+
 export function safeNext(value, profile = 'prod') {
   const origin = profileOrigin(profile);
   if (typeof value !== 'string' || value.length > 2048 || !value.startsWith('/') || value.startsWith('//') || /[\\\u0000- \u007f]/.test(value)) return '/';
@@ -107,14 +112,15 @@ export function safeNext(value, profile = 'prod') {
     if (/[\\\u0000-\u001f\u007f]/.test(decoded) || decoded.startsWith('//')
       || decoded.split('?')[0].split('/').some(segment => segment === '.' || segment === '..')) return '/';
     const url = new URL(value, origin);
-    const entry = ['/', '/index.html'].includes(url.pathname);
-    if (url.origin !== origin || !entry || url.hash) return '/';
-    return url.pathname + url.search;
+    const entry = ['/', '/index.html'].includes(url.pathname), edge = isEdgePage(url.pathname);
+    if (url.origin !== origin || !(entry || edge) || url.hash) return '/';
+    return edge ? url.pathname : url.pathname + url.search;
   } catch { return '/'; }
 }
 
 export function gameDestination(value, profile = 'prod') {
   const url = new URL(safeNext(value, profile), profileOrigin(profile));
+  if (isEdgePage(url.pathname)) return url.pathname;
   url.searchParams.set('_prts', '1');
   return url.pathname + url.search;
 }

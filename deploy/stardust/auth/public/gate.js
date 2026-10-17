@@ -2,7 +2,7 @@
   'use strict';
   const $ = id => document.getElementById(id);
   const body = document.body;
-  if (body.dataset.build !== 'ae-11') { location.reload(); return; }
+  if (body.dataset.build !== 'ae-12') { location.reload(); return; }
   const form = $('login-form'), logout = $('logout-form'), input = $('password');
   const callsign = $('callsign'), credentialName = $('credential-name');
   const message = $('login-message'), statusMessage = $('status-message');
@@ -25,8 +25,12 @@
   body.dataset.intro = introEnabled ? 'on' : 'off';
   if (introToggle) introToggle.checked = introEnabled;
 
+  // The edge pages behind the same gate (server.mjs EDGE_PAGES): a login started there returns there, unmarked.
+  const EDGE_PAGES = [/^\/feedback\/$/, /^\/monitor\/$/, /^\/monitor\/public-dashboards\/[0-9a-f]{32}$/];
+  const edgePage = pathname => EDGE_PAGES.some(page => page.test(pathname));
   function gameLink(value) {
     const url = new URL(entryPath(value) || '/', location.origin);
+    if (edgePage(url.pathname)) return url.pathname;
     url.searchParams.set('_prts', '1');
     return url.pathname + url.search;
   }
@@ -40,8 +44,9 @@
     if (typeof value !== 'string' || !value.startsWith('/') || value.startsWith('//') || /[\\\u0000-\u001f]/.test(value)) return null;
     try {
       const url = new URL(value, location.origin);
-      const page = ['/', '/index.html'].includes(url.pathname);
-      return url.origin === location.origin && page ? url.pathname + url.search : null;
+      if (url.origin !== location.origin) return null;
+      if (edgePage(url.pathname)) return url.pathname;
+      return ['/', '/index.html'].includes(url.pathname) ? url.pathname + url.search : null;
     } catch { return null; }
   }
   function cleanCallsign(raw) {
@@ -250,7 +255,7 @@
         };
         try {
           for (let i = 0; i < count; i++) {
-            const worker = new Worker('/_gate/assets/altcha-pbkdf2.js?v=ae-11');
+            const worker = new Worker('/_gate/assets/altcha-pbkdf2.js?v=ae-12');
             workers.push(worker);
             worker.onmessage = event => {
               const data = event.data;
@@ -382,7 +387,7 @@
   function loadScene() {
     if (motion.matches || scene || sceneLoading || navigation) return;
     sceneLoading = true;
-    import('/_gate/assets/scene.js?v=ae-11').then(module => {
+    import('/_gate/assets/scene.js?v=ae-12').then(module => {
       if (motion.matches || navigation) return;
       $('spatial-dom').hidden = false;
       scene = module.createTerminalScene({ canvas: $('world'), plane: $('terminal-plane'), home: $('plane-home'), dom: $('spatial-dom'), reduced: motion.matches });
