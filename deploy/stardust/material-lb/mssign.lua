@@ -103,4 +103,9 @@ function M.max_age(ts)
     return math.max(0, math.min(BROWSER_MAX, ts + TTL - 60 - ngx.time()))
 end
 
+--- Seconds a URL signed at `ts` may still be handed out (sign.lua): the same SAFETY margin as the cache above.
+function M.valid_for(ts)
+    return math.max(0, ts + TTL - SAFETY - ngx.time())
+end
+
 return M

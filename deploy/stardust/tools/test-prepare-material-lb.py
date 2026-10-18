@@ -104,10 +104,10 @@ init_worker_by_lua_block {{ package.loaded.fixture_worker_hook = true }}
                     if process.poll() is not None: raise AssertionError('local OpenResty exited before listen')
                     time.sleep(0.05)
 
-            def request(path, method='GET', request_id='0' * 32):
+            def request(path, method='GET', request_id='0' * 32, body=None, headers=None):
                 connection = http.client.HTTPConnection('127.0.0.1', port, timeout=10)
                 try:
-                    connection.request(method, path, headers={'X-Fixture-Request-Id': request_id})
+                    connection.request(method, path, body=body, headers={'X-Fixture-Request-Id': request_id, **(headers or {})})
                     response = connection.getresponse(); body = response.read()
                     return response.status, {k.lower(): v for k, v in response.getheaders()}, body
                 finally: connection.close()
@@ -329,10 +329,85 @@ location = /_fixture_loaded {{ content_by_lua_block {{ {loaded} }} }}
                 self.assertEqual(answers(request), lazy)
             self.assertIn('material preload: cannot open', logs(root / 'missing'))
 
+    @unittest.skipUnless(os.environ.get('MATERIAL_OPENRESTY_RUNTIME'), 'opt-in local OpenResty runtime not supplied')
+    def test_batch_signer_actual_http(self):
+        runtime = Path(os.environ['MATERIAL_OPENRESTY_RUNTIME'])
+        openi, models, options = exception_fixture()
+        files = TOOL.render(openi, models, CONTAINER, modelscope_weight=100, signed_ttl=3600, **options)
+        known = ['/assets/test/pixel.png', '/media/voice/test', '/assets/audio/voice/test.mp3']
+        exception = options['openi_only_paths'][0]
+        # Synthetic provider: a signed-looking CDN Location per object, never a real signature or a real request.
+        resolve = f'''location = /_ark_ms_resolve {{
+    internal;
+    content_by_lua_block {{
+        local uri = ngx.var.ark_ms_uri
+        ngx.shared.fixture:incr("resolve", 1, 0)
+        if uri:find("cool", 1, true) then return ngx.exit(503) end
+        local hex = ngx.md5(uri)
+        ngx.header["Location"] = "https://cdn-lfs-cn-1.modelscope.cn/prod/lfs-objects/" .. hex:sub(1, 2) .. "/" .. hex:sub(3, 4)
+            .. "/" .. hex .. "?filename=x&namespace=Stardust&repository=arknight-assets&revision={TOOL.MODEL_REVISION}"
+            .. "&auth_key=" .. ngx.time() .. "-0-0-" .. hex
+        return ngx.exit(302)
+    }}
+}}
+location = /_ark_ms_declare {{ internal; set $ark_ms_uri ""; return 404; }}
+location = /_fixture_resolves {{ content_by_lua_block {{ ngx.say(ngx.shared.fixture:get("resolve") or 0) }} }}'''
+        with tempfile.TemporaryDirectory(prefix='material-sign-') as directory:
+            work = Path(directory)
+            (work / 'lualib').mkdir()
+            shutil.copyfile(runtime / 'openresty/lualib/cjson.so', work / 'lualib/cjson.so')
+            for name, body in files.items():
+                (work / name).write_text(body.decode().replace(CONTAINER + '/', str(work) + '/'))
+            public = f'''access_by_lua_file {work}/access.lua;
+header_filter_by_lua_file {work}/header.lua;
+content_by_lua_block {{ ngx.exit(204) }}'''
+            with openresty(runtime, work, f'''lua_shared_dict ark_ms_signed 1m;
+lua_shared_dict ark_ms_lock 1m;
+lua_shared_dict fixture 1m;
+server {{
+listen 127.0.0.1:__PORT__ reuseport;
+{resolve}
+include {work}/sign-location.conf;
+location /assets/ {{ {public} }}
+location /media/ {{ {public} }}
+}}''') as request:
+                def sign(paths, raw=None):
+                    body = raw if raw is not None else json.dumps({'paths': paths})
+                    return request('/material-sign', 'POST', body=body, headers={'Content-Type': 'application/json'})
+                resolves = lambda: int(request('/_fixture_resolves')[2])
+                status, headers, body = sign(known + [exception, '/assets/unknown.png', known[0], '/js/main.js'])
+                self.assertEqual(status, 200, body)
+                self.assertEqual(headers['content-type'], 'application/json')
+                self.assertEqual(headers['cache-control'], 'no-store')
+                urls = json.loads(body)['urls']
+                self.assertEqual(sorted(urls), sorted(known), 'unknown, OpenI-only and private paths are left out')
+                for url, seconds in urls.values():
+                    self.assertTrue(url.startswith('https://cdn-lfs-cn-1.modelscope.cn/prod/lfs-objects/'), url)
+                    self.assertTrue(3470 <= seconds <= 3480, seconds)  # TTL 3600 - SAFETY 120
+                # /media/voice/test and its /assets/audio/ alias are one object
+                self.assertEqual(resolves(), 2, 'one provider request per object')
+                # the batch shares the redirect cache: the same URL, no new provider request, either way round
+                again = json.loads(sign(list(reversed(known)))[2])['urls']
+                self.assertEqual({p: v[0] for p, v in again.items()}, {p: v[0] for p, v in urls.items()})
+                status, headers, _ = request(known[0])
+                self.assertEqual((status, headers['location']), (302, urls[known[0]][0]))
+                self.assertEqual(resolves(), 2)
+                self.assertEqual(json.loads(sign(['/assets/none.png'])[2]), {'urls': {}}, 'an empty answer is still an object')
+                for raw in ('', 'null', '{}', '{"paths":[]}', '{"paths":{"a":"/assets/test/pixel.png"}}', '{"paths":[1]}',
+                            json.dumps({'paths': ['/assets/x%d.png' % i for i in range(65)]}), '{"paths":["/assets/test/pixel.png"]',
+                            json.dumps({'paths': ['/assets/' + 'x' * 2100]})):
+                    self.assertEqual(sign(None, raw)[0], 400, raw[:40])
+                self.assertEqual(sign(None, json.dumps({'paths': known, 'pad': 'x' * 17000}))[0], 413)
+                self.assertEqual(request('/material-sign')[0], 405)
+                self.assertEqual(json.loads(sign(['/assets/x%d.png' % i for i in range(64)])[2]), {'urls': {}}, '64 is allowed')
+                errors = [line for line in (work / 'error.log').read_text().splitlines()
+                          if '[error]' in line and 'client intended to send too large body' not in line]
+                self.assertEqual(errors, [])
+
     def test_preload_runs_the_lazy_loaders_verbatim(self):
         openi, models, options = exception_fixture(multiple_prefixes=True)
         profiles = {'default': TOOL.render(*fixture(), CONTAINER),
-                    'signed-full-share': TOOL.render(openi, models, CONTAINER, modelscope_weight=100, signed_ttl=720, **options),
+                    'signed-full-share': TOOL.render(openi, models, CONTAINER, modelscope_weight=100, signed_ttl=3600, **options),
                     'other-directory': TOOL.render(*fixture(), TOOL.CONTAINER_PREFIX + 'other_profile-2')}
         for name, files in profiles.items():
             with self.subTest(profile=name):
@@ -642,8 +717,14 @@ location = /_fixture_loaded {{ content_by_lua_block {{ {loaded} }} }}
 
     def test_full_modelscope_share_and_signed_profile(self):
         openi, models, options = exception_fixture(multiple_prefixes=True)
-        files = TOOL.render(openi, models, CONTAINER, modelscope_weight=100, signed_ttl=720, **options)
-        self.assertEqual(set(files), {'routes.json', 'header-data.json', 'access.lua', 'header.lua', 'mssign.lua', 'preload.lua'})
+        files = TOOL.render(openi, models, CONTAINER, modelscope_weight=100, signed_ttl=3600, **options)
+        self.assertEqual(set(files), {'routes.json', 'header-data.json', 'access.lua', 'header.lua', 'mssign.lua', 'preload.lua',
+                                      'sign.lua', 'sign-location.conf'})
+        # the batch signer runs the access.lua loader verbatim and points at this profile's files only
+        self.assertIn(TOOL.loader(files['access.lua'].decode(), TOOL.ACCESS_LOADER).encode(), files['sign.lua'])
+        self.assertIn(('local signer_file = "' + CONTAINER + '/mssign.lua"').encode(), files['sign.lua'])
+        self.assertIn(('content_by_lua_file ' + CONTAINER + '/sign.lua;').encode(), files['sign-location.conf'])
+        self.assertIn(b'location = /material-sign {', files['sign-location.conf'])
         routes = json.loads(files['routes.json'])
         self.assertEqual((routes['modelscopeWeight'], routes['openiWeight'], routes['ningxiaWeight']), (100, 0, 0))
         access, signer = files['access.lua'], files['mssign.lua']
@@ -652,7 +733,7 @@ location = /_fixture_loaded {{ content_by_lua_block {{ {loaded} }} }}
         self.assertIn(('local signer_file = "' + CONTAINER + '/mssign.lua"').encode(), access)
         for body in files.values():
             self.assertNotIn(b'__MATERIAL_LB_', body)
-        self.assertIn(b'local TTL = 720 ', signer)
+        self.assertIn(b'local TTL = 3600 ', signer)
         self.assertIn(('local REVISION = "' + options['model_revision'] + '"').encode(), signer)
         self.assertIn(b'local NAMESPACE, REPOSITORY = "Stardust", "arknight-assets"', signer)
         self.assertIn(b'ngx.HTTP_HEAD', signer)

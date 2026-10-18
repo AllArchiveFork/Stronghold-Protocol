@@ -3,7 +3,7 @@
 本文说明公开素材分发的实现与安全合同，不记录具体部署坐标或上线状态。以下默认60/40（`--modelscope-weight 100` 为全部普通GET走ModelScope）及可选签名重定向是版本化profile的选择规则，不是某环境的流量或验收声明。实际release、数据集、revision、前缀、挂载摘要及取证保存在Git外的私有发布记录；见[记录边界](releases/README.md)。
 
 ## 离线工具的安全合同
-- `prepare-material-lb.py` 输出固定小型 `access.lua`／`header.lua` 和 `routes.json`／`header-data.json`（`--signed-ttl` 时另加 `mssign.lua`），以及供 nginx master 预加载库存的 `preload.lua`（见[下文](#master-预加载preloadlua)）；**不再把全量库存编译为 Lua 表**。大型 Lua 表可能触发 LuaJIT 常量上限，`nginx -t` 不能证明运行时filter可执行。必须用实际全量尺寸执行 JSON 解码、缓存和 HTTP filter。
+- `prepare-material-lb.py` 输出固定小型 `access.lua`／`header.lua` 和 `routes.json`／`header-data.json`（`--signed-ttl` 时另加 `mssign.lua`、`sign.lua`、`sign-location.conf`），以及供 nginx master 预加载库存的 `preload.lua`（见[下文](#master-预加载preloadlua)）；**不再把全量库存编译为 Lua 表**。大型 Lua 表可能触发 LuaJIT 常量上限，`nginx -t` 不能证明运行时filter可执行。必须用实际全量尺寸执行 JSON 解码、缓存和 HTTP filter。
 - 默认单前缀、无例外及原 60/40 行为保留；新版本要同时指定 release、40hex revision、primary prefix；公开材料消费者上限为150000 aliases／64MiB输入（0.3.0官方特效与韩语/本土语言配音使库存约13万alias），OpenI最多五个明确审核、固定且去重的mirror目录，保持单／双／三／四目录兼容并拒绝第六个；已有两目录之外只增加固定0.2.3增量目录、0.2.5战场场景增量目录和0.3.0素材增量目录，不提供自动发现或任意host/root/path。ModelScope现有上限仍为八个明确批准的prefix。多前缀以重复 `--modelscope-allowed-prefix` 明示，清单 `prefixes` 必须同序、去重且 primary 在首位；所有 URL 均绑定同一个 revision 和固定公开 repo/origin。
 - `--openi-only-path` 仅允许 `/assets/skins/char_340_shwaz_snow_1/illustration.png` 这一精确批准的素材例外，且必须与 MS 清单 `openiOnlyPaths` 一致、存在于 OI 库存。MS alias 集合必须正好为 OI 集合减该例外；普通条目的 bytes／SHA／MIME 逐项一致。未知根字段、额外缺项、其他例外或未认可前缀均拒绝。
 - 例外在 routes 中保留为 `false`，只允许该已明示路径直接进入 OI；未知路径的 `nil` 仍拒绝。例外的 header entry 不包含 ModelScope target，因此伪造 MS Location 不能得到公开缓存。JSON 每个 worker 只读取／解码一次（装了 `preload.lua` 则由 master 每次启动／reload 做一次），错误数据也缓存为拒绝，避免重复解析大文件。
@@ -68,9 +68,19 @@ OpenI目标只接受原Signature V2字段与固定HTTP wrapper `sp_request=cors|
 `modelscope.cn` 的公开 resolve 地址只走 HTTP/1.1，每次返回带新 `auth_key` 的不可缓存 302。浏览器对同一域名最多 6 条连接，同屏上百个图标会在这一跳排队，触发客户端 8 秒超时后整批切到 OpenI。`--signed-ttl <秒>` 在 profile 中加入 [material-lb/mssign.lua](material-lb/mssign.lua)：入口 OpenResty 对每个对象用内部 HEAD 子请求解析一次，把 CDN 签名地址存在共享内存，浏览器只跟随一次 302 直达 HTTP/2 CDN。
 
 - 只接受 `https://cdn-lfs*.modelscope.cn/prod/lfs-objects/…`、同一 repo／revision、固定查询字段且时间戳与本机相差不超过 120 秒的 type-A `auth_key`。其他回答、出错、冷却或锁等待超时一律回到原公开 resolve 302，与未启用相同。
-- `--signed-ttl` 是实测签名有效期的下限（600–3600 秒），不是 provider 承诺。剩余不足 300 秒时由一个请求重签，不足 120 秒不再下发；浏览器缓存签名 302 至多 600 秒（2026-10-17 前为 300 秒；改动只对新生成的 profile 生效），并在签名到期前至少 60 秒结束。尚未签到的回退 302 只缓存 60 秒；未启用签名的 profile 仍缓存 86400 秒。
+- `--signed-ttl` 是实测签名有效期的下限（600–3600 秒），不是 provider 承诺。发版用 **3600**：2026-10-17 22:33 起每 10 分钟签一次、共 6 个样本（cdn-lfs-cn-1），每 20 秒 Range 请求一次，4 小时上限内全部有效（之前的 profile 用 720）。剩余不足 300 秒时由一个请求重签，不足 120 秒不再下发；浏览器缓存签名 302 至多 600 秒（2026-10-17 前为 300 秒；改动只对新生成的 profile 生效），并在签名到期前至少 60 秒结束。尚未签到的回退 302 只缓存 60 秒；未启用签名的 profile 仍缓存 86400 秒。
 - 不限速：同一对象同一时间只解析一次（`resty.lock`）。上游 403／429／HTML 挑战页冷却 60 秒，连接失败／5xx 冷却 10 秒；200（非 LFS 对象）或 404 使该对象 10 分钟内直接回退。
 - 安装时把 [mssign-http.conf](material-lb/mssign-http.conf) 放进 http 上下文，把 [mssign-server.conf](material-lb/mssign-server.conf) 放进运行素材 `access.lua` 的 server。子请求不转发客户端头、Cookie 或正文，并校验证书；签名地址只在共享内存，不写日志、不落盘。共享内存在平滑 reload 后保留，冷重启后清空，首批对象各需解析一次。
+
+### 批量签名（`sign.lua`，2026-10-17）
+
+逐个文件的签名 302 每个约 0.6 KB，rel20 晚高峰约 7900 次/秒、约 40 Mbit/s，是济南出口最大的一项。签名 profile 另外生成 [material-lb/sign.lua](material-lb/sign.lua) 和 `sign-location.conf`：`POST /material-sign`，正文 `{"paths":[alias,…]}`（至多 64 个、16 KiB），回答 `{"urls":{alias:[CDN 签名地址, 剩余秒数]}}`。[public/sw.js](../../public/sw.js) 把本地缓存未命中的路径攒 25 ms 一批去签，然后自己从 CDN 下载并按路径存入 Cache Storage：济南每批只收一个小请求，不再逐个回 302。
+
+- 与逐个 302 共用 `mssign.lua` 的共享内存和锁：同一对象不会因批量而多签。每批最多 8 个并发签名子请求，2.5 秒预算内没签到的、未知的、OpenI 专用的 alias 不出现在回答里，客户端对这些仍走原路径（原 302）。
+- 剩余秒数 = 签名时间 + TTL − 120 − 现在；客户端按自己收到回答的时刻再提前 60 秒停用（相对秒数，不受玩家本机时钟影响）。CDN 返回非 200 或下载出错时丢弃该签名，本次走原路径，下次未命中重新签。存进 Cache Storage 的是文件本身，与签名过期无关。
+- 端点缺失（404/405）、门禁页或非 JSON 回答：该 worker 10 分钟内不再请求签名；429/5xx/网络错误 30 秒。只接受 `https://cdn-lfs*.modelscope.cn/` 的地址。OpenI 重试（`?sp_source=openi`）和 Range 请求不签名。
+- 安装：把本 profile 的 `sign-location.conf` 用 `include` 放进 443 server（与 `/assets/`、`/media/` 同一 profile 目录，换 profile 时一起换）；不加 `auth_request off`，与站点其余部分一样在门禁后面。监控路由类 `sign`（[nginx/edge-metrics-log.conf](nginx/edge-metrics-log.conf)，同步更新线上该文件）。签名地址只出现在回答正文里，不写日志。
+- 前提：CDN 回 `Access-Control-Allow-Origin: *`；站点若重新启用 CSP，`connect-src` 需要包含 CDN 域名（原 302 跟随同样需要）。
 
 ## Master 预加载（`preload.lua`）
 
@@ -95,6 +105,7 @@ OpenI目标只接受原Signature V2字段与固定HTTP wrapper `sp_request=cors|
 
 - [material-lb/access.lua](material-lb/access.lua)：精确alias白名单、raw target验证、HEAD/OPTIONS、ModelScope份额选择（默认60:40，边界2576980378；100%为4294967296）；GET使用request_id前32随机bits，精度误差小于1/2³²；签名profile先取 `mssign.lua` 的CDN重定向。
 - [material-lb/mssign.lua](material-lb/mssign.lua)、[mssign-http.conf](material-lb/mssign-http.conf)、[mssign-server.conf](material-lb/mssign-server.conf)：可选签名重定向的模板与入口配置片段。
+- [material-lb/sign.lua](material-lb/sign.lua)、[sign-location.conf](material-lb/sign-location.conf)：签名 profile 的批量签名端点（`POST /material-sign`）。
 - [material-lb/header.lua](material-lb/header.lua)：精确重定向目标校验、签名寿命限制、公开缓存（稳定ModelScope地址86400秒、签名CDN地址按剩余寿命）及CORS/Vary；未知信息fail-closed到no-store。
 - [material-lb/preload.lua](material-lb/preload.lua)：master 预加载模板，由生成器填入从 `access.lua`／`header.lua` 截取的加载代码；vhost 入口见上文 `init_by_lua_block`。
 - [tools/prepare-material-lb.py](tools/prepare-material-lb.py)：离线生成批准profile的routes、header data、loader替换及master预加载 `preload.lua`；不联网、不上传、不接触远端、不reload或激活。
@@ -110,7 +121,7 @@ python3 -I deploy/stardust/tools/prepare-material-lb.py \
   --openi-manifest "$VERIFIED_OPENI_MANIFEST" \
   --modelscope-manifest "$VERIFIED_PINNED_MODELSCOPE_MANIFEST" \
   --container-dir /www/sites/game.example.com/material-lb/EXAMPLE_IMMUTABLE_PROFILE \
-  --modelscope-weight 100 --signed-ttl "$MEASURED_SIGNATURE_SECONDS" \
+  --modelscope-weight 100 --signed-ttl 3600 \
   --out "$NEW_OFFLINE_STAGE"
 ```
 

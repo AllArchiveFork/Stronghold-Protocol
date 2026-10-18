@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Prepare a matched material profile without activating it; C1 remains the default.
 
-ModelScope share 60 (default, 60/40 with OpenI) or 100; optional --signed-ttl adds mssign.lua (signed CDN redirects).
+ModelScope share 60 (default, 60/40 with OpenI) or 100; optional --signed-ttl adds mssign.lua (signed CDN redirects)
+and the batch signer sign.lua + sign-location.conf (POST /material-sign, public/sw.js; MATERIAL-SOURCES.md).
 preload.lua loads the inventories once in the nginx master (init_by_lua, MATERIAL-SOURCES.md); access.lua/header.lua
 keep loading them lazily per worker when it is not installed.
 """
@@ -204,6 +205,11 @@ def render(openi, models, container_dir, *, release=RELEASE, model_revision=MODE
         files['mssign.lua'] = (TEMPLATES / 'mssign.lua').read_text().replace(
             '__MATERIAL_LB_SIGNED_REVISION__', model_revision).replace('__MATERIAL_LB_SIGNED_TTL__', str(signed_ttl)).replace(
             '__MATERIAL_LB_SIGNED_NAMESPACE__', namespace).replace('__MATERIAL_LB_SIGNED_REPOSITORY__', repository).encode()
+        files['sign.lua'] = (TEMPLATES / 'sign.lua').read_text().replace(
+            '__MATERIAL_LB_ACCESS_LOADER__', loader(access, ACCESS_LOADER)).replace(
+            '__MATERIAL_LB_SIGNER__', q(container_dir + '/mssign.lua')).encode()
+        files['sign-location.conf'] = (TEMPLATES / 'sign-location.conf').read_text().replace(
+            '__MATERIAL_LB_SIGN__', container_dir + '/sign.lua').encode()
     return files
 
 
