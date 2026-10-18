@@ -7,6 +7,7 @@
 import { PHASE } from '../../../shared/constants.js';
 import { canUseWorkerRehearsal, rehearsalFingerprint } from '../combat/rehearsal.js';
 import { botPrepBeginSteps, botPrepEndSteps } from '../bot.js';
+import { testSlice } from '../testTrace.js';
 import { DELAYS } from './common.js';
 
 export class MatchPrep {
@@ -99,6 +100,8 @@ export class MatchPrep {
       });
     };
     /** Only synchronous .next() owns the worker-enabled context. One-shot helpers and virtual/custom fixtures do not. */
+    // Test replay ignores the wall clock and stops after the journalled step count (testSlice).
+    const sliceCtl = testSlice(this);
     const drive = (gen, label, then) => {
       if (!valid()) { work.cancel(); return; }
       if (!fresh()) { stale(); return; }
@@ -107,7 +110,10 @@ export class MatchPrep {
       work.gen = gen;
       if (work.verify) this._workerBotPrepOwner = ps;
       try {
-        do r = gen.next(); while (!r.done && !(bounded && now() - t0 >= this.botSliceMs)); // loop-cap: generator and the bot time slice
+        do {
+          r = gen.next();
+          if (sliceCtl) sliceCtl.note(1);
+        } while (!r.done && !(sliceCtl ? sliceCtl.wall(now() - t0, this.botSliceMs) : (bounded && now() - t0 >= this.botSliceMs))); // loop-cap: generator and the bot time slice
       } catch (e) { failure = e; }
       finally { this._workerBotPrepOwner = owner; }
       if (!valid()) { work.cancel(); return; }
@@ -182,7 +188,7 @@ export class MatchPrep {
             return;
           }
           let done = true;
-          try { done = job.run(this.botSliceMs); } catch (e) { this.reportError(`bot ${ps.playerId} rehearsal`, e); }
+          try { done = job.run(this.botSliceMs, sliceCtl); } catch (e) { this.reportError(`bot ${ps.playerId} rehearsal`, e); }
           if (done) complete(); else defer(0, slice);
         };
         // A rehearsal offered to the host's browser (SP_BOT_REHEARSAL=host, DESIGN §14): the host's pick may already be in

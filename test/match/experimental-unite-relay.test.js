@@ -342,7 +342,8 @@ test('sim unite leak ownership is helper-half pp, with original source attributi
   const opts = m._uniteOpts(m.unitePlan, 10);
   const b = new Battle({ ...opts, data: m.ds, content: 'none', logger: m.log, spawns: [] });
   const source = m.unitePlan.leakers[0].playerId;
-  const e = b.spawnEnemy(enemyKey, { pos: [9, 17], sourcePlayerId: source, ownerPlayerId: 'p_1' });
+  // a wave enemy the leaker sent in (`_scheduled`): 0.3.1 bills only those, never a runtime child (spawns.js uniteRuntime)
+  const e = b.spawnEnemy(enemyKey, { pos: [9, 17], sourcePlayerId: source, ownerPlayerId: 'p_1', _scheduled: true });
   b._recordLeak(e, true); b.forceEnd('forced');
   const r = b.result();
   assert.equal(r.perPlayer.p_1.perfect, false);

@@ -25,7 +25,7 @@ import { GEO } from '../../../shared/constants.js';
 import { chessAvatarUrl, itemIconUrl, tokenAvatarUrl, enemyIconUrl } from './assetUrls.js';
 import { tileKey, hasFlag, UF, penPlacement, PEN, fieldTile, ownStandIn, ownDiyRecord } from './gameLogic.js';
 import { t } from '../../../shared/i18n.js';
-import { ownAppearance, appearanceEntry } from './skinAssets.js';
+import { ownAppearance } from './skinAssets.js';
 import { Img } from './gameComponents.js';
 import { MaterialImage } from './materialImage.js';
 
@@ -39,12 +39,9 @@ function unitArt(m, info) {
   if (!m || !id) return null;
   if (info.side === 'enemy' || String(id).startsWith('enemy_')) return enemyIconUrl(m, id);
   if (String(id).startsWith('token_')) return tokenAvatarUrl(m, id);
-  const skin = appearanceEntry(m, info.spine, info.skinId);
-  if (skin?.avatar) return skin.avatar;
-  const chars = m.chars || {};
-  if (chars[id]?.avatar) return chars[id].avatar;
-  if (String(id).endsWith('_2') && chars[id.slice(0, -2)]) return chars[id.slice(0, -2)].avatarE2 || chars[id.slice(0, -2)].avatar;
-  return null;
+  // Same golden rule as chessAvatarUrl: a character-key avatar uses avatarE2 on a golden piece; a catalogue skin
+  // (info.skinId on the operator's spine) draws its own avatar first.
+  return chessAvatarUrl(m, { isGolden: !!info.golden, skinId: info.skinId || null, assets: { avatar: id, spine: info.spine } });
 }
 
 /** Look of the stage tile (row, col) on the fallback board (stage coordinates). */
@@ -496,6 +493,7 @@ export function createFallbackView(host, opts = {}) {
       schedule();
     },
     highlightTiles(tiles, style) {
+      if (st.destroyed) return false;
       if (!tiles || !style) { st.highlight.clear(); st.hlGroups.clear(); schedule(); return; }
       if (typeof style === 'object' && style.group) {
         // a named group (direction wheel / selected unit range): replaced as a whole, drawn as a range tile

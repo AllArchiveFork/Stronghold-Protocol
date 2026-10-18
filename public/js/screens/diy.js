@@ -82,7 +82,7 @@ function SlotCard({ m, slot, pick, illegal, onOpen, onClear, skins = {}, ops = {
       </span>
       ${proto ? html`<small class="diy-slot__cult t-dim">${t('原型干员没有潜能与练度')}</small>`
         : onOps ? html`<span class="diy-slot__cult"><${CultivationSelects} charId=${rec.charId} ops=${ops} onSet=${onOps} /></span>` : null}
-      <${OperatorVoice} charId=${rec.charId} />
+      <${OperatorVoice} charId=${rec.assets?.voice || rec.charId} />
       ${illegal ? html`<p class="diy-slot__bad"><${Icon} name="warn" />${t('这项自选在当前版本不可用，开局时会被移除')}</p>` : null}
     </div>
     <div class="diy-slot__acts">

@@ -107,6 +107,7 @@ export class MatchPhases {
     if (d.concurrent) { this._concurrentBandStep(); return; }
     this.cancel(this._turnTimer);
     this._turnTimer = null;
+    if (this.test) this.setDeadline(0);
     while (d.idx < d.order.length && d.picks[d.order[d.idx]]) d.idx++; // loop-cap: draft order
     if (d.idx >= d.order.length) {
       d.turnDeadline = 0;
@@ -120,11 +121,13 @@ export class MatchPhases {
       d.turnDeadline = this.sched.now() + ms;
       // the step's countdown IS the turn's (one number everywhere)
       this.deadline = d.turnDeadline;
-      this._turnTimer = this.later(ms, () => {
+      const expire = () => {
         if (this.phase !== PHASE.BAND_DRAFT || token !== this._turnToken) return;
         const pid = this.draftTurn();
         if (pid) this._applyBand(this.players.get(pid), this.timeoutBand(pid));
-      });
+      };
+      if (this.test) { this.setDeadline(ms / 1000 / (this.timerScale || 1), expire); d.turnDeadline = this.deadline; }
+      else this._turnTimer = this.later(ms, expire);
     } else {
       d.turnDeadline = 0;
       this.deadline = 0;
@@ -350,13 +353,31 @@ export class MatchPhases {
 
   enterBattleCheck() {
     this.phase = PHASE.BATTLE_CHECK;
-    this.setDeadline(this.gd.timer('battleCheck'), () => this.startRound(1), { silent: this.soloUntimed });
+    this.setDeadline(this.gd.timer('battleCheck'), () => this.afterBattleCheck(), { silent: this.soloUntimed });
     this.markPublic();
   }
 
-  startRound(r) {
+  /**
+   * BATTLE_CHECK is over: R1 is about to begin. A plugin window declared at `battleCheck` for this round opens here —
+   * "before the round begins", the host's own step first (docs/PLUGINS.md §10b) — and holds R1 back until it closes; a
+   * content set without a window continues exactly as before (`openOfferWindow` returns before it touches anything).
+   */
+  afterBattleCheck() {
+    this.startRound(1);
+  }
+
+  startRound(r, afterStart = null) {
     this._freezeDamage(false); // PREP retains the completed scope; never reset scores when boards change.
     this._finalizePendingDeaths(); // also protects forced/cancelled transitions that bypass afterSettle
+    // Every round, including boss rounds. [ASSUMED] Expire nonblocking windows at the next round.
+    for (const w of this.offerWin) this._closeOffer(w);
+    this.offersDispose(); // A test-console round jump must discard the older continuation too.
+    const step = () => { this._startRoundAfterOffers(r); afterStart?.(); };
+    if (this.openOfferWindow('battleCheck', r) !== 'open') { step(); return; }
+    this._offerResume = step;
+  }
+
+  _startRoundAfterOffers(r) {
     this.phase = PHASE.ROUND_START;
     this.round = r;
     this.fields = [];
@@ -411,6 +432,14 @@ export class MatchPhases {
 
   afterRoundStart() {
     if (this.gd.spRounds().includes(this.round)) this.enterSpDraft();
-    else this.enterPrep();
+    else this.beforePrepOffers();
+  }
+
+  beforePrepOffers() {
+    // The official round start and its draw/draft finish first; only entering prep waits.
+    this.sp = null;
+    const step = () => this.enterPrep();
+    if (this.openOfferWindow('prep', this.round) !== 'open') { step(); return; }
+    this._offerResume = step;
   }
 }

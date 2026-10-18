@@ -25,6 +25,7 @@
 }
 .team__toggle .icon { width: calc(18px * var(--ui)); height: calc(18px * var(--ui)); }
 .team__toggle .icon:last-child { margin-left: auto; transform: rotate(-90deg); }
+.team__toggle span { white-space: nowrap; } /* 「同盟成员」 on one line beside its count (a 20-seat room on a phone wrapped it) */
 .team.is-folded .team__toggle .icon:last-child { transform: rotate(90deg); }
 .team.is-folded { width: max(calc(148px * var(--ui)), 2.4rem); }
 

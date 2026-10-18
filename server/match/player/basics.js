@@ -63,9 +63,10 @@ export class PlayerBasics {
    * changes) when either does not fit the data; bots keep the defaults.
    * @param {any} loadout
    * @param {any} [ops]
+   * @param {{ merge?: boolean }} [opts] merge overlays the named operators onto the current loadout (prepLoadout)
    * @returns {boolean}
    */
-  setLoadout(loadout, ops = undefined) {
+  setLoadout(loadout, ops = undefined, opts = undefined) {
     if (this.isBot) return false;
     let opsRes = null;
     if (ops !== undefined) {
@@ -101,11 +102,16 @@ export class PlayerBasics {
       this.m.log?.warn?.(`[match ${this.m.roomCode}] loadout of ${this.playerId} ignored: ${res && res.detail}`);
       return false;
     }
-    const out = {};
+    // [ASSUMED] prep merges ops the same way, so a partial panel does not wipe the operators it does not name.
+    const merge = !!(opts && opts.merge);
+    const out = merge && this.loadout && typeof this.loadout === 'object' ? { ...this.loadout } : {};
+    // Validation drops defaults. A named default resets that operator; an omitted operator keeps its choice.
+    if (merge) for (const id of Object.keys(entries)) delete out[id];
     for (const [id, e] of Object.entries(res.loadout)) out[id] = Object.freeze({ skill: e.skill, module: e.module ?? null });
     this.loadout = Object.freeze(out);
     if (opsRes) {
-      const o = {};
+      const o = merge && this.ops && typeof this.ops === 'object' ? { ...this.ops } : {};
+      if (merge) for (const id of Object.keys(ops || {})) delete o[id];
       for (const [id, e] of Object.entries(opsRes.ops)) o[id] = Object.freeze({ potential: e.potential, cultivate: e.cultivate });
       this.ops = Object.freeze(o);
     }

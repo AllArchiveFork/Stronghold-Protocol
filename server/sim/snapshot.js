@@ -40,6 +40,7 @@ export function unitInfo(u, stats = null) {
     spine: d.spine ?? d.charId ?? u.defId,
     avatar: d.avatar ?? d.charId ?? u.defId,
     ...(u.side === 'ally' && u.kind === 'op' && skinFor(d.charId, u.skinId) ? { skinId: u.skinId } : {}),
+    ...(d.voice ? { voice: d.voice } : {}),
     x: r2(u.x),
     y: r2(u.y),
     facing: u.facing ?? 1,

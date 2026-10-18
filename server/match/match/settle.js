@@ -120,6 +120,15 @@ export class MatchSettle {
     }
   }
 
+  /**
+   * Drop every alive player whose LP is already gone, without the revival window (the fork's settlement above defers a
+   * rescuable death instead). An accepted test round jump calls this before the next round starts, so LP 0 cannot be
+   * written back into a new prep. The LP command itself stays a raw write.
+   */
+  eliminateBroken() {
+    for (const ps of this.alivePlayers()) if (ps.lp <= 0) this._finalizeDeath(ps);
+  }
+
   afterSettle({ reason } = {}) {
     // The scheduled timeout supplies its provenance: wall/monotonic clock rounding can differ by a millisecond.
     // A forced transition without that provenance is classified from the original deadline instead.
@@ -130,8 +139,11 @@ export class MatchSettle {
   }
 
   finish({ victory, hiddenCleared = false, reason = 'defeat' }) {
+    // A command that ends a test match must be audited/counted before publishing its result.
+    if (this.test && this._testApplying) { this._testOutcome = { victory, hiddenCleared, reason }; return; }
     if (this.ended || this.disposed) return;
     this._freezeDamage();
+    this.offersDispose();
     this.ended = true;
     for (const ps of this.order) this._cancelBotPrep(ps);
     this._finalizePendingDeaths();
@@ -151,6 +163,11 @@ export class MatchSettle {
     } catch (e) {
       this.reportError('buildResult', e);
       result = { t: 'm.result', victory: !!victory, roundsPassed: 0, reason, modeId: this.modeId, difficulty: this.difficulty, players: [] };
+    }
+    if (this.test) {
+      result.test = true;
+      result.testActions = this.testActions;
+      if (this.testReplayable === false) result.testReplayable = false;
     }
     this.lastResultMsg = result;
     this.markPublic();

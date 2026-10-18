@@ -29,7 +29,7 @@
 // (the piece returns), re-orient in place, tap → underframe (撤退 / 出售 +N) + range, 撤退, tap-sell, item → 销毁 only,
 // long-press-free right-click detail, no drag-to-sell zone, touch (pointerType touch) placement through the wheel.
 // Solo: 独立模拟 (绝境) through round 3 (incl. the solo 机变 of round 3). Result: a solo run on a fast-timer server
-// (same engine, scaled timers) to RESULT, then 返回同盟.
+// (same engine, scaled timers) to RESULT: the settlement flow (intro → 个人战报 → 下一步 → 同盟), then 返回同盟.
 // Every page must finish with zero console errors, page errors, failed requests or HTTP errors.
 // Screenshots: test/e2e/out/{coop,solo,result}-*.png (…-720.png = the 1280×720 client).
 

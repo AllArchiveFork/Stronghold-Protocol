@@ -14,6 +14,7 @@ import { GIcon } from './gameComponents.js';
 import { GuideButton } from './guide.js';
 import { recordQuit } from './stats.js';
 import { t, tParts, N_ } from '../../../shared/i18n.js';
+import { TestMark } from './testConsole.js';
 
 /**
  * Exit dialog lines. 放弃模拟 (g.leave → room.leave) ends the run on the server as 'abandoned' and returns to the
@@ -133,6 +134,7 @@ export function StepHeader({ step, of, title, micro, pub, total, onExit, extra =
       <div class="stephead__exit">
         <${Button} variant="danger" size="lg" square=${true} icon="exit" onClick=${onExit} aria-label=${t('离开')} title=${t('离开')} />
         <${PingPill} ms=${conn.ping} online=${conn.status === 'online'} />
+        ${pub?.test ? html`<${TestMark} />` : null}
       </div>
       <div class=${`stephead__mode${extra ? ' has-extra' : ''}`}>
         ${pub?.difficulty ? html`<${DifficultyTag} difficulty=${pub.difficulty} />` : null}

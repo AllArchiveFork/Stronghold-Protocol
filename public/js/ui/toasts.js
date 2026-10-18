@@ -10,6 +10,7 @@ import htm from '../../vendor/htm.module.js';
 import { ERR_TEXT } from '../../../shared/constants.js';
 import { t, N_ } from '../../../shared/i18n.js';
 import { recordError } from '../diag.js';
+import { catalog, pluginName } from '../content.js';
 
 // no shared static vnodes (see components.js hFresh: htm's static cache would retain unmounted DOM)
 function hFresh(type, props, ...children) {
@@ -107,6 +108,15 @@ export function describeError(err) {
   // a nickname reserved for the server's owner: the NetError's own text (net.js NAME_RESERVED_TEXT)
   if (err.code === 'NAME_REJECTED' && err.detail === 'reserved' && typeof err.message === 'string' && err.message) return t(err.message);
   if (typeof err.detail === 'string' && Object.hasOwn(DETAIL_TEXT, err.detail)) return t(DETAIL_TEXT[err.detail]);
+  if (err.code === 'PLUGIN_RULE_CONFLICT') {
+    // Existing wire detail is bounded to 120 characters. The ids precede the longer developer explanation.
+    const match = typeof err.detail === 'string' && /^PLUGIN_RULE_CONFLICT (\w+): ([a-z0-9-]{2,32}) and ([a-z0-9-]{2,32}) set /.exec(err.detail);
+    const labels = { shopBias: N_('商店装备偏向'), prepLoadout: N_('休整期调配'), morphPairing: N_('变形同构体配对'), unequip: N_('卸下装备') };
+    if (match && Object.hasOwn(labels, match[1])) {
+      const name = id => { const p = catalog.get().plugins.find(p => p.id === id); return p ? pluginName(p) : id; };
+      return t('「{a}」和「{b}」的规则开关「{rule}」选项冲突', { a: name(match[2]), b: name(match[3]), rule: t(labels[match[1]]) });
+    }
+  }
   if (err.code && Object.hasOwn(ERR_TEXT, err.code)) return t(ERR_TEXT[err.code]);
   if (typeof err.message === 'string' && err.message) return t(err.message);
   if (typeof err.msg === 'string' && err.msg) return t(err.msg);

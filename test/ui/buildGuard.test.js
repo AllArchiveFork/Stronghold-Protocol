@@ -163,6 +163,26 @@ test('onHealth: told every /healthz body a check reads — what else the page re
   g.stop();
   assert.equal(bodies.length, 3, 'the guard\'s first check hands it over');
   const main = (await import('node:fs')).readFileSync(new URL('../../public/js/main.js', import.meta.url), 'utf8');
-  // a body without `content` (/client-build answers only { build }) leaves the count welcome gave alone
-  assert.match(main, /onHealth: \(h\) => \{\n\s+if \(!h\?\.content \|\| typeof h\.content !== 'object'\) return;\n\s+const n = pluginCount\(h\.content\);\n\s+if \(n !== store\.get\(\)\.installedPlugins\) store\.set\(\{ installedPlugins: n \}\);\n\s+\}/);
+  const callback = /onHealth:\s*(\(h\) => \{[\s\S]*?\n\s*\}),/.exec(main)?.[1];
+  assert.ok(callback, 'main wires the health callback');
+  let state = { installedPlugins: 0, installedNotices: false };
+  let writes = 0;
+  // Execute the actual callback with a small store; changes in formatting do not change this contract.
+  const onHealth = new Function('pluginCount', 'store', `return (${callback});`)(
+    (content) => Number.isInteger(content?.plugins) && content.plugins > 0 ? content.plugins : 0,
+    { get: () => state, set: (patch) => { state = { ...state, ...patch }; writes++; } },
+  );
+  onHealth({ content: { plugins: 2, notices: true } });
+  assert.deepEqual(state, { installedPlugins: 2, installedNotices: true });
+  onHealth({ content: { plugins: 2, notices: true } });
+  assert.equal(writes, 1, 'unchanged hints do not notify subscribers');
+  onHealth({ content: { notices: true } });
+  assert.deepEqual(state, { installedPlugins: 0, installedNotices: true }, 'language-only notices reach the lobby');
+  onHealth({ content: {} });
+  assert.deepEqual(state, { installedPlugins: 0, installedNotices: false }, 'a notice-free server clears the hint');
+  // /client-build answers only { build }: it says nothing about plugins, so what welcome gave stays
+  onHealth({ build: 'x' });
+  onHealth({});
+  assert.deepEqual(state, { installedPlugins: 0, installedNotices: false });
+  assert.equal(writes, 3, 'a body without `content` writes nothing');
 });

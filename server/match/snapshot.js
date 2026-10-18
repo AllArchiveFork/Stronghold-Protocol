@@ -70,6 +70,8 @@ export const MATCH_FIELDS = Object.freeze({
     'errors', 'errorCount', 'simErrors', 'simErrorLog', 'localStats', 'watchPref', 'lastResults', '_revival',
     'draft', 'sp', 'wave', 'bossWaves', 'bossPairs', 'hiddenLayerSum', 'finalAliveCount', 'hiddenReached', 'outcome',
     '_botEmotesSettledRound',
+    // plugin interaction windows (0.3.1, match/offers.js): the id counter only — no checkpoint is taken while one is open
+    'offerSeq',
   ]),
   special: Object.freeze([
     'phase', 'round', 'deadline', 'startedAt', '_battleSeq', 'damageBoard', 'poolGroups', 'playerItemPools',
@@ -83,6 +85,8 @@ export const MATCH_FIELDS = Object.freeze({
     'headlessSliceMs', 'battlePrefix', 'experimental', 'revivalEnabled', 'disableSharedPool', 'playerCapacity',
     'capacityExperiment', 'twentyPlayerMode', 'disableDuckLord', 'players', 'order', 'spectators', 'botBands', 'stage', 'pool',
     'playerPools', 'itemPool', 'ended', 'disposed',
+    // 0.3.1: the content set's declared windows and the room's 测试 flag (both from the match options)
+    'offers', 'test',
   ]),
   transient: Object.freeze([
     '_rehearsalTasks', 'paused', '_pausedAt', '_bossPubTimer', '_bossPubAt', '_bossClockOn', '_damageDirty', '_damageTimer',
@@ -94,6 +98,8 @@ export const MATCH_FIELDS = Object.freeze({
     'bossOvertimeStartReal', '_finalEnding', '_bossStartAt', 'lastResultMsg', '_uniteBudget', 'onCheckpoint', 'replayRound',
     // the reroll proposal marks and the kick vote (setupVote.js, kickVote.js): a restore drops them
     '_setupProposals', 'kickVote', '_kickVoteSeq', '_kickFailed', '_kickVoteAt',
+    // an open plugin window and its continuation (match/offers.js): checkpoints wait for it to close (canSnapshot)
+    'offerWin', '_offerTimers', '_offerResume', '_offerResumeTimer',
   ]),
 });
 
@@ -127,6 +133,9 @@ export function canSnapshot(m) {
   if (!m.sched || typeof m.sched.now !== 'function' || !(m.players instanceof Map) || !Array.isArray(m.poolGroups)) return false;
   if (!SNAPSHOT_PHASES.includes(m.phase)) return false;
   if (m.fields?.length || m.runner || m.pacer || m.bossPool || m.teamLp) return false;
+  // an open plugin window (0.3.1) holds the round back on a continuation a checkpoint cannot carry; a test match never
+  // checkpoints (its journal is the record)
+  if ((Array.isArray(m.offerWin) && m.offerWin.length) || m._offerResume || m.test) return false;
   if (m.phase === PHASE.PREP) for (const ps of m.alivePlayers()) if (ps.botControlled && !ps.ready) return false;
   return true;
 }

@@ -27,7 +27,7 @@
 // across a taken one, the pickers' avatars, an orange mark on a strategy this browser has cleared a run with —
 // ui/stats.js); the detail pane slides in only once a portrait is tapped (the order list narrows); after the pick the
 // grid gives way to 已选定策略 and a beam runs along the picker's row. Each time a pick becomes the player's, the
-// 「请选择策略」 band sweeps across (ui/matchIntro.js TurnBanner).
+// 「请选择策略」 band sweeps across (ui/turnBanner.js, the official art; none without it).
 
 import { useEffect, useMemo, useRef, useState } from '../../vendor/hooks.module.js';
 import { html, Button, Icon, useTicker, secondsLeft } from '../ui/components.js';
@@ -35,7 +35,6 @@ import { useGameData, BandIcon, RichText, PlayerAvatar, Sprite } from '../ui/gam
 import { StepHeader, ExitModal } from '../ui/matchChrome.js';
 import { plannableBonds, bondPlanOpen, bondPlanHolders, BondPlanTag, BondPlanPicker } from '../ui/bondPlan.js';
 import { MatchInfoDialog, matchInfoModel } from '../ui/matchInfo.js';
-import { TurnBanner } from '../ui/matchIntro.js';
 import { useRise } from '../ui/transitions.js';
 import { NameCardLayer } from '../ui/namecards.js';
 import { TrophyBadge } from '../ui/trophies.js';
@@ -47,6 +46,9 @@ import { normalizeDraft, sortedPlayers, draftMyTurn } from '../ui/gameLogic.js';
 import { useStore } from '../store.js';
 import { data } from '../data.js';
 import { audio } from '../audio.js';
+import { TurnBanner } from '../ui/turnBanner.js';
+import { bootArtReady } from '../ui/protocolBoot.js';
+import { reducedMotion } from '../ui/device.js';
 import { modeOffBonds, bandOffBonds, bandOffLine } from '../ui/gameLogic.js';
 import { t, tParts, tName } from '../../../shared/i18n.js';
 
@@ -265,7 +267,6 @@ export function BandDraftScreen() {
   const [exit, setExit] = useState(false);
   const [skipped, setSkipped] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
-  const [banner, setBanner] = useState(null);
   const [planOpen, setPlanOpen] = useState(false);
   const [planBusy, setPlanBusy] = useState(false);
 
@@ -312,12 +313,15 @@ export function BandDraftScreen() {
     const next = draftSelection(sel, { bands, taken, myPick, myTurn, defaultId });
     if (next !== sel) setSel(next);
   }, [bands.length, myPick, myTurn, takenKey]);
-  // "your turn" cue: the sound and the 「请选择策略」 band (a peeked strategy gives way to the grid)
+  // "your turn" cue: the sound, and the event's 请选择策略 band (ui/turnBanner.js) once its art is in; a peeked strategy
+  // gives way to the grid
+  const [turnBanner, setTurnBanner] = useState(0);
   useEffect(() => {
     if (!myTurn) return;
-    if (!solo) audio.sfx('yourTurn');
-    setBanner(`${draft.turnPid || 'self'}|${Date.now()}`);
     setPeek(null);
+    if (solo) return;
+    audio.sfx('yourTurn');
+    if (bootArtReady() && !reducedMotion()) setTurnBanner((n) => n + 1);
   }, [myTurn]);
   // the 本局信息 dialog never outlives the turn it was opened in: a turn change (a pick, a skip, a turn that ran out, an
   // AI pick) or my pick closes it, so whoever's turn begins sees the draft
@@ -481,7 +485,6 @@ export function BandDraftScreen() {
           </div>
         </aside>` : null}`}
     </main>
-    ${banner ? html`<${TurnBanner} key=${banner} text=${t('请选择策略')} onDone=${() => setBanner(null)} />` : null}
     <${ExitModal} open=${exit} onClose=${() => setExit(false)} solo=${solo} />
     <${BondPlanPicker} open=${planOpen && canPlan} onClose=${() => setPlanOpen(false)} bonds=${planBonds} value=${myPlan}
       holders=${bondPlanHolders(players, myId)} off=${offBonds} busy=${planBusy} onPick=${pickPlan} />
@@ -489,5 +492,6 @@ export function BandDraftScreen() {
       status=${infoStatus ? html`<span class=${cx('minfo-dlg__turn', `is-${infoStatus.tone}`)}>
         <${Icon} name=${infoStatus.tone === 'mint' ? 'check' : 'hourglass'} />${infoStatus.text}${infoStatus.secs != null ? html`<b class="num">${infoStatus.secs}s</b>` : null}
       </span>` : null} />
+    ${turnBanner ? html`<${TurnBanner} key=${turnBanner} onDone=${() => setTurnBanner(0)} />` : null}
   </div>`;
 }

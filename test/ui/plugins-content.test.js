@@ -373,7 +373,10 @@ describe('the runner\'s cs check (public/js/battle/runner.js)', () => {
     const s = realStart();
     s.spec.cs = 'cd'.repeat(32);
     const state = { held: null, loading: 'cd'.repeat(32) };
-    const r = rig({ state, contentFor: async (cs) => { await tick(); state.held = { cs, data: DATA }; state.loading = null; return state.held; } });
+    // the set arrives after one turn of the event loop the rig's run() flushes (setImmediate): a setTimeout(0) could
+    // still be pending when the 50 flushes finish on a fast runner (Node 24.21 on CI took 3.8 ms), and the battle then
+    // never became the authority before the clock ran out
+    const r = rig({ state, contentFor: async (cs) => { await new Promise((ok) => setImmediate(ok)); state.held = { cs, data: DATA }; state.loading = null; return state.held; } });
     r.net.emit('b.start', s);
     // the set arrives on a timer: run() steps its frames without yielding to timers, so it starts once the set is there
     await until(() => state.held, 'the content set arrived');

@@ -1,4 +1,4 @@
-// 机变 draft overlay (research 06 §4.4 / §11.5): family title | description over "倒计时结束仍未选定将自动分配",
+// 机变 draft overlay (research 06 §4.4 / §11.5): family title | description over "倒计时结束后仍未选定将自动分配",
 // whose turn ("当前轮到你决策" / name over "正在决策…") with countdown — the pick order as ✓ / ••• on the team panel's
 // portraits (spMarks) — and a 3×2 grid (solo: 3 cards) of cards in the official layout (the official 悬赏 / 机密商店 / 战术 screenshots): a
 // framed icon at the top-left with the bold name beside it (tags under the name), the effect text across the card under
@@ -9,18 +9,19 @@
 // playtest #6 item 6: at 756×366 it used to sit below a large centred icon, clipped away). Picking takes two taps, like
 // buying in the shop (user playtest #4 item 2 — extra enemies, items and tactics were picked by a slip of the finger;
 // research 09 §5 EventOnFirstClick → EventOnConfirm): the first tap on an available card selects it (it lifts with a
-// gold frame and a 确认选择 · 再次点击 strip; the header shows 确认选择), a second tap on the same card — or 确认选择 —
+// white frame and a ☑ 确认选择 · 再次点击 strip; the header shows 确认选择), a second tap on the same card — or 确认选择 —
 // sends g.choice; a tap on another card moves the selection, a tap elsewhere or Esc drops it. Cards are buttons (Tab /
 // Enter work the same way). While the pick is in flight the card shows a "选择中" strip with a sweeping bar (never a
 // spinner over its text — user playtest #3 item 9), dropped as soon as the pick shows in m.public (spBusy itself resets
 // when the request settles, ≤ 8 s, or the phase moves on). Untimed drafts (solo, a single-human match: sp.untimed) show
-// no countdown and say so. When the pick order comes round to the player, 轮到你选 drops in over the cards (the event's
-// video 10:08, ui/matchPlates.js TurnPopup); the selected card's frame and 确认选择 strip are white, as in the video.
+// no countdown and say so. When the pick order comes round to the player, screens/game.js drops the official 轮到你选
+// disc over the cards (ui/turnPopup.js); the selected card's frame and its ☑ 确认选择 strip are white, as in the event's
+// video (10:16).
 
 import { useEffect, useRef, useState } from '../../vendor/hooks.module.js';
 import { html, Icon, TierChip, Countdown, Button } from './components.js';
-import { TurnPopup } from './matchPlates.js';
-import { SP_POPUP_MS, LEAVE_MS } from './matchPopups.js';
+import { TurnPopup, preloadTurnPopupArt, turnPopupArtReady } from './turnPopup.js';
+import { reducedMotion } from './device.js';
 import { Img, RichText, PlayerAvatar, GIcon } from './gameComponents.js';
 import { itemIconUrl, enemyIconUrl, uiUrl } from './assetUrls.js';
 import { richTextPlain } from './richText.js';
@@ -149,20 +150,16 @@ export function ChoiceOverlay(props) {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [armed]);
-  // 轮到你选 (the event's video 10:08): the disc drops in each time the pick order comes round to the player
+  // 轮到你选 (the event's video 10:08): the official disc (ui/turnPopup.js) drops in each time the pick order comes round
+  // to the player — also in a concurrent draft (draftMyTurn) — once its art is in; nothing without it
   const [turnPop, setTurnPop] = useState(0);
   const turnNow = turnPopupDue(sp, { myId, solo, personal });
   const turnSeen = useRef(false);
-  // (the draft opens under the 机变阶段 plate — ui/matchPopups.js — a turn that is mine from the start waits for it to fold)
-  const openedAt = useRef(Date.now());
+  useEffect(() => { preloadTurnPopupArt(); }, []);
   useEffect(() => {
     const due = turnNow && !turnSeen.current;
     turnSeen.current = turnNow;
-    if (!due) return undefined;
-    const wait = SP_POPUP_MS + LEAVE_MS - (Date.now() - openedAt.current);
-    if (wait <= 0) { setTurnPop((k) => k + 1); return undefined; }
-    const id = setTimeout(() => setTurnPop((k) => k + 1), wait);
-    return () => clearTimeout(id);
+    if (due && turnPopupArtReady() && !reducedMotion()) setTurnPop((k) => k + 1);
   }, [turnNow]);
   if (!sp) return null;
   const tap = (idx) => {

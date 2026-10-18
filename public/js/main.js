@@ -201,6 +201,8 @@ function onWelcome(msg) {
     content: msg.content && typeof msg.content.vanilla === 'string' ? { vanilla: msg.content.vanilla } : null,
     // how many unofficial plugins it has (P1a — absent: none; content.js fetches the catalogue only when there are some)
     installedPlugins: pluginCount(msg.content),
+    installedNotices: msg.content?.notices === true,
+    testMode: msg.testMode === true,
   });
   welcomeAt = Date.now();
   // The server rebound this tab's session: until its match state (or a room outside a match) arrives, a match screen
@@ -351,7 +353,7 @@ function wireNet() {
     // replays dedupe by content id inside recordResult (spectator seats' copies build no record at all)
     // (`vs`: the room's cosmetic plugins, recorded — such a match still counts as the original game: ui/stats.js)
     // (`content`: the room's content set when it played gameplay plugins — such a match is unofficial: ui/stats.js)
-    recordResult(res, { myId: store.get().me.playerId, roomMode: store.get().room?.mode ?? null, vs: store.get().room?.content?.vs ?? null, content: store.get().room?.content ?? null, now: Date.now() });
+    if (store.get().room?.test !== true && store.get().match.public?.test !== true) recordResult(res, { myId: store.get().me.playerId, roomMode: store.get().room?.mode ?? null, vs: store.get().room?.content?.vs ?? null, content: store.get().room?.content ?? null, now: Date.now() });
   });
   net.on('m.toast', (msg) => {
     const kind = ['info', 'success', 'warn', 'error'].includes(msg.kind) ? msg.kind : 'info';
@@ -582,12 +584,12 @@ async function boot() {
     startBuildGuard({
       inMatch: () => selectRoute(store.get()) === 'game',
       onStale: ({ waiting }) => { if (waiting) store.patch('ui', { buildStale: true }); },
-      // a body that names the server's plugins (`content`, as /healthz does) updates their count; /client-build carries
-      // only { build }, which says nothing about plugins: the count welcome gave stays
+      // a body that names the server's plugins (`content`, as /healthz does) updates their count and whether any has a
+      // notice; /client-build carries only { build }, which says nothing about plugins: what welcome gave stays
       onHealth: (h) => {
         if (!h?.content || typeof h.content !== 'object') return;
-        const n = pluginCount(h.content);
-        if (n !== store.get().installedPlugins) store.set({ installedPlugins: n });
+        const n = pluginCount(h.content), notices = h.content.notices === true;
+        if (n !== store.get().installedPlugins || notices !== store.get().installedNotices) store.set({ installedPlugins: n, installedNotices: notices });
       },
     });
   } catch (err) {
